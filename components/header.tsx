@@ -1,16 +1,13 @@
 import { Box, Tabs } from '@bigcommerce/big-design';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
-import InnerHeader from './innerHeader';
 
 export const TabIds = {
-    HOME: 'home',
-    PRODUCTS: 'products',
+    VENDORS: 'vendors',
 };
 
 export const TabRoutes = {
-    [TabIds.HOME]: '/',
-    [TabIds.PRODUCTS]: '/products',
+    [TabIds.VENDORS]: '/vendors',
 };
 
 const HeaderlessRoutes = [
@@ -20,9 +17,7 @@ const HeaderlessRoutes = [
     '/productAppExtension/[productId]',
 ];
 
-const InnerRoutes = [
-    '/products/[pid]',
-];
+const InnerRoutes: string[] = [];
 
 const HeaderTypes = {
     GLOBAL: 'global',
@@ -54,13 +49,11 @@ const Header = () => {
     }, [pathname]);
 
     useEffect(() => {
-        // Prefetch products page to reduce latency (doesn't prefetch in dev)
-        router.prefetch('/products');
-    });
+        router.prefetch('/vendors');
+    }, [router]);
 
     const items = [
-        { ariaControls: 'home', id: TabIds.HOME, title: 'Home' },
-        { ariaControls: 'products', id: TabIds.PRODUCTS, title: 'Products' },
+        { ariaControls: 'vendors', id: TabIds.VENDORS, title: 'Vendors' },
     ];
 
     const handleTabClick = (tabId: string) => {
@@ -68,9 +61,6 @@ const Header = () => {
 
         return router.push(TabRoutes[tabId]);
     };
-
-    if (headerType === HeaderTypes.HEADERLESS) return null;
-    if (headerType === HeaderTypes.INNER) return <InnerHeader />;
 
     return (
         <Box marginBottom="xxLarge">
