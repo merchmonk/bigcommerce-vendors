@@ -9,6 +9,8 @@ const ErrorContent = ({ message }: Pick<ErrorProps, 'message'>) => (
 )
 
 const ErrorMessage = ({ error, renderPanel = true }: ErrorMessageProps) => {
+    if (!error) return null;
+
     if (renderPanel) {
         return (
             <Panel>

@@ -1,10 +1,11 @@
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { bigCommerceSDK } from '../scripts/bcSdk';
 
 const SessionContext = createContext({ context: '' });
 
-const SessionProvider = ({ children }) => {
+const SessionProvider = ({ children }: { children: ReactNode }) => {
     const { query } = useRouter();
     const [context, setContext] = useState('');
 

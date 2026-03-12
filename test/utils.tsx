@@ -1,9 +1,9 @@
 import { theme } from '@bigcommerce/big-design-theme';
 import { render as defaultRender, RenderOptions } from '@testing-library/react';
-import React, { ReactElement } from 'react';
+import React, { ReactElement, ReactNode } from 'react';
 import { ThemeProvider } from 'styled-components';
 
-const Provider = ({ children }) => (
+const Provider = ({ children }: { children: ReactNode }) => (
     <ThemeProvider theme={theme}>
         {children}
     </ThemeProvider>
