@@ -1,0 +1,10 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+   <soapenv:Header/>
+   <soapenv:Body>
+   <!--
+   No compliance data available
+   -->
+      <ns:GetComplianceResponse>
+      </ns:GetComplianceResponse>
+   </soapenv:Body>
+</soapenv:Envelope>

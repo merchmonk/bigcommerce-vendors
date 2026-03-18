@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions
+    name="RemittanceAdvice_v1_0_0"
+    targetNamespace="http://www.promostandards.org/WSDL/RemittanceAdviceService/1.0.0/"
+    xmlns:tns="http://www.promostandards.org/WSDL/RemittanceAdviceService/1.0.0/"
+    xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+>
+  <wsdl:types>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/RemittanceAdviceService/1.0.0/"
+                  schemaLocation="SendRemittanceAdviceRequest.xsd"/>
+    </xsd:schema>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/RemittanceAdviceService/1.0.0/"
+                  schemaLocation="SendRemittanceAdviceResponse.xsd"/>
+    </xsd:schema>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/RemittanceAdviceService/1.0.0/"
+                  schemaLocation="GetServiceMethodsRequest.xsd"/>
+    </xsd:schema>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/RemittanceAdviceService/1.0.0/"
+                  schemaLocation="GetServiceMethodsResponse.xsd"/>
+    </xsd:schema>
+  </wsdl:types>
+  <wsdl:message name="SendRemittanceAdviceRequestMessage">
+    <wsdl:part name="SendRemittanceAdviceRequest" element="tns:SendRemittanceAdviceRequest"/>
+  </wsdl:message>
+  <wsdl:message name="SendRemittanceAdviceResponseMessage">
+    <wsdl:part name="SendRemittanceAdviceResponse" element="tns:SendRemittanceAdviceResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetServiceMethodsRequestMessage">
+    <wsdl:part name="GetServiceMethodsRequest" element="tns:GetServiceMethodsRequest"/>
+  </wsdl:message>
+  <wsdl:message name="GetServiceMethodsResponseMessage">
+    <wsdl:part name="GetServiceMethodsResponse" element="tns:GetServiceMethodsResponse"/>
+  </wsdl:message>
+  <wsdl:portType name="RemittanceAdviceService">
+    <wsdl:operation name="sendRemittanceAdvice">
+      <wsdl:input message="tns:SendRemittanceAdviceRequestMessage"/>
+      <wsdl:output message="tns:SendRemittanceAdviceResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getServiceMethods">
+      <wsdl:input message="tns:GetServiceMethodsRequestMessage"/>
+      <wsdl:output message="tns:GetServiceMethodsResponseMessage"/>
+    </wsdl:operation>
+  </wsdl:portType>
+  <wsdl:binding name="RemittanceAdviceServiceBindingV1" type="tns:RemittanceAdviceService">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="sendRemittanceAdvice">
+      <soap:operation soapAction="sendRemittanceAdvice" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getServiceMethods">
+      <soap:operation soapAction="getServiceMethods" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+  <wsdl:service name="RemittanceAdviceServiceV1">
+    <wsdl:port name="RemittanceAdviceServiceBinding" binding="tns:RemittanceAdviceServiceBindingV1">
+      <soap:address location="[Endpoint URL]"/>
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>

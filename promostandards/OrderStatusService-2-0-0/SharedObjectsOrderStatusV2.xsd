@@ -1,0 +1,692 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xsd:schema
+  targetNamespace="http://www.promostandards.org/WSDL/OrderStatus/2.0.0/SharedObjects/"
+  xmlns:tns="http://www.promostandards.org/WSDL/OrderStatus/2.0.0/SharedObjects/"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:ns1="http://www.codesynthesis.com/xmlns/xsstl"
+  elementFormDefault="qualified"
+  >
+  <xsd:import namespace="http://www.codesynthesis.com/xmlns/xsstl" schemaLocation="iso3166-country-code.xsd" />
+  <xsd:simpleType name="addressLine">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="35" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="contactTypeType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Art" />
+      <xsd:enumeration value="Bill" />
+      <xsd:enumeration value="Expeditor" />
+      <xsd:enumeration value="Order" />
+      <xsd:enumeration value="Sales" />
+      <xsd:enumeration value="Sold" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="issueCategoryType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="orderEntryHold" />
+      <xsd:enumeration value="generalHold" />
+      <xsd:enumeration value="creditHold" />
+      <xsd:enumeration value="proofHold" />
+      <xsd:enumeration value="artHold" />
+      <xsd:enumeration value="backOrderHold" />
+      <xsd:enumeration value="shippingHold" />
+      <xsd:enumeration value="customerSuppliedItemHold" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="issueStatusType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Pending" />
+      <xsd:enumeration value="Open" />
+      <xsd:enumeration value="Closed" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="parameterDisplayOrder">
+    <xsd:restriction base="xsd:int" />
+  </xsd:simpleType>
+  <xsd:simpleType name="parameterLength">
+    <xsd:restriction base="xsd:int" />
+  </xsd:simpleType>
+  <xsd:simpleType name="parameterName">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="64" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="parameterPspoFieldName">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="64" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="parameterPspoVersion">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="64" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="parameterRequired">
+    <xsd:restriction base="xsd:boolean" />
+  </xsd:simpleType>
+  <xsd:simpleType name="parameterType">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="64" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:complexType name="Quantity">
+      <xsd:sequence>
+        <xsd:element name="value" type="tns:quantityValue" />
+        <xsd:element name="uom" type="tns:quantityUomType" />
+      </xsd:sequence>
+  </xsd:complexType>
+  <xsd:simpleType name="returnIssueDetailTypeType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="noIssues" />
+      <xsd:enumeration value="openIssues" />
+      <xsd:enumeration value="allIssues" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="quantityUomType">
+    <xsd:restriction base="tns:quantityUomTypeType">
+      <xsd:minLength value="2" />
+      <xsd:maxLength value="2" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="quantityUomTypeType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="BX" />
+      <xsd:enumeration value="CA" />
+      <xsd:enumeration value="DZ" />
+      <xsd:enumeration value="EA" />
+      <xsd:enumeration value="KT" />
+      <xsd:enumeration value="PK" />
+      <xsd:enumeration value="PR" />
+      <xsd:enumeration value="RL" />
+      <xsd:enumeration value="SL" />
+      <xsd:enumeration value="ST" />
+      <xsd:enumeration value="TH" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="queryTypeType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="poSearch" />
+      <xsd:enumeration value="soSearch" />
+      <xsd:enumeration value="lastUpdate" />
+      <xsd:enumeration value="allOpen" />
+      <xsd:enumeration value="allOpenIssues" />
+      <xsd:enumeration value="transactionId" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:element name="serviceMethod">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="128"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="ServiceMethodArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:serviceMethod" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:simpleType name="ServiceMessageCode">
+    <xsd:restriction base="xsd:int" />
+  </xsd:simpleType>
+  <xsd:simpleType name="ServiceMessageDescription">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="256" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="ServiceMessageSeverity">
+    <xsd:restriction base="tns:ServiceMessageSeverityType">
+      <xsd:minLength value="1" />
+      <xsd:maxLength value="64" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="ServiceMessageSeverityType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Error" />
+      <xsd:enumeration value="Information" />
+      <xsd:enumeration value="Warning" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="statusType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="received" />
+      <xsd:enumeration value="confirmed" />
+      <xsd:enumeration value="preproduction" />
+      <xsd:enumeration value="inProduction" />
+      <xsd:enumeration value="inStorage" />
+      <xsd:enumeration value="partiallyShipped" />
+      <xsd:enumeration value="shipped" />
+      <xsd:enumeration value="complete" />
+      <xsd:enumeration value="canceled" />
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="quantityValue">
+    <xsd:restriction base="xsd:decimal" />
+  </xsd:simpleType>
+  <xsd:element name="accountName">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="accountNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="additionalExplanation">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="1024" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="attentionTo">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="35" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="auditURL">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="1024" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="city">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="30" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="comments">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="companyName">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="35"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="Contact">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:accountName" minOccurs="0" />
+        <xsd:element ref="tns:accountNumber" minOccurs="0" />
+        <xsd:element ref="tns:contactType" />
+        <xsd:element ref="tns:ContactDetails" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ContactArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Contact" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ContactDetails">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:attentionTo" minOccurs="0" />
+        <xsd:element ref="tns:companyName" minOccurs="0" />
+        <xsd:element name="address1" type="tns:addressLine" minOccurs="0" />
+        <xsd:element name="address2" type="tns:addressLine" minOccurs="0 "/>
+        <xsd:element name="address3" type="tns:addressLine" minOccurs="0 "/>
+        <xsd:element ref="tns:city" minOccurs="0" />
+        <xsd:element ref="tns:region" minOccurs="0" />
+        <xsd:element ref="tns:postalCode" minOccurs="0" />
+        <xsd:element ref="tns:country" minOccurs="0" />
+        <xsd:element ref="tns:email" minOccurs="0" />
+        <xsd:element ref="tns:phone" minOccurs="0" />
+        <xsd:element ref="tns:comments" minOccurs="0" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="contactType">
+    <xsd:simpleType>
+      <xsd:restriction base="tns:contactTypeType">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="country">
+    <xsd:simpleType>
+      <xsd:restriction base="ns1:ISO3166CountyCode">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="2" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="email">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="128" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="expectedDeliveryDate" type="xsd:date" />
+  <xsd:element name="expectedShipDate" type="xsd:date" />
+  <xsd:element name="id">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="Issue">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:issueId" minOccurs="0" />
+        <xsd:element ref="tns:issueStatus" />
+        <xsd:element ref="tns:issueCategory" />
+        <xsd:element ref="tns:issueName" minOccurs="0" />
+        <xsd:element ref="tns:urgentResponseRequired" />
+        <xsd:element ref="tns:issueDescription" minOccurs="0" />
+        <xsd:element ref="tns:responseRequiredBy" minOccurs="0" />
+        <xsd:element ref="tns:issueResolutionURL" minOccurs="0" />
+        <xsd:element ref="tns:ResolutionArray" minOccurs="0" />
+        <xsd:element ref="tns:issueBlockingStatus" minOccurs="0" />
+        <xsd:element ref="tns:ContactArray" minOccurs="0" />
+        <xsd:element ref="tns:productId" minOccurs="0" />
+        <xsd:element ref="tns:partId" minOccurs="0" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="IssueArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Issue" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="issueBlockingStatus">
+    <xsd:simpleType>
+      <xsd:restriction base="tns:statusType">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="issueCategory">
+    <xsd:simpleType>
+      <xsd:restriction base="tns:issueCategoryType">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="issueStatus">
+    <xsd:simpleType>
+      <xsd:restriction base="tns:issueStatusType">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="issueDescription">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="1024" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="issueId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="issueName">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="issueResolutionURL">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="1024" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="OrderContactArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Contact" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="OrderStatus">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:purchaseOrderNumber" />
+        <xsd:element ref="tns:OrderStatusDetailArray" />
+        <xsd:element ref="tns:auditURL" minOccurs="0" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="OrderStatusArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:OrderStatus" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="OrderStatusDetail">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:salesOrderNumber" />
+        <xsd:element ref="tns:status" />
+        <xsd:element ref="tns:issueCategory" minOccurs="0" />
+        <xsd:element ref="tns:expectedShipDate" minOccurs="0" />
+        <xsd:element ref="tns:expectedDeliveryDate" minOccurs="0" />
+        <xsd:element ref="tns:additionalExplanation" minOccurs="0" />
+        <xsd:element ref="tns:qualityProofURL" minOccurs="0" />
+        <xsd:element ref="tns:OrderContactArray" minOccurs="0" />
+        <xsd:element ref="tns:ProductArray" minOccurs="0" />
+        <xsd:element ref="tns:IssueArray" minOccurs="0" />
+        <xsd:element ref="tns:validTimestamp" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="OrderStatusDetailArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:OrderStatusDetail" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Parameter">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:parameterId" />
+        <xsd:element name="name" type="tns:parameterName" />
+        <xsd:element name="type" type="tns:parameterType" minOccurs="0" />
+        <xsd:element name="displayOrder" type="tns:parameterDisplayOrder" minOccurs="0" />
+        <xsd:element name="required" type="tns:parameterRequired" />
+        <xsd:element name="length" type="tns:parameterLength" minOccurs="0" />
+        <xsd:element name="pspoFieldName" type="tns:parameterPspoFieldName" minOccurs="0" />
+        <xsd:element name="pspoVersion" type="tns:parameterPspoVersion" minOccurs="0" />
+        <xsd:element ref="tns:validResponseArray" minOccurs="0" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ParameterArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Parameter" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="parameterId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="partId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="password">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="phone">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="32" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="postalCode">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="10" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="Product">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:productId" />
+        <xsd:element ref="tns:partId" minOccurs="0" />
+        <xsd:element ref="tns:salesOrderLineNumber" />
+        <xsd:element ref="tns:purchaseOrderLineNumber" minOccurs="0" />
+        <xsd:element name="QuantityOrdered" type="tns:Quantity" />
+        <xsd:element name="QuantityShipped" type="tns:Quantity" minOccurs="0" />
+        <xsd:element ref="tns:issueCategory" minOccurs="0" />
+        <xsd:element ref="tns:status" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ProductArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Product" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="productId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="purchaseOrderLineNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="purchaseOrderNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="qualityProofURL">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="1024" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="queryType">
+    <xsd:simpleType>
+      <xsd:restriction base="tns:queryTypeType" />
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="referenceNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="region">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="3" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="Resolution">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:resolutionId" />
+        <xsd:element ref="tns:resolutionName" />
+        <xsd:element ref="tns:resolutionDescription" />
+        <xsd:element ref="tns:ParameterArray" minOccurs="0" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ResolutionArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Resolution" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="resolutionDescription">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="1024" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="resolutionId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="resolutionName">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="responseRequiredBy" type="xsd:dateTime" />
+  <xsd:element name="returnIssueDetailType">
+    <xsd:simpleType>
+      <xsd:restriction base="tns:returnIssueDetailTypeType" />
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="returnProductDetail" type="xsd:boolean" />
+  <xsd:element name="salesOrderLineNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="salesOrderNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="ServiceMessage">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="code" type="tns:ServiceMessageCode" />
+        <xsd:element name="description" type="tns:ServiceMessageDescription" />
+        <xsd:element name="severity" type="tns:ServiceMessageSeverity" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ServiceMessageArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:ServiceMessage" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="status">
+    <xsd:simpleType>
+      <xsd:restriction base="tns:statusType">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="statusTimeStamp" type="xsd:dateTime" />
+  <xsd:element name="urgentResponseRequired" type="xsd:boolean" />
+  <xsd:element name="validResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:validResponseValue" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="validResponseArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:validResponse" maxOccurs="unbounded" />
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="validResponseValue">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="validTimestamp" type="xsd:dateTime" />
+  <xsd:element name="wsVersion">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1" />
+        <xsd:maxLength value="64" />
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+</xsd:schema>

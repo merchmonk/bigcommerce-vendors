@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" targetNamespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" elementFormDefault="qualified">
+	<xsd:element name="GetProductsWithRegulationsRequest">
+		<xsd:complexType>
+			<xsd:sequence>
+				<xsd:element name="wsVersion">
+					<xsd:annotation>
+						<xsd:documentation>
+			The Standard Version of the Web Service being referenced
+						</xsd:documentation>
+					</xsd:annotation>
+					<xsd:simpleType>
+						<xsd:restriction base="xsd:token">
+							<xsd:minLength value="1"/>
+							<xsd:maxLength value="64"/>
+						</xsd:restriction>
+					</xsd:simpleType>
+				</xsd:element>
+				<xsd:element name="id">
+					<xsd:annotation>
+						<xsd:documentation>
+			The customer Id or any other agreed upon Id.</xsd:documentation>
+					</xsd:annotation>
+					<xsd:simpleType>
+						<xsd:restriction base="xsd:token">
+							<xsd:minLength value="1"/>
+							<xsd:maxLength value="64"/>
+						</xsd:restriction>
+					</xsd:simpleType>
+				</xsd:element>
+				<xsd:element name="password" minOccurs="0">
+					<xsd:annotation>
+						<xsd:documentation>The password associated with the Id
+						</xsd:documentation>
+					</xsd:annotation>
+					<xsd:simpleType>
+						<xsd:restriction base="xsd:token">
+							<xsd:minLength value="1"/>
+							<xsd:maxLength value="64"/>
+						</xsd:restriction>
+					</xsd:simpleType>
+				</xsd:element>
+				<xsd:element name="changeTimeStamp" type="xsd:dateTime" minOccurs="0">
+					<xsd:annotation>
+						<xsd:documentation>Beginning date time since last change in UTC</xsd:documentation>
+					</xsd:annotation>
+				</xsd:element>
+			</xsd:sequence>
+		</xsd:complexType>
+	</xsd:element>
+</xsd:schema>

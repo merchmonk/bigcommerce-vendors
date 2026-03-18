@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xsd:schema
+    targetNamespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:ns1="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/SharedObjects/"
+    elementFormDefault="qualified"
+>
+  <xsd:import namespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/SharedObjects/"
+              schemaLocation="SharedOSNObjects.xsd"/>
+  <xsd:element name="SendAdvanceShipmentNotificationResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="transactionId" type="xsd:string" minOccurs="0"/>
+        <xsd:element ref="ns1:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+</xsd:schema>
+

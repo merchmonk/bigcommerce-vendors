@@ -1,0 +1,41 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <ns:GetComplianceResponse>
+         <!--Optional:-->
+         <ns:ComplianceDataArray>
+            <!--1 or more repetitions:-->
+            <ns:ComplianceData>
+               <ns:productId>?</ns:productId>
+               <!--Optional:-->
+               <ns:partId>?</ns:partId>
+               <!--Optional:-->
+               <ns:CAProp65>
+                  <ns:ApplicableWarningsArray>
+                     <!--1 or more repetitions:-->
+                     <ns:ApplicableWarnings>
+                        <ns:applicableWarning>?</ns:applicableWarning>
+                        <!--Optional:-->
+                        <ns:applicableChemicals>
+                           <!--1 or more repetitions:-->
+                           <ns:applicableChemical>?</ns:applicableChemical>
+                        </ns:applicableChemicals>
+                        <ns:warningLabelApplied>?</ns:warningLabelApplied>
+                     </ns:ApplicableWarnings>
+                  </ns:ApplicableWarningsArray>
+                  <ns:policyForApplyingLabel>?</ns:policyForApplyingLabel>
+               </ns:CAProp65>
+            </ns:ComplianceData>
+         </ns:ComplianceDataArray>
+         <!--Optional:-->
+         <ns:ServiceMessageArray>
+            <!--1 or more repetitions:-->
+            <ns:ServiceMessage>
+               <ns:code>?</ns:code>
+               <ns:description>?</ns:description>
+               <ns:severity>?</ns:severity>
+            </ns:ServiceMessage>
+         </ns:ServiceMessageArray>
+      </ns:GetComplianceResponse>
+   </soapenv:Body>
+</soapenv:Envelope>

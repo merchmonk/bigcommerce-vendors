@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- edited with XMLSpy v2009 sp1 (http://www.altova.com) by Dan Young (Staples Promotional Products) -->
+<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" xmlns:tns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" name="ProductCompliance_v1_0_0" targetNamespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+	<wsdl:types>
+		<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+			<xsd:import namespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" schemaLocation="GetProductsWithRegulationsRequest.xsd"/>
+		</xsd:schema>
+		<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+			<xsd:import namespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" schemaLocation="GetProductsWithRegulationsResponse.xsd"/>
+		</xsd:schema>
+		<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+			<xsd:import namespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" schemaLocation="GetComplianceRequest.xsd"/>
+		</xsd:schema>
+		<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+			<xsd:import namespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" schemaLocation="GetComplianceResponse.xsd"/>
+		</xsd:schema>
+	</wsdl:types>
+	<wsdl:message name="GetProductsWithRegulationsRequestMessage">
+		<wsdl:part name="GetProductsWithRegulationsRequest" element="tns:GetProductsWithRegulationsRequest"/>
+	</wsdl:message>
+	<wsdl:message name="GetProductsWithRegulationsResponseMessage">
+		<wsdl:part name="GetProductsWithRegulationsResponse" element="tns:GetProductsWithRegulationsResponse"/>
+	</wsdl:message>
+	<wsdl:message name="GetComplianceRequestMessage">
+		<wsdl:part name="GetComplianceRequest" element="tns:GetComplianceRequest"/>
+	</wsdl:message>
+	<wsdl:message name="GetComplianceResponseMessage">
+		<wsdl:part name="GetComplianceResponse" element="tns:GetComplianceResponse"/>
+	</wsdl:message>
+	<wsdl:portType name="ProductComplianceService">
+		<wsdl:operation name="getProductsWithRegulations">
+			<wsdl:input message="tns:GetProductsWithRegulationsRequestMessage"/>
+			<wsdl:output message="tns:GetProductsWithRegulationsResponseMessage"/>
+		</wsdl:operation>
+		<wsdl:operation name="getCompliance">
+			<wsdl:input message="tns:GetComplianceRequestMessage"/>
+			<wsdl:output message="tns:GetComplianceResponseMessage"/>
+		</wsdl:operation>
+	</wsdl:portType>
+	<wsdl:binding name="ProductComplianceServiceBinding" type="tns:ProductComplianceService">
+		<soap:binding transport="http://schemas.xmlsoap.org/soap/http"/>
+		<wsdl:operation name="getProductsWithRegulations">
+			<soap:operation soapAction="getProductsWithRegulations" style="document"/>
+			<wsdl:input>
+				<soap:body use="literal"/>
+			</wsdl:input>
+			<wsdl:output>
+				<soap:body use="literal"/>
+			</wsdl:output>
+		</wsdl:operation>
+		<wsdl:operation name="getCompliance">
+			<soap:operation soapAction="getCompliance" style="document"/>
+			<wsdl:input>
+				<soap:body use="literal"/>
+			</wsdl:input>
+			<wsdl:output>
+				<soap:body use="literal"/>
+			</wsdl:output>
+		</wsdl:operation>
+	</wsdl:binding>
+	<wsdl:service name="ProductComplianceService">
+		<wsdl:port name="ProductComplianceServiceBinding" binding="tns:ProductComplianceServiceBinding">
+			<soap:address location="http://localhost/ProductComplianceService.svc"/>
+		</wsdl:port>
+	</wsdl:service>
+</wsdl:definitions>

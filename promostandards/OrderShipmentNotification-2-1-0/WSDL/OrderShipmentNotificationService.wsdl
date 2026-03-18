@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<wsdl:definitions
+    name="OrderShipmentNotification_v2_1_0"
+    targetNamespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+    xmlns:tns="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+    xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+    xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+>
+  <wsdl:types>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+                  schemaLocation="GetOrderShipmentNotificationRequest.xsd"/>
+    </xsd:schema>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+                  schemaLocation="GetOrderShipmentNotificationResponse.xsd"/>
+    </xsd:schema>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+                  schemaLocation="SendAdvanceShipmentNotificationRequest.xsd"/>
+    </xsd:schema>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+                  schemaLocation="SendAdvanceShipmentNotificationResponse.xsd"/>
+    </xsd:schema>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+                  schemaLocation="GetServiceMethodsRequest.xsd"/>
+    </xsd:schema>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.1.0/"
+                  schemaLocation="GetServiceMethodsResponse.xsd"/>
+    </xsd:schema>
+  </wsdl:types>
+  <wsdl:message name="GetOrderShipmentNotificationRequestMessage">
+    <wsdl:part name="GetOrderShipmentNotificationRequest" element="tns:GetOrderShipmentNotificationRequest"/>
+  </wsdl:message>
+  <wsdl:message name="GetOrderShipmentNotificationResponseMessage">
+    <wsdl:part name="GetOrderShipmentNotificationResponse" element="tns:GetOrderShipmentNotificationResponse"/>
+  </wsdl:message>
+  <wsdl:message name="SendAdvanceShipmentNotificationRequestMessage">
+    <wsdl:part name="SendAdvanceShipmentNotificationRequest" element="tns:SendAdvanceShipmentNotificationRequest"/>
+  </wsdl:message>
+  <wsdl:message name="SendAdvanceShipmentNotificationResponseMessage">
+    <wsdl:part name="SendAdvanceShipmentNotificationResponse" element="tns:SendAdvanceShipmentNotificationResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetServiceMethodsRequestMessage">
+    <wsdl:part name="GetServiceMethodsRequest" element="tns:GetServiceMethodsRequest"/>
+  </wsdl:message>
+  <wsdl:message name="GetServiceMethodsResponseMessage">
+    <wsdl:part name="GetServiceMethodsResponse" element="tns:GetServiceMethodsResponse"/>
+  </wsdl:message>
+  <wsdl:portType name="OrderShipmentNotificationService">
+    <wsdl:operation name="getOrderShipmentNotification">
+      <wsdl:input message="tns:GetOrderShipmentNotificationRequestMessage"/>
+      <wsdl:output message="tns:GetOrderShipmentNotificationResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="sendAdvanceShipmentNotification">
+      <wsdl:input message="tns:SendAdvanceShipmentNotificationRequestMessage"/>
+      <wsdl:output message="tns:SendAdvanceShipmentNotificationResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getServiceMethods">
+      <wsdl:input message="tns:GetServiceMethodsRequestMessage"/>
+      <wsdl:output message="tns:GetServiceMethodsResponseMessage"/>
+    </wsdl:operation>
+  </wsdl:portType>
+  <wsdl:binding name="OrderShipmentNotificationServiceBinding" type="tns:OrderShipmentNotificationService">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="getOrderShipmentNotification">
+      <soap:operation soapAction="getOrderShipmentNotification" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="sendAdvanceShipmentNotification">
+      <soap:operation soapAction="sendAdvanceShipmentNotification" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getServiceMethods">
+      <soap:operation soapAction="getServiceMethods" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+  <wsdl:service name="OrderShipmentNotificationService">
+    <wsdl:port name="OrderShipmentNotificationServiceBinding" binding="tns:OrderShipmentNotificationServiceBinding">
+      <soap:address location="[Endpoint URL]"/>
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>

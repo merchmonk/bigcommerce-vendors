@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/SharedObjects/" targetNamespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/SharedObjects/" elementFormDefault="qualified">
+	<xsd:simpleType name="SeverityType">
+		<xsd:annotation>
+			<xsd:documentation>The severity type</xsd:documentation>
+		</xsd:annotation>
+		<xsd:restriction base="xsd:string">
+			<xsd:enumeration value="Error"/>
+			<xsd:enumeration value="Information"/>
+			<xsd:enumeration value="Warning"/>
+		</xsd:restriction>
+	</xsd:simpleType>
+</xsd:schema>

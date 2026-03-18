@@ -1,0 +1,51 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+   <soapenv:Header/>
+   <soapenv:Body>
+   <!--
+   Has prop 65 data applicable to specific parts but not all (request didn't supply part id)
+   -->
+      <ns:GetComplianceResponse>
+         <ns:ComplianceDataArray>
+         	  <ns:ComplianceData>
+               <ns:productId>B00700</ns:productId>
+               <ns:partId>ABC</ns:partId>
+               <ns:CAProp65>
+                  <ns:ApplicableWarningsArray>
+                     <ns:ApplicableWarnings>
+                        <ns:applicableWarning>Cancer</ns:applicableWarning>
+                        <ns:applicableChemicals>
+                           <ns:applicableChemical>Diisononyl phthalate</ns:applicableChemical>
+                        </ns:applicableChemicals>
+                        <ns:warningLabelApplied>Long Form</ns:warningLabelApplied>
+                     </ns:ApplicableWarnings>
+                  </ns:ApplicableWarningsArray>
+                  <ns:policyForApplyingLabel>Applied Always</ns:policyForApplyingLabel>
+               </ns:CAProp65>
+            </ns:ComplianceData>
+            <ns:ComplianceData>
+               <ns:productId>B00700</ns:productId>
+               <ns:partId>DEF</ns:partId>
+               <ns:CAProp65>
+                  <ns:ApplicableWarningsArray>
+                     <ns:ApplicableWarnings>
+                        <ns:applicableWarning>Reproductive</ns:applicableWarning>
+                        <ns:applicableChemicals>
+                           <ns:applicableChemical>Cadmium</ns:applicableChemical>
+                        </ns:applicableChemicals>
+                        <ns:warningLabelApplied>Long Form</ns:warningLabelApplied>
+                     </ns:ApplicableWarnings>
+                  </ns:ApplicableWarningsArray>
+                  <ns:policyForApplyingLabel>Applied Upon Request</ns:policyForApplyingLabel>
+               </ns:CAProp65>
+            </ns:ComplianceData>
+            <ns:ComplianceData>
+               <ns:productId>B00700</ns:productId>
+               <ns:partId>XYZ</ns:partId>
+               <ns:Future>
+               	[Data]
+               </ns:Future>
+            </ns:ComplianceData>
+         </ns:ComplianceDataArray>
+      </ns:GetComplianceResponse>
+   </soapenv:Body>
+</soapenv:Envelope>

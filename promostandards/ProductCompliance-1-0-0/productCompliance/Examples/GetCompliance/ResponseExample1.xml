@@ -1,0 +1,27 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+   <soapenv:Header/>
+   <soapenv:Body>
+   <!--
+   Has prop 65 data applicable to all parts (request didn't supply part id); no chemicals declared
+   -->
+      <ns:GetComplianceResponse>
+         <ns:ComplianceDataArray>
+            <ns:ComplianceData>
+               <ns:productId>B00238</ns:productId>
+               <ns:CAProp65>
+                  <ns:ApplicableWarningsArray>
+                     <ns:ApplicableWarnings>
+                        <ns:applicableWarning>On Product Cancer</ns:applicableWarning>
+                        <ns:warningLabelApplied>Short Form</ns:warningLabelApplied>
+                     </ns:ApplicableWarnings>
+                  </ns:ApplicableWarningsArray>
+                  <ns:policyForApplyingLabel>Applied Always</ns:policyForApplyingLabel>
+               </ns:CAProp65>
+               <ns:Future>
+               	[Data]
+               </ns:Future>
+            </ns:ComplianceData>
+         </ns:ComplianceDataArray>
+      </ns:GetComplianceResponse>
+   </soapenv:Body>
+</soapenv:Envelope>

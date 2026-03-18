@@ -1,14 +1,17 @@
 import Index from '@pages/index';
-import { render, screen } from '@test/utils';
+import { render } from '@test/utils';
 
-jest.mock('@lib/hooks', () => require('@mocks/hooks'));
+const mockReplace = jest.fn();
 
-describe('Homepage', () => {
-    test('renders correctly', () => {
-        const { container } = render(<Index />);
-        const heading = screen.getByRole('heading', { level: 2 });
+jest.mock('next/router', () => ({
+  useRouter: () => ({
+    replace: mockReplace,
+  }),
+}));
 
-        expect(container.firstChild).toMatchSnapshot();
-        expect(heading).toBeInTheDocument();
-    });
+describe('Index page', () => {
+  test('redirects users to vendors', () => {
+    render(<Index />);
+    expect(mockReplace).toHaveBeenCalledWith('/vendors');
+  });
 });

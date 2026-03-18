@@ -1,0 +1,13 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <ns:GetProductsWithRegulationsRequest>
+         <ns:wsVersion>?</ns:wsVersion>
+         <ns:id>?</ns:id>
+         <!--Optional:-->
+         <ns:password>?</ns:password>
+         <!--Optional:-->
+         <ns:changeTimeStamp>?</ns:changeTimeStamp>
+      </ns:GetProductsWithRegulationsRequest>
+   </soapenv:Body>
+</soapenv:Envelope>

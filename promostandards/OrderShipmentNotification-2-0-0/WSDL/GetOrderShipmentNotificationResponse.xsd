@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema
+  targetNamespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.0.0/"
+  xmlns:tns="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.0.0/"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:ns1="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.0.0/"
+  xmlns:ns2="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.0.0/SharedObjects/"
+  elementFormDefault="qualified"
+  >
+  <xsd:import namespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.0.0/SharedObjects/" schemaLocation="SharedOSNObjects.xsd"/>
+  <xsd:element name="GetOrderShipmentNotificationResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="OrderShipmentNotificationArray"  minOccurs="0">
+          <xsd:complexType>
+            <xsd:sequence>
+              <xsd:element ref="ns1:OrderShipmentNotification" maxOccurs="unbounded"/>
+            </xsd:sequence>
+          </xsd:complexType>
+        </xsd:element>
+        <xsd:element name="ServiceMessageArray" minOccurs="0">
+          <xsd:complexType>
+            <xsd:sequence>
+              <xsd:element ref="ns2:ServiceMessage" maxOccurs="unbounded"/>
+            </xsd:sequence>
+          </xsd:complexType>
+        </xsd:element>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="OrderShipmentNotification">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="ns2:purchaseOrderNumber"/>
+        <xsd:element name="purchaseOrderShippedInFull" type="xsd:boolean"/>
+        <xsd:element name="SalesOrderArray">
+          <xsd:complexType>
+            <xsd:sequence>
+              <xsd:element ref="ns1:SalesOrder" maxOccurs="unbounded"/>
+            </xsd:sequence>
+          </xsd:complexType>
+        </xsd:element>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="SalesOrder">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="ns2:salesOrderNumber"/>
+        <xsd:element name="salesOrderShippedInFull" type="xsd:boolean"/>
+        <xsd:element name="ShipmentArray">
+          <xsd:complexType>
+            <xsd:sequence>
+              <xsd:element ref="ns1:Shipment" maxOccurs="unbounded"/>
+            </xsd:sequence>
+          </xsd:complexType>
+        </xsd:element>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Shipment">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="destinationShippedInFull" type="xsd:boolean"/>
+        <xsd:element name="customerPickup" type="xsd:boolean"/>
+        <xsd:element name="shipFromAddress" type="ns2:ShippingContactDetails"/>
+        <xsd:element name="shipToAddress" type="ns2:ShippingContactDetails"/>
+        <xsd:element name="shipmentDestinationType" type="ns2:shipmentDestinationTypeType" minOccurs="0"/>
+        <xsd:element name="PackageArray">
+          <xsd:complexType>
+            <xsd:sequence>
+              <xsd:element ref="ns1:Package" maxOccurs="unbounded"/>
+            </xsd:sequence>
+          </xsd:complexType>
+        </xsd:element>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Package">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="id" type="xsd:integer" minOccurs="0"/>
+        <xsd:element ref="ns2:trackingNumber" minOccurs="0"/>
+        <xsd:element name="shipmentDate" type="xsd:dateTime"/>
+        <xsd:element ref="ns2:Dimension"  minOccurs="0"/>
+        <xsd:element ref="ns2:FreightDetails"  minOccurs="0"/>
+        <xsd:element ref="ns2:shippingAccount"  minOccurs="0"/>
+        <xsd:element ref="ns2:shipmentTerms"  minOccurs="0"/>
+        <xsd:element name="ItemArray" minOccurs="0">
+          <xsd:complexType>
+            <xsd:sequence>
+              <xsd:element ref="ns1:Item" maxOccurs="unbounded"/>
+            </xsd:sequence>
+          </xsd:complexType>
+        </xsd:element>
+        <xsd:element name="preProductionProof" type="ns2:preProductionProofType"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Item">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="ns2:supplierProductId"/>
+        <xsd:element ref="ns2:supplierPartId" minOccurs="0"/>
+        <xsd:element ref="ns2:distributorProductId" minOccurs="0"/>
+        <xsd:element ref="ns2:distributorPartId" minOccurs="0"/>
+        <xsd:element name="purchaseOrderLineNumber" type="xsd:int" minOccurs="0"/>
+        <xsd:element ref="ns2:Quantity"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+</xsd:schema>

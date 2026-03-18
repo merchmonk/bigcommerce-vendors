@@ -1,10 +1,9 @@
-import { H3, Panel } from '@bigcommerce/big-design';
 import { ErrorMessageProps, ErrorProps } from '../types';
 
 const ErrorContent = ({ message }: Pick<ErrorProps, 'message'>) => (
     <>
-        <H3>Failed to load</H3>
-        {message}
+        <h3 style={{ marginTop: 0 }}>Failed to load</h3>
+        <div>{message}</div>
     </>
 )
 
@@ -13,9 +12,17 @@ const ErrorMessage = ({ error, renderPanel = true }: ErrorMessageProps) => {
 
     if (renderPanel) {
         return (
-            <Panel>
+            <div
+                style={{
+                    background: '#ffffff',
+                    border: '1px solid #fecaca',
+                    borderRadius: '12px',
+                    padding: '24px',
+                    color: '#991b1b',
+                }}
+            >
                 <ErrorContent message={error.message} />
-            </Panel>
+            </div>
         )
     }
 

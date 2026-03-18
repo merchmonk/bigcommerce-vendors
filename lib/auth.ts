@@ -1,6 +1,6 @@
 import * as jwt from 'jsonwebtoken';
 import { NextApiRequest } from 'next';
-import * as BigCommerce from 'node-bigcommerce';
+import BigCommerce from 'node-bigcommerce';
 import { ApiConfig, QueryParams, SessionContextProps, SessionProps } from '../types';
 import db from './db';
 
@@ -43,19 +43,21 @@ export function bigcommerceClient(accessToken: string, storeHash: string, apiVer
 }
 
 // Authorizes app on install
-export function getBCAuth(query: QueryParams) {
-    return bigcommerce.authorize(query);
+export async function getBCAuth(query: QueryParams) {
+    return await bigcommerce.authorize(query);
 }
 // Verifies app on load/ uninstall
-export function getBCVerify({ signed_payload_jwt }: QueryParams) {
-    return bigcommerceSigned.verifyJWT(signed_payload_jwt);
+export async function getBCVerify({ signed_payload_jwt }: QueryParams) {
+    return await bigcommerceSigned.verifyJWT(signed_payload_jwt);
 }
 
-export function setSession(session: SessionProps) {
-    db.setUser(session);
-    db.setStore(session);
-    db.setStoreUser(session);
-}
+export async function setSession(session: SessionProps) {
+    await Promise.all([
+      db.setUser(session),
+      db.setStore(session),
+      db.setStoreUser(session),
+    ]);
+  }
 
 export async function getSession({ query: { context = '' } }: NextApiRequest) {
     if (typeof context !== 'string') return;
@@ -86,8 +88,10 @@ export function decodePayload(encodedContext: string) {
 
 // Removes store and storeUser on uninstall
 export async function removeDataStore(session: SessionProps) {
-    await db.deleteStore(session);
-    await db.deleteUser(session);
+    await Promise.all([
+        db.deleteStore(session),
+        db.deleteUser(session),
+    ]);
 }
 
 // Removes users from app - getSession() for user will fail after user is removed

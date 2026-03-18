@@ -1,0 +1,29 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <ns:GetProductsWithRegulationsResponse>
+         <!--Optional:-->
+         <ns:productWithRegulationsArray>
+            <!--1 or more repetitions:-->
+            <ns:ProductWithRegulations>
+               <ns:productId>?</ns:productId>
+               <!--Optional:-->
+               <ns:partId>?</ns:partId>
+               <ns:complianceGroups>
+                  <!--1 or more repetitions:-->
+                  <ns:complianceGroup>?</ns:complianceGroup>
+               </ns:complianceGroups>
+            </ns:ProductWithRegulations>
+         </ns:productWithRegulationsArray>
+         <!--Optional:-->
+         <ns:ServiceMessageArray>
+            <!--1 or more repetitions:-->
+            <ns:ServiceMessage>
+               <ns:code>?</ns:code>
+               <ns:description>?</ns:description>
+               <ns:severity>?</ns:severity>
+            </ns:ServiceMessage>
+         </ns:ServiceMessageArray>
+      </ns:GetProductsWithRegulationsResponse>
+   </soapenv:Body>
+</soapenv:Envelope>

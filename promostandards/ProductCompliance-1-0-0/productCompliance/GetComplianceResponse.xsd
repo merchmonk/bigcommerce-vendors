@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" targetNamespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/" xmlns:shar="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/SharedObjects/" elementFormDefault="qualified">
+	<xsd:import namespace="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/SharedObjects/" schemaLocation="SharedObjectsCompliance.xsd" />
+	<xsd:complexType name="CAProp65ApplicableWarning">
+		<xsd:sequence>
+			<xsd:element name="applicableWarning" type="tns:applicableWarningEnum"/>
+			<xsd:element name="applicableChemicals" minOccurs="0">
+				<xsd:complexType>
+					<xsd:sequence>
+						<xsd:element name="applicableChemical" maxOccurs="unbounded">
+							<xsd:simpleType>
+								<xsd:restriction base="xsd:token">
+									<xsd:minLength value="1"/>
+									<xsd:maxLength value="256"/>
+								</xsd:restriction>
+							</xsd:simpleType>
+						</xsd:element>
+					</xsd:sequence>
+				</xsd:complexType>
+			</xsd:element>
+			<xsd:element name="warningLabelApplied" type="tns:warningLabelAppliedEnum"/>
+		</xsd:sequence>
+	</xsd:complexType>
+	<xsd:simpleType name="applicableWarningEnum">
+		<xsd:annotation>
+			<xsd:documentation/>
+		</xsd:annotation>
+		<xsd:restriction base="xsd:string">
+			<xsd:enumeration value="On Product Cancer"/>
+			<xsd:enumeration value="On Product Reproductive"/>
+			<xsd:enumeration value="Food"/>
+			<xsd:enumeration value="Furniture"/>
+			<xsd:enumeration value="Alcoholic Beverage"/>
+		</xsd:restriction>
+	</xsd:simpleType>
+	<xsd:simpleType name="warningLabelAppliedEnum">
+		<xsd:annotation>
+			<xsd:documentation/>
+		</xsd:annotation>
+		<xsd:restriction base="xsd:string">
+			<xsd:enumeration value="Short Form"/>
+			<xsd:enumeration value="Long Form"/>
+		</xsd:restriction>
+	</xsd:simpleType>
+	<xsd:simpleType name="policyForApplyingLabelEnum">
+		<xsd:annotation>
+			<xsd:documentation/>
+		</xsd:annotation>
+		<xsd:restriction base="xsd:string">
+			<xsd:enumeration value="Applied Upon Request"/>
+			<xsd:enumeration value="Applied When Shipping to California"/>
+			<xsd:enumeration value="Applied Always"/>
+		</xsd:restriction>
+	</xsd:simpleType>
+	<xsd:element name="GetComplianceResponse">
+		<xsd:complexType>
+			<xsd:sequence>
+				<xsd:element name="ComplianceDataArray" minOccurs="0">
+					<xsd:complexType>
+						<xsd:sequence>
+							<xsd:element name="ComplianceData" maxOccurs="unbounded">
+								<xsd:complexType>
+									<xsd:sequence>
+										<xsd:element name="productId">
+											<xsd:annotation>
+												<xsd:documentation/>
+											</xsd:annotation>
+											<xsd:simpleType>
+												<xsd:restriction base="xsd:token">
+													<xsd:minLength value="1"/>
+													<xsd:maxLength value="64"/>
+												</xsd:restriction>
+											</xsd:simpleType>
+										</xsd:element>
+										<xsd:element name="partId" minOccurs="0">
+											<xsd:annotation>
+												<xsd:documentation/>
+											</xsd:annotation>
+											<xsd:simpleType>
+												<xsd:restriction base="xsd:token">
+													<xsd:minLength value="1"/>
+													<xsd:maxLength value="64"/>
+												</xsd:restriction>
+											</xsd:simpleType>
+										</xsd:element>
+										<xsd:element name="CAProp65" minOccurs="0">
+											<xsd:annotation>
+												<xsd:documentation/>
+											</xsd:annotation>
+											<xsd:complexType>
+												<xsd:sequence>
+													<xsd:element name="ApplicableWarningsArray">
+														<xsd:complexType>
+															<xsd:sequence>
+																<xsd:element name="ApplicableWarnings" type="tns:CAProp65ApplicableWarning" maxOccurs="unbounded"/>
+															</xsd:sequence>
+														</xsd:complexType>
+													</xsd:element>
+													<xsd:element name="policyForApplyingLabel" type="tns:policyForApplyingLabelEnum"/>
+												</xsd:sequence>
+											</xsd:complexType>
+										</xsd:element>
+									</xsd:sequence>
+								</xsd:complexType>
+							</xsd:element>
+						</xsd:sequence>
+					</xsd:complexType>
+				</xsd:element>
+				<xsd:element name="ServiceMessageArray" minOccurs="0">
+					<xsd:complexType>
+						<xsd:sequence>
+							<xsd:element name="ServiceMessage" maxOccurs="unbounded">
+								<xsd:annotation>
+									<xsd:documentation>Response for any error requiring notification to requestor</xsd:documentation>
+								</xsd:annotation>
+								<xsd:complexType>
+									<xsd:sequence>
+										<xsd:element name="code" type="xsd:int">
+											<xsd:annotation>
+												<xsd:documentation>Response for any error requiring notification to requestor</xsd:documentation>
+											</xsd:annotation>
+										</xsd:element>
+										<xsd:element name="description">
+											<xsd:annotation>
+												<xsd:documentation>Response for any error requiring notification to requestor</xsd:documentation>
+											</xsd:annotation>
+											<xsd:simpleType>
+												<xsd:restriction base="xsd:token">
+													<xsd:maxLength value="256"/>
+													<xsd:minLength value="1"/>
+												</xsd:restriction>
+											</xsd:simpleType>
+										</xsd:element>
+										<xsd:element name="severity">
+											<xsd:annotation>
+												<xsd:documentation>The severity of the error. Values are enumerated: {Error, Information, Warning}</xsd:documentation>
+											</xsd:annotation>
+											<xsd:simpleType>
+												<xsd:restriction base="shar:SeverityType">
+													<xsd:maxLength value="64"/>
+													<xsd:minLength value="1"/>
+												</xsd:restriction>
+											</xsd:simpleType>
+										</xsd:element>
+									</xsd:sequence>
+								</xsd:complexType>
+							</xsd:element>
+						</xsd:sequence>
+					</xsd:complexType>
+				</xsd:element>
+			</xsd:sequence>
+		</xsd:complexType>
+	</xsd:element>
+</xsd:schema>

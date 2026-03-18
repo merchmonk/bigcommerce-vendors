@@ -1,0 +1,338 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema
+  targetNamespace="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.0.0/SharedObjects/"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:ns1="http://www.promostandards.org/WSDL/OrderShipmentNotificationService/2.0.0/SharedObjects/"
+  xmlns:ns2="http://www.codesynthesis.com/xmlns/xsstl"
+  elementFormDefault="qualified"
+  >
+  <xsd:import namespace="http://www.codesynthesis.com/xmlns/xsstl" schemaLocation="iso3166-country-code.xsd"/>
+  <xsd:simpleType name="addressLine">
+    <xsd:restriction base="xsd:string">
+      <xsd:maxLength value="35"/>
+      <xsd:minLength value="1"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="dimUOMType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Inches"/>
+      <xsd:enumeration value="Feet"/>
+      <xsd:enumeration value="mm"/>
+      <xsd:enumeration value="cm"/>
+      <xsd:enumeration value="Meters"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="preProductionProofType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Yes"/>
+      <xsd:enumeration value="No"/>
+      <xsd:enumeration value="Unknown"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="quantityUomType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="BX"/>
+      <xsd:enumeration value="CA"/>
+      <xsd:enumeration value="DZ"/>
+      <xsd:enumeration value="EA"/>
+      <xsd:enumeration value="KT"/>
+      <xsd:enumeration value="PK"/>
+      <xsd:enumeration value="PR"/>
+      <xsd:enumeration value="RL"/>
+      <xsd:enumeration value="SL"/>
+      <xsd:enumeration value="ST"/>
+      <xsd:enumeration value="TH"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="queryTypeType">
+    <xsd:restriction base="xsd:int">
+      <xsd:enumeration value="1"/>
+      <xsd:enumeration value="2"/>
+      <xsd:enumeration value="3"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="serviceMessageDescription">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="256"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="serviceMessageSeverityType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Error"/>
+      <xsd:enumeration value="Information"/>
+      <xsd:enumeration value="Warning"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="shipmentDestinationTypeType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Commercial"/>
+      <xsd:enumeration value="Residential"/>
+      <xsd:enumeration value="Other"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="weightUOMType">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="Ounces"/>
+      <xsd:enumeration value="Pounds"/>
+      <xsd:enumeration value="Grams"/>
+      <xsd:enumeration value="KG"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:element name="attentionTo">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="35"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="carrier">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="city">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="30"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="companyName">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="35"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="country">
+    <xsd:simpleType>
+      <xsd:restriction base="ns2:ISO3166CountyCode">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="2"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="Dimension">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="ns1:DimensionSize" minOccurs="0"/>
+        <xsd:element ref="ns1:DimensionWeight" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="DimensionSize">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="dimUOM" type="ns1:dimUOMType"/>
+        <xsd:element name="length" type="xsd:decimal" minOccurs="0"/>
+        <xsd:element name="width" type="xsd:decimal" minOccurs="0"/>
+        <xsd:element name="height" type="xsd:decimal" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="DimensionWeight">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="weightUOM" type="ns1:weightUOMType"/>
+        <xsd:element name="weight" type="xsd:decimal"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="distributorProductId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="distributorPartId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="email">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="128"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="FreightDetails">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="ns1:carrier"/>
+        <xsd:element ref="ns1:service"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="id">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="password">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="phone">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="32"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="postalCode">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="10"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="purchaseOrderNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="queryType">
+    <xsd:simpleType>
+      <xsd:restriction base="ns1:queryTypeType"/>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="Quantity">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="value" type="xsd:decimal"/>
+        <xsd:element name="uom" type="ns1:quantityUomType"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="referenceNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="region">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:string">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="3"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="salesOrderNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="service">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="ServiceMessage">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="code" type="xsd:int"/>
+        <xsd:element name="description" type="ns1:serviceMessageDescription"/>
+        <xsd:element name="severity" type="ns1:serviceMessageSeverityType"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="shipmentDateTimestamp" type="xsd:dateTime"/>
+  <xsd:element name="shipmentTerms">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="128"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="shippingAccount">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="128"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:complexType name="ShippingContactDetails">
+    <xsd:sequence>
+      <xsd:element ref="ns1:attentionTo" minOccurs="0"/>
+      <xsd:element ref="ns1:companyName" minOccurs="0"/>
+      <xsd:element name="address1" type="ns1:addressLine"/>
+      <xsd:element name="address2" type="ns1:addressLine" minOccurs="0"/>
+      <xsd:element name="address3" type="ns1:addressLine" minOccurs="0"/>
+      <xsd:element ref="ns1:city"/>
+      <xsd:element ref="ns1:region"/>
+      <xsd:element ref="ns1:postalCode"/>
+      <xsd:element ref="ns1:country" minOccurs="0"/>
+      <xsd:element ref="ns1:email" minOccurs="0"/>
+      <xsd:element ref="ns1:phone" minOccurs="0"/>
+    </xsd:sequence>
+  </xsd:complexType>
+  <xsd:element name="supplierPartId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="supplierProductId">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="trackingNumber">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="128"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+  <xsd:element name="wsVersion">
+    <xsd:simpleType>
+      <xsd:restriction base="xsd:token">
+        <xsd:minLength value="1"/>
+        <xsd:maxLength value="64"/>
+      </xsd:restriction>
+    </xsd:simpleType>
+  </xsd:element>
+</xsd:schema>

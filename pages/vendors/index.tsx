@@ -1,5 +1,3 @@
-import { Button, Panel, Table } from '@bigcommerce/big-design';
-import { MoreHorizIcon } from '@bigcommerce/big-design-icons';
 import { useRouter } from 'next/router';
 import { ReactElement } from 'react';
 import useSWR from 'swr';
@@ -39,8 +37,6 @@ const VendorsPage = () => {
   };
 
   const handleDelete = async (vendorId: number) => {
-    // Simple confirmation; in a real app we might use a modal
-    // eslint-disable-next-line no-alert
     if (!window.confirm('Are you sure you want to delete this vendor?')) return;
 
     await fetch(`/api/vendors/${vendorId}?context=${encodeURIComponent(context)}`, {
@@ -52,14 +48,14 @@ const VendorsPage = () => {
   const rows = vendors.map(vendor => ({
     id: vendor.vendor_id,
     name: vendor.vendor_name,
-    isPromoStandards: vendor.is_promo_standards ? 'Yes' : 'No',
+    integrationFamily: vendor.integration_family,
+    protocol: vendor.api_protocol ?? 'n/a',
     status: vendor.is_active ? 'Active' : 'Inactive',
   }));
 
   const renderActions = (vendorId: number): ReactElement => (
-    <Button
-      iconOnly={<MoreHorizIcon color="secondary60" />}
-      variant="subtle"
+    <button
+      type="button"
       aria-label="Vendor actions"
       onClick={event => {
         event.preventDefault();
@@ -72,48 +68,107 @@ const VendorsPage = () => {
           handleDelete(vendorId);
         }
       }}
-    />
+      style={{
+        background: '#ffffff',
+        border: '1px solid #d1d5db',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        padding: '6px 10px',
+      }}
+    >
+      Actions
+    </button>
   );
 
   if (!data && !error) return <Loading />;
   if (error) return <ErrorMessage error={error} />;
 
   return (
-    <Panel header="Vendors" action={<Button onClick={handleAddNew}>Add New Vendor</Button>} id="vendors">
-      <Table
-        columns={[
-          {
-            header: 'Vendor name',
-            hash: 'name',
-            render: ({ id, name }) => (
-              <Button variant="link" onClick={() => handleEdit(id as number)}>
-                {name}
-              </Button>
-            ),
-          },
-          {
-            header: 'PromoStandards',
-            hash: 'isPromoStandards',
-            render: ({ isPromoStandards }) => <span>{isPromoStandards}</span>,
-          },
-          {
-            header: 'Status',
-            hash: 'status',
-            render: ({ status }) => <span>{status}</span>,
-          },
-          {
-            header: 'Actions',
-            hideHeader: true,
-            hash: 'id',
-            render: ({ id }) => renderActions(id as number),
-          },
-        ]}
-        items={rows}
-        itemName="Vendors"
-      />
-    </Panel>
+    <section
+      id="vendors"
+      style={{
+        background: '#ffffff',
+        border: '1px solid #e5e7eb',
+        borderRadius: '12px',
+        padding: '24px',
+      }}
+    >
+      <div
+        style={{
+          alignItems: 'center',
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginBottom: '20px',
+        }}
+      >
+        <h2 style={{ margin: 0 }}>Vendors</h2>
+        <button
+          type="button"
+          onClick={handleAddNew}
+          style={{
+            background: '#2563eb',
+            border: 'none',
+            borderRadius: '8px',
+            color: '#ffffff',
+            cursor: 'pointer',
+            padding: '10px 14px',
+          }}
+        >
+          Add New Vendor
+        </button>
+      </div>
+
+      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+        <thead>
+          <tr>
+            <th style={tableHeaderStyle}>Vendor name</th>
+            <th style={tableHeaderStyle}>Integration</th>
+            <th style={tableHeaderStyle}>Protocol</th>
+            <th style={tableHeaderStyle}>Status</th>
+            <th style={tableHeaderStyle}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(row => (
+            <tr key={row.id}>
+              <td style={tableCellStyle}>
+                <button
+                  type="button"
+                  onClick={() => handleEdit(row.id as number)}
+                  style={linkButtonStyle}
+                >
+                  {row.name}
+                </button>
+              </td>
+              <td style={tableCellStyle}>{row.integrationFamily}</td>
+              <td style={tableCellStyle}>{row.protocol}</td>
+              <td style={tableCellStyle}>{row.status}</td>
+              <td style={tableCellStyle}>{renderActions(row.id as number)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 };
 
-export default VendorsPage;
+const tableHeaderStyle: React.CSSProperties = {
+  borderBottom: '1px solid #d1d5db',
+  padding: '12px',
+  textAlign: 'left',
+};
 
+const tableCellStyle: React.CSSProperties = {
+  borderBottom: '1px solid #e5e7eb',
+  padding: '12px',
+};
+
+const linkButtonStyle: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: '#2563eb',
+  cursor: 'pointer',
+  padding: 0,
+};
+
+export default VendorsPage;

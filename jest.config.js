@@ -1,5 +1,6 @@
 module.exports = {
-  testRegex: '(<rootDir>/(test|src)/.*|(\\.|/)(test|spec))\\.(jsx?|tsx?)$',
+  roots: ['<rootDir>/test'],
+  testMatch: ['**/?(*.)+(spec|test).[jt]s?(x)'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
   moduleNameMapper: {
     '@components/(.*)': '<rootDir>/components/$1',
@@ -9,7 +10,15 @@ module.exports = {
     '@test/utils': '<rootDir>/test/utils',
     '@types': '<rootDir>/types',
   },
+  transform: {
+    '^.+\\.(js|jsx|ts|tsx)$': ['babel-jest', { presets: ['next/babel'] }],
+  },
+  testPathIgnorePatterns: ['<rootDir>/.next/', '<rootDir>/node_modules/'],
+  watchPathIgnorePatterns: ['<rootDir>/.next/'],
+  watchman: false,
+  cacheDirectory: '<rootDir>/.cache/jest',
+  clearMocks: true,
   coverageDirectory: '<rootDir>/coverage',
-  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   testEnvironment: 'jsdom',
 };

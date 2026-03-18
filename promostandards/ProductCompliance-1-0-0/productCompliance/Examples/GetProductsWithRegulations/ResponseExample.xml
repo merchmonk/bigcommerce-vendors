@@ -1,0 +1,48 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <ns:GetProductsWithRegulationsResponse>
+         <ns:productWithRegulationsArray>
+            <ns:ProductWithRegulations>
+            	<!--Has multiple compliance groups and they apply to all parts-->
+               <ns:productId>B00238</ns:productId>
+               <ns:complianceGroups>
+                  <ns:complianceGroup>CaliforniaProp65</ns:complianceGroup>
+                  <ns:complianceGroup>[Future]</ns:complianceGroup>
+               </ns:complianceGroups>
+            </ns:ProductWithRegulations>
+            <ns:ProductWithRegulations>
+            	<!--Has single compliance group and applies to all parts-->
+               <ns:productId>5250</ns:productId>
+               <ns:complianceGroups>
+                  <ns:complianceGroup>CaliforniaProp65</ns:complianceGroup>
+               </ns:complianceGroups>
+            </ns:ProductWithRegulations>
+            <ns:ProductWithRegulations>
+            	<!--Has single compliance group and applies to specific part-->
+               <ns:productId>B00700</ns:productId>
+               <ns:partId>ABC</ns:partId>
+               <ns:complianceGroups>
+                  <ns:complianceGroup>CaliforniaProp65</ns:complianceGroup>
+               </ns:complianceGroups>
+            </ns:ProductWithRegulations>
+            <ns:ProductWithRegulations>
+            	<!--Has single compliance group and applies to specific part-->
+               <ns:productId>B00238</ns:productId>
+               <ns:partId>DEF</ns:partId>
+               <ns:complianceGroups>
+                  <ns:complianceGroup>CaliforniaProp65</ns:complianceGroup>
+               </ns:complianceGroups>
+            </ns:ProductWithRegulations>
+            <ns:ProductWithRegulations>
+            	<!--Has single compliance group and applies to specific part-->
+               <ns:productId>B00238</ns:productId>
+               <ns:partId>XYZ</ns:partId>
+               <ns:complianceGroups>
+                  <ns:complianceGroup>[Future]</ns:complianceGroup>
+               </ns:complianceGroups>
+            </ns:ProductWithRegulations>
+         </ns:productWithRegulationsArray>
+      </ns:GetProductsWithRegulationsResponse>
+   </soapenv:Body>
+</soapenv:Envelope>

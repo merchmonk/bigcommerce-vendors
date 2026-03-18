@@ -1,24 +1,46 @@
-import { Box, GlobalStyles } from '@bigcommerce/big-design';
-import { theme as defaultTheme } from '@bigcommerce/big-design-theme';
 import type { AppProps } from 'next/app';
-import { ThemeProvider } from 'styled-components';
 import Header from '../components/header';
 import SessionProvider from '../context/session';
 
 const MyApp = ({ Component, pageProps }: AppProps) => {
     return (
-        <ThemeProvider theme={defaultTheme}>
-            <GlobalStyles />
-            <Box
-                marginHorizontal={{ mobile: 'none', tablet: 'xxxLarge' }}
-                marginVertical={{ mobile: 'none', tablet: "xxLarge" }}
+        <>
+            <div
+                style={{
+                    margin: '0 auto',
+                    maxWidth: '1100px',
+                    padding: '24px',
+                    fontFamily: 'Arial, sans-serif',
+                    color: '#1f2937',
+                }}
             >
                 <Header />
                 <SessionProvider>
                     <Component {...pageProps} />
                 </SessionProvider>
-            </Box>
-        </ThemeProvider>
+            </div>
+            <style jsx global>{`
+                * {
+                    box-sizing: border-box;
+                }
+
+                body {
+                    margin: 0;
+                    background: #f8fafc;
+                }
+
+                button,
+                input,
+                select,
+                textarea {
+                    font: inherit;
+                }
+
+                a {
+                    color: inherit;
+                }
+            `}</style>
+        </>
     );
 };
 

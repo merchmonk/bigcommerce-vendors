@@ -1,5 +1,5 @@
 import { useRouter } from 'next/router';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { bigCommerceSDK } from '../scripts/bcSdk';
 
@@ -7,15 +7,18 @@ const SessionContext = createContext({ context: '' });
 
 const SessionProvider = ({ children }: { children: ReactNode }) => {
     const { query } = useRouter();
-    const [context, setContext] = useState('');
+    const context = typeof query.context === 'string'
+      ? query.context
+      : Array.isArray(query.context)
+        ? query.context[0] ?? ''
+        : '';
 
     useEffect(() => {
-        if (query.context) {
-            setContext(query.context.toString());
+        if (context) {
             // Keeps app in sync with BC (e.g. heatbeat, user logout, etc)
-            bigCommerceSDK(query.context);
+            bigCommerceSDK(context);
         }
-    }, [query.context]);
+    }, [context]);
 
     return (
         <SessionContext.Provider value={{ context }}>

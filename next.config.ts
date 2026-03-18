@@ -1,7 +1,9 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
+  experimental: {
+    adapterPath: import.meta.resolve('cdk-nextjs/adapter'),
+  },
 };
 
 export default nextConfig;

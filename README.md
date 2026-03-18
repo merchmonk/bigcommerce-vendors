@@ -1,27 +1,6 @@
-# NextJS Sample App
+#Merch Monk Vendors BigCommerce App
 
-This starter app includes all the files necessary to get started with a basic, hello world app. This app uses NextJS, BigDesign, Typescript, and React.
-
-## Running the app in development
-
-To get the app running locally, follow these instructions:
-
-1. [Use Node 18+ and NPM 8+](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm#checking-your-version-of-npm-and-node-js). To check the running versions, use the following commands:
-
-```shell
-node -v
-npm -v
-```
-
-2. Clone and/or fork the repo and install npm packages:
-
-```shell
-git clone git@github.com:bigcommerce/sample-app-nodejs.git my-bigcommerce-app
-cd my-bigcommerce-app
-npm install
-```
-
-3. To expose your app server using an HTTP tunnel, install [ngrok](https://www.npmjs.com/package/ngrok#usage) globally, then start the ngrok service.
+To expose your app server using an HTTP tunnel, install [ngrok](https://www.npmjs.com/package/ngrok#usage) globally, then start the ngrok service.
 
 Starting a local HTTP tunnel with ngrok requires you to create an [ngrok account](https://dashboard.ngrok.com/signup) and add your [ngrok authtoken](https://dashboard.ngrok.com/get-started/your-authtoken) to the ngrok config file.
 

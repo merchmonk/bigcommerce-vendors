@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="utf-8"?>
+<wsdl:definitions
+    name="CompanyData_v1_0_0"
+    targetNamespace="http://www.promostandards.org/WSDL/CompanyData/1.0.0/"
+    xmlns:tns="http://www.promostandards.org/WSDL/CompanyData/1.0.0/"
+    xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+>
+  <wsdl:types>
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:import namespace="http://www.promostandards.org/WSDL/CompanyData/1.0.0/"
+                  schemaLocation="CompanyData.xsd"
+      />
+    </xsd:schema>
+  </wsdl:types>
+  <wsdl:message name="GetAvailablePromoStandardsServicesRequestMessage">
+    <wsdl:part name="GetAvailablePromoStandardsServicesRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetAvailablePromoStandardsServicesResponseMessage">
+    <wsdl:part name="GetAvailablePromoStandardsServicesResponse"
+               element="tns:GetAvailablePromoStandardsServicesResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetBusinessCharacteristicsRequestMessage">
+    <wsdl:part name="GetBusinessCharacteristicsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetBusinessCharacteristicsResponseMessage">
+    <wsdl:part name="GetBusinessCharacteristicsResponse" element="tns:GetBusinessCharacteristicsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetCertificationsRequestMessage">
+    <wsdl:part name="GetCertificationsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetCertificationsResponseMessage">
+    <wsdl:part name="GetCertificationsResponse" element="tns:GetCertificationsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetContactsRequestMessage">
+    <wsdl:part name="GetContactsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetContactsResponseMessage">
+    <wsdl:part name="GetContactsResponse" element="tns:GetContactsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetPaymentMethodsRequestMessage">
+    <wsdl:part name="GetPaymentMethodsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetPaymentMethodsResponseMessage">
+    <wsdl:part name="GetPaymentMethodsResponse" element="tns:GetPaymentMethodsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetPaymentTermsRequestMessage">
+    <wsdl:part name="GetPaymentTermsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetPaymentTermsResponseMessage">
+    <wsdl:part name="GetPaymentTermsResponse" element="tns:GetPaymentTermsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetPhysicalLocationsRequestMessage">
+    <wsdl:part name="GetPhysicalLocationsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetPhysicalLocationsResponseMessage">
+    <wsdl:part name="GetPhysicalLocationsResponse" element="tns:GetPhysicalLocationsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetPoliciesRequestMessage">
+    <wsdl:part name="GetPoliciesRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetPoliciesResponseMessage">
+    <wsdl:part name="GetPoliciesResponse" element="tns:GetPoliciesResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetPromoStandardsServiceDetailsRequestMessage">
+    <wsdl:part name="GetPromoStandardsServiceDetailsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetPromoStandardsServiceDetailsResponseMessage">
+    <wsdl:part name="GetPromoStandardsServiceDetailsResponse" element="tns:GetPromoStandardsServiceDetailsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetCompanyDataRequestMessage">
+    <wsdl:part name="GetCompanyDataRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetCompanyDataResponseMessage">
+    <wsdl:part name="GetCompanyDataResponse" element="tns:GetCompanyDataResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetServiceMethodsRequestMessage">
+    <wsdl:part name="GetServiceMethodsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetServiceMethodsResponseMessage">
+    <wsdl:part name="GetServiceMethodsResponse" element="tns:GetServiceMethodsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="GetShippingMethodsRequestMessage">
+    <wsdl:part name="GetShippingMethodsRequest" element="tns:RequestMethod"/>
+  </wsdl:message>
+  <wsdl:message name="GetShippingMethodsResponseMessage">
+    <wsdl:part name="GetShippingMethodsResponse" element="tns:GetShippingMethodsResponse"/>
+  </wsdl:message>
+  <wsdl:portType name="CompanyDataService">
+    <wsdl:operation name="getAvailablePromoStandardsServices">
+      <wsdl:input message="tns:GetAvailablePromoStandardsServicesRequestMessage"/>
+      <wsdl:output message="tns:GetAvailablePromoStandardsServicesResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getBusinessCharacteristics">
+      <wsdl:input message="tns:GetBusinessCharacteristicsRequestMessage"/>
+      <wsdl:output message="tns:GetBusinessCharacteristicsResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getCertifications">
+      <wsdl:input message="tns:GetCertificationsRequestMessage"/>
+      <wsdl:output message="tns:GetCertificationsResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getCompanyData">
+      <wsdl:input message="tns:GetCompanyDataRequestMessage"/>
+      <wsdl:output message="tns:GetCompanyDataResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getContacts">
+      <wsdl:input message="tns:GetContactsRequestMessage"/>
+      <wsdl:output message="tns:GetContactsResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getPaymentMethods">
+      <wsdl:input message="tns:GetPaymentMethodsRequestMessage"/>
+      <wsdl:output message="tns:GetPaymentMethodsResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getPaymentTerms">
+      <wsdl:input message="tns:GetPaymentTermsRequestMessage"/>
+      <wsdl:output message="tns:GetPaymentTermsResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getPhysicalLocations">
+      <wsdl:input message="tns:GetPhysicalLocationsRequestMessage"/>
+      <wsdl:output message="tns:GetPhysicalLocationsResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getPolicies">
+      <wsdl:input message="tns:GetPoliciesRequestMessage"/>
+      <wsdl:output message="tns:GetPoliciesResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getPromoStandardsServiceDetails">
+      <wsdl:input message="tns:GetPromoStandardsServiceDetailsRequestMessage"/>
+      <wsdl:output message="tns:GetPromoStandardsServiceDetailsResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getServiceMethods">
+      <wsdl:input message="tns:GetServiceMethodsRequestMessage"/>
+      <wsdl:output message="tns:GetServiceMethodsResponseMessage"/>
+    </wsdl:operation>
+    <wsdl:operation name="getShippingMethods">
+      <wsdl:input message="tns:GetShippingMethodsRequestMessage"/>
+      <wsdl:output message="tns:GetShippingMethodsResponseMessage"/>
+    </wsdl:operation>
+  </wsdl:portType>
+  <wsdl:binding name="CompanyDataServiceBinding" type="tns:CompanyDataService">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="getAvailablePromoStandardsServices">
+      <soap:operation soapAction="getAvailablePromoStandardsServices" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getBusinessCharacteristics">
+      <soap:operation soapAction="getBusinessCharacteristics" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getCertifications">
+      <soap:operation soapAction="getCertifications" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getCompanyData">
+      <soap:operation soapAction="getCompanyData" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getContacts">
+      <soap:operation soapAction="getContacts" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getPaymentMethods">
+      <soap:operation soapAction="getPaymentMethods" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getPaymentTerms">
+      <soap:operation soapAction="getPaymentTerms" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getPhysicalLocations">
+      <soap:operation soapAction="getPhysicalLocations" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getPolicies">
+      <soap:operation soapAction="getPolicies" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getPromoStandardsServiceDetails">
+      <soap:operation soapAction="getPromoStandardsServiceDetails" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getServiceMethods">
+      <soap:operation soapAction="getServiceMethods" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getShippingMethods">
+      <soap:operation soapAction="getShippingMethods" style="document"/>
+      <wsdl:input>
+        <soap:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+  <wsdl:service name="CompanyDataService">
+    <wsdl:port name="CompanyDataServiceBinding" binding="tns:CompanyDataServiceBinding">
+      <soap:address location="[Endpoint URL]"/>
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>

@@ -1,0 +1,34 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/">
+   <soapenv:Header/>
+   <soapenv:Body>
+   <!--
+   Has prop 65 data applicable to all parts (request didn't supply part id); with multiple warnings; chemicals declared and short-form used on product
+   -->
+      <ns:GetComplianceResponse>
+         <ns:ComplianceDataArray>
+            <ns:ComplianceData>
+               <ns:productId>5250</ns:productId>
+               <ns:CAProp65>
+                  <ns:ApplicableWarningsArray>
+                     <ns:ApplicableWarnings>
+                        <ns:applicableWarning>On Product Cancer</ns:applicableWarning>
+                        <ns:applicableChemicals>
+                           <ns:applicableChemical>Diisononyl phthalate</ns:applicableChemical>
+                        </ns:applicableChemicals>
+                        <ns:warningLabelApplied>Short Form</ns:warningLabelApplied>
+                     </ns:ApplicableWarnings>
+                     <ns:ApplicableWarnings>
+                        <ns:applicableWarning>On Product Reproductive</ns:applicableWarning>
+                        <ns:applicableChemicals>
+                           <ns:applicableChemical>Cadmium</ns:applicableChemical>
+                        </ns:applicableChemicals>
+                        <ns:warningLabelApplied>Short Form</ns:warningLabelApplied>
+                     </ns:ApplicableWarnings>
+                  </ns:ApplicableWarningsArray>
+                  <ns:policyForApplyingLabel>Applied When Shipping to California</ns:policyForApplyingLabel>
+               </ns:CAProp65>
+            </ns:ComplianceData>
+         </ns:ComplianceDataArray>
+      </ns:GetComplianceResponse>
+   </soapenv:Body>
+</soapenv:Envelope>

@@ -1,0 +1,586 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema
+    targetNamespace="http://www.promostandards.org/WSDL/CompanyData/1.0.0/"
+    xmlns:tns="http://www.promostandards.org/WSDL/CompanyData/1.0.0/"
+    xmlns:countries="http://www.codesynthesis.com/xmlns/xsstl"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="qualified"
+>
+  <xsd:import namespace="http://www.codesynthesis.com/xmlns/xsstl"
+              schemaLocation="iso3166-country-code.xsd"/>
+  <xsd:simpleType name="addressLine">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="35"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="attentionTo">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="35"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="brandName">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="128"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="city">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="30"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="companyName">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="35"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="contactName">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="64"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="contactTitle">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="64"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="country">
+    <xsd:restriction base="countries:ISO3166CountyCode">
+      <xsd:minLength value="2"/>
+      <xsd:maxLength value="2"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="decimalGreaterThanZero">
+    <xsd:restriction base="xsd:decimal">
+      <xsd:minExclusive value="0"/>
+      <xsd:fractionDigits value="4"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="description">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="2048"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="email">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="256"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="enumeration">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="64"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="identifier">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="64"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="identifierNumber">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="64"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="password">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="64"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="phoneExtension">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="10"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="phoneNumber">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="32"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="policyName">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="64"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="postalCode">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="10"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="promoStandardsServiceEnvironment">
+    <xsd:restriction base="xsd:token">
+      <xsd:enumeration value="Production"/>
+      <xsd:enumeration value="Test"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="region">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="3"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="serviceMessageCode">
+    <xsd:restriction base="xsd:int"/>
+  </xsd:simpleType>
+  <xsd:simpleType name="serviceMessageDescription">
+    <xsd:restriction base="xsd:token">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="256"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="serviceMessageSeverity">
+    <xsd:restriction base="xsd:token">
+      <xsd:enumeration value="Error"/>
+      <xsd:enumeration value="Information"/>
+      <xsd:enumeration value="Warning"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="shippingAccountType">
+    <xsd:restriction base="xsd:token">
+      <xsd:enumeration value="Any"/>
+      <xsd:enumeration value="SupplierAccountOnly"/>
+      <xsd:enumeration value="OtherAccountOnly"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="shippingMethodName">
+    <xsd:restriction base="xsd:string">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="64"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:simpleType name="url">
+    <xsd:restriction base="xsd:anyURI">
+      <xsd:minLength value="1"/>
+      <xsd:maxLength value="2048"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+  <xsd:complexType name="Address">
+    <xsd:sequence>
+      <xsd:element name="addressName" type="tns:companyName"/>
+      <xsd:element name="attentionTo" type="tns:attentionTo" minOccurs="0"/>
+      <xsd:element name="address1" type="tns:addressLine"/>
+      <xsd:element name="address2" type="tns:addressLine" minOccurs="0"/>
+      <xsd:element name="address3" type="tns:addressLine" minOccurs="0"/>
+      <xsd:element name="city" type="tns:city"/>
+      <xsd:element name="region" type="tns:region"/>
+      <xsd:element name="postalCode" type="tns:postalCode"/>
+      <xsd:element name="country" type="tns:country" minOccurs="0"/>
+    </xsd:sequence>
+  </xsd:complexType>
+  <xsd:element name="Brand">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="brandId" type="tns:identifier"/>
+        <xsd:element name="brandName" type="tns:brandName"/>
+        <xsd:element name="brandLogoUrl" type="tns:url" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="BrandArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Brand" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="BusinessCharacteristic">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="businessCharacteristicCategory" type="tns:enumeration"/>
+        <xsd:element name="businessCharacteristicName" type="tns:enumeration"/>
+        <xsd:element name="businessCharacteristicDescription" type="tns:description" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="BusinessCharacteristicArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:BusinessCharacteristic" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="BusinessLine">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="businessLineId" type="tns:identifier"/>
+        <xsd:element name="name" type="tns:companyName"/>
+        <xsd:element name="website" type="tns:url" minOccurs="0"/>
+        <xsd:element name="logoUrl" type="tns:url" minOccurs="0"/>
+        <xsd:element ref="tns:Contact" minOccurs="0"/>
+        <xsd:element ref="tns:IdentifierArray" minOccurs="0"/>
+        <xsd:element ref="tns:BrandArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="BusinessLineArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:BusinessLine" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Certification">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="certificationCategory" type="tns:enumeration"/>
+        <xsd:element name="certificationName" type="tns:enumeration"/>
+        <xsd:element name="certificationNumber" type="tns:identifierNumber" minOccurs="0"/>
+        <xsd:element name="startDate" type="xsd:date" minOccurs="0"/>
+        <xsd:element name="expiryDate" type="xsd:date" minOccurs="0"/>
+        <xsd:element name="certificationDescription" type="tns:description" minOccurs="0"/>
+        <xsd:element name="certificationUrl" type="tns:url" minOccurs="0"/>
+        <xsd:element name="certificationBodyUrl" type="tns:url" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="CertificationArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Certification" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="CompanyData">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="name" type="tns:companyName"/>
+        <xsd:element name="website" type="tns:url" minOccurs="0"/>
+        <xsd:element name="logoUrl" type="tns:url" minOccurs="0"/>
+        <xsd:element ref="tns:Contact"/>
+        <xsd:element ref="tns:IdentifierArray" minOccurs="0"/>
+        <xsd:element ref="tns:BusinessLineArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Contact">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="contactName" type="tns:contactName"/>
+        <xsd:element name="contactDepartment" type="tns:enumeration" minOccurs="0"/>
+        <xsd:element name="contactRole" type="tns:enumeration" minOccurs="0"/>
+        <xsd:element name="contactTitle" type="tns:contactTitle" minOccurs="0"/>
+        <xsd:element name="physicalLocationId" type="tns:identifier" minOccurs="0"/>
+        <xsd:element name="businessLineId" type="tns:identifier" minOccurs="0"/>
+        <xsd:element ref="tns:PhoneArray" minOccurs="0"/>
+        <xsd:element name="email" type="tns:email" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ContactArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Contact" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetAvailablePromoStandardsServicesResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PromoStandardsServiceArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetBusinessCharacteristicsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:BusinessCharacteristicArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetCertificationsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:CertificationArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetCompanyDataResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:CompanyData" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetContactsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:ContactArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetPaymentMethodsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PaymentMethodArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetPaymentTermsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PaymentTermsArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetPhysicalLocationsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PhysicalLocationArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetPoliciesResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PolicyArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetPromoStandardsServiceDetailsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PromoStandardsServiceDetailArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetServiceMethodsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:ServiceMethodArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="GetShippingMethodsResponse">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:ShippingMethodArray" minOccurs="0"/>
+        <xsd:element ref="tns:ServiceMessageArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Identifier">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="identifierType" type="tns:enumeration"/>
+        <xsd:element name="identifierNumber" type="tns:identifierNumber"/>
+        <xsd:element name="country" type="tns:country" minOccurs="0"/>
+        <xsd:element name="startDate" type="xsd:date" minOccurs="0"/>
+        <xsd:element name="expiryDate" type="xsd:date" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="IdentifierArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Identifier" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PaymentMethod">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="paymentMethodType" type="tns:enumeration"/>
+        <xsd:element name="paymentMethodName" type="tns:enumeration"/>
+        <xsd:element name="paymentMethodDescription" type="tns:description" minOccurs="0"/>
+        <xsd:element name="paymentMethodSurcharge" type="xsd:decimal" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PaymentMethodArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PaymentMethod" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PaymentTerms">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="paymentTermsName" type="tns:enumeration"/>
+        <xsd:element name="paymentTermsAnchor" type="tns:enumeration" minOccurs="0"/>
+        <xsd:element name="paymentDueDays" type="xsd:integer" minOccurs="0"/>
+        <xsd:element name="paymentDiscount" type="tns:decimalGreaterThanZero" minOccurs="0"/>
+        <xsd:element name="paymentDiscountDays" type="xsd:integer" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PaymentTermsArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PaymentTerms" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Phone">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="phoneType" type="tns:enumeration"/>
+        <xsd:element name="phoneNumber" type="tns:phoneNumber"/>
+        <xsd:element name="phoneExtension" type="tns:phoneExtension" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PhoneArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Phone" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PhysicalLocation">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="physicalLocationId" type="tns:identifier"/>
+        <xsd:element name="Address" type="tns:Address"/>
+        <xsd:element name="fobId" type="tns:identifier" minOccurs="0"/>
+        <xsd:element name="inventoryLocationId" type="tns:identifier" minOccurs="0"/>
+        <xsd:element name="businessLineId" type="tns:identifier" minOccurs="0"/>
+        <xsd:element name="defaultShippingMethodId" type="tns:identifier" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PhysicalLocationArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PhysicalLocation" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PhysicalLocationIdArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="physicalLocationId" type="tns:identifier" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="Policy">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="policyCategory" type="tns:enumeration"/>
+        <xsd:element name="policyName" type="tns:policyName"/>
+        <xsd:element name="policyDescription" type="tns:description"/>
+        <xsd:element name="startDate" type="xsd:date" minOccurs="0"/>
+        <xsd:element name="expiryDate" type="xsd:date" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PolicyArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:Policy" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PromoStandardsService">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="promoStandardsServiceType" type="tns:enumeration"/>
+        <xsd:element name="wsVersion" type="tns:enumeration"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PromoStandardsServiceArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PromoStandardsService" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PromoStandardsServiceDetail">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="promoStandardsServiceType" type="tns:enumeration"/>
+        <xsd:element name="wsVersion" type="tns:enumeration"/>
+        <xsd:element name="endpointUrl" type="tns:url"/>
+        <xsd:element name="wsdlUrl" type="tns:url" minOccurs="0"/>
+        <xsd:element name="environment" type="tns:promoStandardsServiceEnvironment"/>
+        <xsd:element name="country" type="tns:country" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="PromoStandardsServiceDetailArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:PromoStandardsServiceDetail" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="RequestMethod">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="wsVersion" type="tns:enumeration"/>
+        <xsd:element name="id" type="tns:identifier" minOccurs="0"/>
+        <xsd:element name="password" type="tns:password" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ServiceMessage">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="code" type="tns:serviceMessageCode"/>
+        <xsd:element name="description" type="tns:serviceMessageDescription"/>
+        <xsd:element name="severity" type="tns:serviceMessageSeverity"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ServiceMessageArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:ServiceMessage" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ServiceMethodArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="serviceMethod" type="tns:enumeration" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ShippingMethod">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="shippingMethodId" type="tns:identifier"/>
+        <xsd:element name="shippingMethodName" type="tns:shippingMethodName"/>
+        <xsd:element name="isDefaultShippingMethod" type="xsd:boolean" minOccurs="0"/>
+        <xsd:element name="shippingMethodCarrier" type="tns:enumeration" minOccurs="0"/>
+        <xsd:element name="shippingMethodService" type="tns:enumeration" minOccurs="0"/>
+        <xsd:element name="shippingAccountType" type="tns:shippingAccountType" minOccurs="0"/>
+        <xsd:element ref="tns:PhysicalLocationIdArray" minOccurs="0"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="ShippingMethodArray">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element ref="tns:ShippingMethod" maxOccurs="unbounded"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+</xsd:schema>
