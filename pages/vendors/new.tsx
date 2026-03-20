@@ -1,8 +1,7 @@
 import { useRouter } from 'next/router';
 import VendorForm from '../../components/vendorForm';
 import { useSession } from '../../context/session';
-import type { VendorFormData } from '../../types';
-import type { MappingProtocol } from '../../types';
+import type { MappingProtocol, VendorConnectionTestResult, VendorFormData } from '../../types';
 
 const NewVendorPage = () => {
   const router = useRouter();
@@ -29,11 +28,9 @@ const NewVendorPage = () => {
     vendor_api_url?: string;
     vendor_account_id?: string;
     vendor_secret?: string;
+    integration_family?: VendorFormData['integration_family'];
     api_protocol?: MappingProtocol;
-    operation_name?: string;
-    endpoint_version?: string;
-    runtime_config?: Record<string, unknown>;
-  }) => {
+  }): Promise<VendorConnectionTestResult> => {
     const response = await fetch(`/api/vendors/test-connection?context=${encodeURIComponent(context)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -43,6 +40,10 @@ const NewVendorPage = () => {
     return {
       ok: response.ok && !!payload?.ok,
       message: payload?.message,
+      available_endpoint_count: payload?.available_endpoint_count,
+      fingerprint: payload?.fingerprint,
+      tested_at: payload?.tested_at,
+      endpoints: payload?.endpoints,
     };
   };
 

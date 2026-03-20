@@ -1,80 +1,152 @@
-#Merch Monk Vendors BigCommerce App
+# MerchMonk Vendors BigCommerce App
 
-To expose your app server using an HTTP tunnel, install [ngrok](https://www.npmjs.com/package/ngrok#usage) globally, then start the ngrok service.
+MerchMonk Vendors is an internal BigCommerce embedded app used to onboard vendors, synchronize supplier catalogs into BigCommerce, project the blank-product and decoration contract used by the storefront/designer, and coordinate downstream supplier order workflows.
 
-Starting a local HTTP tunnel with ngrok requires you to create an [ngrok account](https://dashboard.ngrok.com/signup) and add your [ngrok authtoken](https://dashboard.ngrok.com/get-started/your-authtoken) to the ngrok config file.
+The application runtime in this repository is a Next.js app backed by Prisma and PostgreSQL. The deployment source of truth is the sibling [`cdk-app`](../cdk-app) project, not legacy Heroku-era manifests.
 
-```shell
-ngrok config add-authtoken $YOUR_AUTHTOKEN
+## Source Of Truth
+
+- Product direction and architecture roadmap:
+  - [`docs/bigcommerce-vendors-app.md`](./docs/bigcommerce-vendors-app.md)
+  - [`docs/bigcommerce-vendors-improvement-plan.md`](./docs/bigcommerce-vendors-improvement-plan.md)
+- Saved implementation tranche docs:
+  - [`docs/bigcommerce-vendors-foundation-tranche-implementation-plan.md`](./docs/bigcommerce-vendors-foundation-tranche-implementation-plan.md)
+  - [`docs/bigcommerce-vendors-phase-0-cleanup-implementation-plan.md`](./docs/bigcommerce-vendors-phase-0-cleanup-implementation-plan.md)
+- Product contract and storefront consumption guides:
+  - [`docs/bigcommerce-product-contract-guide.md`](./docs/bigcommerce-product-contract-guide.md)
+  - [`docs/bigcommerce-product-integration-guide.md`](./docs/bigcommerce-product-integration-guide.md)
+- Infrastructure and deployment source of truth:
+  - [`../cdk-app/README.md`](../cdk-app/README.md)
+  - [`../cdk-app/docs/DEPLOY-SETUP.md`](../cdk-app/docs/DEPLOY-SETUP.md)
+
+## Current Runtime Baseline
+
+- Next.js app with pages and API routes
+- Prisma ORM with PostgreSQL (`DATABASE_URL`)
+- AWS-native observability, async jobs, and snapshot archival
+- BigCommerce embedded-app auth/load flow
+- Deployment through the sibling `cdk-app` repo to AWS infrastructure
+
+This repository should not be treated as a Heroku, ClearDB, Firebase, or MySQL app.
+
+## Local Development
+
+### Prerequisites
+
+- Node.js `>=20.9`
+- npm `>=10 <12` or the repo package-manager version
+- a BigCommerce draft app in the Developer Portal
+- `ngrok` or another HTTPS tunnel for local callback testing
+- AWS credentials with permission to read the deployed DB secret if you are using the shared Aurora/PostgreSQL environment
+
+### 1. Install dependencies
+
+```bash
+npm install
 ```
 
-You can use `npm` to install ngrok:
+### 2. Register or update the BigCommerce draft app
 
-```shell
-npm install -g ngrok
+For local development, expose the local server over HTTPS and use the tunnel URL for these callbacks:
+
+```text
+https://<tunnel-url>/api/auth
+https://<tunnel-url>/api/load
+https://<tunnel-url>/api/uninstall
 ```
 
-Alternatively, MacOS users can use the [homebrew](https://brew.sh/) package manager:
+You can use `ngrok` against the default local app port:
 
-```shell
-brew install ngrok
-```
-
-Start ngrok on port `3000` to expose the default Next.js server:
-
-```shell
+```bash
 ngrok http 3000
 ```
 
-4. Use the BigCommerce [Developer Portal](https://devtools.bigcommerce.com) to [register a draft app](https://developer.bigcommerce.com/api-docs/apps/quick-start#register-the-app). For steps 5-7, enter callbacks as `'https://{ngrok_url}/api/{auth || load || uninstall}'`. Get the `ngrok_url` from the ngrok terminal session.
+### 3. Configure environment variables
 
-```shell
-https://12345.ngrok-free.app/api/auth # auth callback
-https://12345.ngrok-free.app/api/load # load callback
-https://12345.ngrok-free.app/api/uninstall # uninstall callback
+Copy the example file and fill in the values:
+
+```bash
+cp .env.example .env
 ```
 
-5. Copy `.env-sample` to `.env`.
+Required variables:
 
-```shell
-cp .env-sample .env
+- `CLIENT_ID`
+- `CLIENT_SECRET`
+- `ACCOUNT_UUID`
+- `AUTH_CALLBACK`
+- `DATABASE_URL`
+- `JWT_KEY`
+
+Supporting BigCommerce host variables already exist in the example file:
+
+- `ENVIRONMENT`
+- `LOGIN_URL`
+- `API_URL`
+
+### 4. Build `DATABASE_URL`
+
+This app uses PostgreSQL through Prisma. In deployed environments, infrastructure and secrets are provisioned by `cdk-app`.
+
+For local development against the shared AWS database:
+
+1. Read the database credentials from AWS Secrets Manager.
+2. Use the Aurora/proxy endpoint exposed by the `cdk-app` outputs.
+3. Build a PostgreSQL connection string for `DATABASE_URL`.
+
+The example file includes the current secret naming convention and a sample CLI command. The full deploy/bootstrap reference is in [`../cdk-app/docs/DEPLOY-SETUP.md`](../cdk-app/docs/DEPLOY-SETUP.md).
+
+### 5. Apply migrations and seed PromoStandards mappings
+
+For an existing deployed/shared database:
+
+```bash
+npm run prisma:migrate:deploy
+npm run db:seed
 ```
 
-6. In the `.env` file, replace the `CLIENT_ID` and `CLIENT_SECRET` variables with the API account credentials in the app profile. To locate the credentials, find the app's profile in the [Developer Portal](https://devtools.bigcommerce.com/my/apps), then click **View Client ID**.
+For local schema work during development:
 
-7. In the `.env` file, update the `AUTH_CALLBACK` variable with the auth callback URL from step 4.
+```bash
+npm run prisma:migrate:dev
+```
 
-8. In the `.env` file, enter a secret `JWT_KEY`. To support HS256 encryption, the JWT key must be at least 32 random characters (256 bits).
+PromoStandards endpoint mappings are seeded through [`prisma/seed.ts`](./prisma/seed.ts). Request-time endpoint seeding has been removed from operator routes.
 
-9. **Configure the data store.** This project was written to use [Firebase](https://firebase.google.com/) or [MySQL](https://www.mysql.com/)
+### 6. Start the app
 
-   In the `.env` file, specify the `DB_TYPE`.
-
-   If using Firebase, copy the contents of your Service Account JSON key file into the `sample-firebase-keys.json` file. This file can be generated by:
-   1. Creating a new project in Firebase
-   2. Adding a Cloud Firestore
-   3. And generating a new Private Key under Project Settings > Service Accounts
-   See the [Firebase quickstart (Google)](https://firebase.google.com/docs/firestore/quickstart) for more detailed information.
-
-   If using MySQL, supply the `MYSQL_` config keys listed in the `.env` file, then do the initial database migration by running the following npm script: `npm run db:setup`
-
-10. Start your dev environment in a dedicated terminal session, **separate from `ngrok`**.
-
-```shell
+```bash
 npm run dev
 ```
 
-> If you relaunch `ngrok`, update the callbacks in steps 4 and 7 with the new `ngrok_url`. You can learn more about [persisting ngrok tunnels longer (ngrok)](https://ngrok.com/docs/getting-started/#step-3-connect-your-agent-to-your-ngrok-account).
+## Useful Commands
 
-11. Consult our developer documentation to [install and launch the app](https://developer.bigcommerce.com/api-docs/apps/quick-start#install-the-app).
-
-## Production builds
-
-In production, you must build and run optimized version of the code. Use the following commands to get started:
-
-> When you run the `start` script, specify a port number using the `-p` flag. Otherwise, the process will fail.
-
-```shell
+```bash
+npm run dev
 npm run build
 npm run start -p 3000
+npm run test
+npm run lint
+npm run prisma:generate
+npm run prisma:migrate:deploy
+npm run db:seed
 ```
+
+## Production And Deployment
+
+Production deployment is owned by the sibling [`cdk-app`](../cdk-app) repository.
+
+Use that repository for:
+
+- AWS bootstrap and deployer credentials
+- VPC, Aurora/PostgreSQL, RDS Proxy, CloudFront, WAF, Lambda, SQS, EventBridge, and shared platform resources
+- `VendorsAppStack`, `AdminAppStack`, and shared commerce-platform infrastructure
+
+This repository's [`app.json`](./app.json) is retained only as a legacy metadata manifest. It is not the deployment source of truth.
+
+## Architecture Notes
+
+- BigCommerce is the runtime product authority for storefront/designer product reads.
+- MerchMonk DB stores vendor configuration, mappings, jobs, logs, and integration state, not a second operational product catalog.
+- Async work runs through the job/control-plane model documented in the roadmap and ADRs.
+- The formal architecture decisions for this repository now live under [`docs/adrs/`](./docs/adrs/README.md).

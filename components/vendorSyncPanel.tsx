@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import useSWR from 'swr';
 
 interface VendorSyncPanelProps {
@@ -129,16 +130,32 @@ const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
                 <th style={tableHeaderStyle}>Status</th>
                 <th style={tableHeaderStyle}>Read</th>
                 <th style={tableHeaderStyle}>Written</th>
+                <th style={tableHeaderStyle}>Diagnostics</th>
               </tr>
             </thead>
             <tbody>
               {runs.slice(0, 10).map(run => (
                 <tr key={run.sync_run_id}>
-                  <td style={tableCellStyle}>#{run.sync_run_id}</td>
+                  <td style={tableCellStyle}>
+                    <Link
+                      href={`/vendors/${vendorId}/sync-runs/${run.sync_run_id}`}
+                      style={tableLinkStyle}
+                    >
+                      #{run.sync_run_id}
+                    </Link>
+                  </td>
                   <td style={tableCellStyle}>{run.sync_scope}</td>
                   <td style={tableCellStyle}>{run.status}</td>
                   <td style={tableCellStyle}>{run.records_read}</td>
                   <td style={tableCellStyle}>{run.records_written}</td>
+                  <td style={tableCellStyle}>
+                    <Link
+                      href={`/vendors/${vendorId}/sync-runs/${run.sync_run_id}`}
+                      style={tableLinkStyle}
+                    >
+                      View diagnostics
+                    </Link>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -158,6 +175,12 @@ const tableHeaderStyle: React.CSSProperties = {
 const tableCellStyle: React.CSSProperties = {
   borderBottom: '1px solid #e5e7eb',
   padding: '8px',
+};
+
+const tableLinkStyle: React.CSSProperties = {
+  color: '#0f766e',
+  fontWeight: 700,
+  textDecoration: 'none',
 };
 
 export default VendorSyncPanel;

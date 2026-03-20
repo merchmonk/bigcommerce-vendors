@@ -3,6 +3,14 @@ import type {
   EnrichmentSource,
   EndpointMapping,
   EtlSyncRun,
+  IntegrationJob,
+  IntegrationJobEvent,
+  IntegrationJobKind,
+  IntegrationJobStatus,
+  OrderIntegrationState,
+  OrderLifecycleStatus,
+  OperatorTrace,
+  OperatorTraceCategory,
   MappingPayloadFormat,
   MappingProtocol,
   MappingStandardType,
@@ -47,6 +55,55 @@ export interface SyncRunCreateInput {
   details?: Record<string, unknown>;
 }
 
+export interface IntegrationJobCreateInput {
+  job_kind: IntegrationJobKind;
+  vendor_id: number;
+  mapping_id?: number | null;
+  order_integration_state_id?: number | null;
+  sync_scope?: SyncScope;
+  source_action: string;
+  dedupe_key: string;
+  correlation_id: string;
+  request_payload?: Record<string, unknown>;
+  status?: IntegrationJobStatus;
+  queue_message_id?: string | null;
+  attempt_count?: number;
+  last_error?: string | null;
+}
+
+export interface IntegrationJobUpdateInput {
+  integration_job_id: number;
+  status?: IntegrationJobStatus;
+  attempt_count?: number;
+  queue_message_id?: string | null;
+  last_error?: string | null;
+  started_at?: Date | null;
+  ended_at?: Date | null;
+}
+
+export interface IntegrationJobEventCreateInput {
+  integration_job_id: number;
+  event_name: string;
+  level?: 'info' | 'warn' | 'error';
+  payload?: Record<string, unknown>;
+}
+
+export interface OperatorTraceCreateInput {
+  category: OperatorTraceCategory;
+  correlation_id: string;
+  vendor_id?: number | null;
+  integration_job_id?: number | null;
+  order_integration_state_id?: number | null;
+  sync_run_id?: number | null;
+  method: string;
+  target: string;
+  action: string;
+  status_code?: number | null;
+  snapshot_bucket?: string | null;
+  snapshot_key?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 export interface SyncRunCompleteInput {
   sync_run_id: number;
   status: Exclude<SyncRunStatus, 'RUNNING' | 'PENDING'>;
@@ -89,6 +146,57 @@ export interface ProductEnrichmentRetryUpsertInput {
   metadata?: Record<string, unknown>;
   next_retry_at?: Date | null;
   resolved_at?: Date | null;
+}
+
+export interface OrderIntegrationStateCreateInput {
+  vendor_id: number;
+  external_order_id: string;
+  order_source?: string;
+  purchase_order_number: string;
+  sales_order_number?: string | null;
+  order_type?: string | null;
+  lifecycle_status?: OrderLifecycleStatus;
+  status_label?: string | null;
+  status_code?: string | null;
+  shipment_status?: string | null;
+  invoice_status?: string | null;
+  remittance_status?: string | null;
+  submission_payload?: Record<string, unknown>;
+  latest_vendor_payload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  last_error?: string | null;
+  submitted_at?: Date | null;
+  last_status_polled_at?: Date | null;
+  next_status_poll_at?: Date | null;
+  last_shipment_polled_at?: Date | null;
+  next_shipment_poll_at?: Date | null;
+  last_invoice_polled_at?: Date | null;
+  next_invoice_poll_at?: Date | null;
+  last_remittance_submitted_at?: Date | null;
+  completed_at?: Date | null;
+}
+
+export interface OrderIntegrationStateUpdateInput {
+  order_integration_state_id: number;
+  sales_order_number?: string | null;
+  lifecycle_status?: OrderLifecycleStatus;
+  status_label?: string | null;
+  status_code?: string | null;
+  shipment_status?: string | null;
+  invoice_status?: string | null;
+  remittance_status?: string | null;
+  latest_vendor_payload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  last_error?: string | null;
+  submitted_at?: Date | null;
+  last_status_polled_at?: Date | null;
+  next_status_poll_at?: Date | null;
+  last_shipment_polled_at?: Date | null;
+  next_shipment_poll_at?: Date | null;
+  last_invoice_polled_at?: Date | null;
+  next_invoice_poll_at?: Date | null;
+  last_remittance_submitted_at?: Date | null;
+  completed_at?: Date | null;
 }
 
 function serializeEndpointMapping(row: {
@@ -163,6 +271,100 @@ function serializeSyncRun(row: {
     records_written: row.records_written,
     error_message: row.error_message,
     details: (row.details ?? {}) as Record<string, unknown>,
+  };
+}
+
+function serializeIntegrationJob(row: {
+  integration_job_id: bigint;
+  job_kind: IntegrationJobKind;
+  vendor_id: number;
+  mapping_id: number | null;
+  order_integration_state_id: bigint | null;
+  sync_scope: SyncScope;
+  source_action: string;
+  dedupe_key: string;
+  correlation_id: string;
+  request_payload: unknown;
+  status: IntegrationJobStatus;
+  attempt_count: number;
+  queue_message_id: string | null;
+  last_error: string | null;
+  submitted_at: Date;
+  started_at: Date | null;
+  ended_at: Date | null;
+}): IntegrationJob {
+  return {
+    integration_job_id: Number(row.integration_job_id),
+    job_kind: row.job_kind,
+    vendor_id: row.vendor_id,
+    mapping_id: row.mapping_id,
+    order_integration_state_id: row.order_integration_state_id ? Number(row.order_integration_state_id) : null,
+    sync_scope: row.sync_scope,
+    source_action: row.source_action,
+    dedupe_key: row.dedupe_key,
+    correlation_id: row.correlation_id,
+    request_payload: (row.request_payload ?? {}) as Record<string, unknown>,
+    status: row.status,
+    attempt_count: row.attempt_count,
+    queue_message_id: row.queue_message_id,
+    last_error: row.last_error,
+    submitted_at: row.submitted_at.toISOString(),
+    started_at: row.started_at ? row.started_at.toISOString() : null,
+    ended_at: row.ended_at ? row.ended_at.toISOString() : null,
+  };
+}
+
+function serializeIntegrationJobEvent(row: {
+  integration_job_event_id: bigint;
+  integration_job_id: bigint;
+  event_name: string;
+  level: string;
+  payload: unknown;
+  created_at: Date;
+}): IntegrationJobEvent {
+  return {
+    integration_job_event_id: Number(row.integration_job_event_id),
+    integration_job_id: Number(row.integration_job_id),
+    event_name: row.event_name,
+    level: row.level as IntegrationJobEvent['level'],
+    payload: (row.payload ?? {}) as Record<string, unknown>,
+    created_at: row.created_at.toISOString(),
+  };
+}
+
+function serializeOperatorTrace(row: {
+  operator_trace_id: bigint;
+  category: OperatorTraceCategory;
+  correlation_id: string;
+  vendor_id: number | null;
+  integration_job_id: bigint | null;
+  order_integration_state_id: bigint | null;
+  sync_run_id: bigint | null;
+  method: string;
+  target: string;
+  action: string;
+  status_code: number | null;
+  snapshot_bucket: string | null;
+  snapshot_key: string | null;
+  metadata: unknown;
+  created_at: Date;
+}): OperatorTrace {
+  return {
+    operator_trace_id: Number(row.operator_trace_id),
+    category: row.category,
+    correlation_id: row.correlation_id,
+    vendor_id: row.vendor_id,
+    integration_job_id: row.integration_job_id ? Number(row.integration_job_id) : null,
+    order_integration_state_id: row.order_integration_state_id ? Number(row.order_integration_state_id) : null,
+    sync_run_id: row.sync_run_id ? Number(row.sync_run_id) : null,
+    method: row.method,
+    target: row.target,
+    action: row.action,
+    status_code: row.status_code,
+    snapshot_bucket: row.snapshot_bucket,
+    snapshot_key: row.snapshot_key,
+    metadata: (row.metadata ?? {}) as Record<string, unknown>,
+    created_at: row.created_at.toISOString(),
   };
 }
 
@@ -253,6 +455,70 @@ function serializeProductEnrichmentRetry(row: {
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
     resolved_at: row.resolved_at ? row.resolved_at.toISOString() : null,
+  };
+}
+
+function serializeOrderIntegrationState(row: {
+  order_integration_state_id: bigint;
+  vendor_id: number;
+  external_order_id: string;
+  order_source: string;
+  purchase_order_number: string;
+  sales_order_number: string | null;
+  order_type: string | null;
+  lifecycle_status: OrderLifecycleStatus;
+  status_label: string | null;
+  status_code: string | null;
+  shipment_status: string | null;
+  invoice_status: string | null;
+  remittance_status: string | null;
+  submission_payload: unknown;
+  latest_vendor_payload: unknown;
+  metadata: unknown;
+  last_error: string | null;
+  submitted_at: Date | null;
+  last_status_polled_at: Date | null;
+  next_status_poll_at: Date | null;
+  last_shipment_polled_at: Date | null;
+  next_shipment_poll_at: Date | null;
+  last_invoice_polled_at: Date | null;
+  next_invoice_poll_at: Date | null;
+  last_remittance_submitted_at: Date | null;
+  completed_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}): OrderIntegrationState {
+  return {
+    order_integration_state_id: Number(row.order_integration_state_id),
+    vendor_id: row.vendor_id,
+    external_order_id: row.external_order_id,
+    order_source: row.order_source,
+    purchase_order_number: row.purchase_order_number,
+    sales_order_number: row.sales_order_number,
+    order_type: row.order_type,
+    lifecycle_status: row.lifecycle_status,
+    status_label: row.status_label,
+    status_code: row.status_code,
+    shipment_status: row.shipment_status,
+    invoice_status: row.invoice_status,
+    remittance_status: row.remittance_status,
+    submission_payload: (row.submission_payload ?? {}) as Record<string, unknown>,
+    latest_vendor_payload: (row.latest_vendor_payload ?? {}) as Record<string, unknown>,
+    metadata: (row.metadata ?? {}) as Record<string, unknown>,
+    last_error: row.last_error,
+    submitted_at: row.submitted_at ? row.submitted_at.toISOString() : null,
+    last_status_polled_at: row.last_status_polled_at ? row.last_status_polled_at.toISOString() : null,
+    next_status_poll_at: row.next_status_poll_at ? row.next_status_poll_at.toISOString() : null,
+    last_shipment_polled_at: row.last_shipment_polled_at ? row.last_shipment_polled_at.toISOString() : null,
+    next_shipment_poll_at: row.next_shipment_poll_at ? row.next_shipment_poll_at.toISOString() : null,
+    last_invoice_polled_at: row.last_invoice_polled_at ? row.last_invoice_polled_at.toISOString() : null,
+    next_invoice_poll_at: row.next_invoice_poll_at ? row.next_invoice_poll_at.toISOString() : null,
+    last_remittance_submitted_at: row.last_remittance_submitted_at
+      ? row.last_remittance_submitted_at.toISOString()
+      : null,
+    completed_at: row.completed_at ? row.completed_at.toISOString() : null,
+    created_at: row.created_at.toISOString(),
+    updated_at: row.updated_at.toISOString(),
   };
 }
 
@@ -356,6 +622,28 @@ export async function findMappingsByEndpointVersions(
       OR: selections.map(selection => ({
         endpoint_name: selection.endpoint_name,
         endpoint_version: selection.endpoint_version,
+      })),
+    },
+    orderBy: [
+      { endpoint_name: 'asc' },
+      { endpoint_version: 'asc' },
+      { operation_name: 'asc' },
+    ],
+  });
+  return rows.map(serializeEndpointMapping);
+}
+
+export async function findMappingsByEndpointOperations(
+  selections: Array<{ endpoint_name: string; endpoint_version: string; operation_name: string }>,
+): Promise<EndpointMapping[]> {
+  if (selections.length === 0) return [];
+  const rows = await prisma.endpointMapping.findMany({
+    where: {
+      standard_type: 'PROMOSTANDARDS',
+      OR: selections.map(selection => ({
+        endpoint_name: selection.endpoint_name,
+        endpoint_version: selection.endpoint_version,
+        operation_name: selection.operation_name,
       })),
     },
     orderBy: [
@@ -500,6 +788,400 @@ export async function createSyncRun(input: SyncRunCreateInput): Promise<EtlSyncR
   return serializeSyncRun(row);
 }
 
+export async function createIntegrationJob(input: IntegrationJobCreateInput): Promise<IntegrationJob> {
+  const row = await prisma.integrationJob.create({
+    data: {
+      job_kind: input.job_kind,
+      vendor_id: input.vendor_id,
+      mapping_id: input.mapping_id ?? null,
+      order_integration_state_id: input.order_integration_state_id
+        ? BigInt(input.order_integration_state_id)
+        : null,
+      sync_scope: input.sync_scope ?? 'MAPPING',
+      source_action: input.source_action,
+      dedupe_key: input.dedupe_key,
+      correlation_id: input.correlation_id,
+      request_payload: toJson(input.request_payload),
+      status: input.status ?? 'PENDING',
+      attempt_count: input.attempt_count ?? 0,
+      queue_message_id: input.queue_message_id ?? null,
+      last_error: input.last_error ?? null,
+    },
+  });
+  return serializeIntegrationJob(row);
+}
+
+export async function getIntegrationJobById(integrationJobId: number): Promise<IntegrationJob | null> {
+  const row = await prisma.integrationJob.findUnique({
+    where: { integration_job_id: BigInt(integrationJobId) },
+  });
+  return row ? serializeIntegrationJob(row) : null;
+}
+
+export async function getSyncRunById(syncRunId: number): Promise<EtlSyncRun | null> {
+  const row = await prisma.etlSyncRun.findUnique({
+    where: { sync_run_id: BigInt(syncRunId) },
+  });
+  return row ? serializeSyncRun(row) : null;
+}
+
+export async function findActiveIntegrationJobByDedupeKey(dedupeKey: string): Promise<IntegrationJob | null> {
+  const row = await prisma.integrationJob.findFirst({
+    where: {
+      dedupe_key: dedupeKey,
+      status: {
+        in: ['PENDING', 'ENQUEUED', 'RUNNING'],
+      },
+    },
+    orderBy: {
+      submitted_at: 'desc',
+    },
+  });
+  return row ? serializeIntegrationJob(row) : null;
+}
+
+export async function updateIntegrationJob(input: IntegrationJobUpdateInput): Promise<IntegrationJob | null> {
+  const row = await prisma.integrationJob.update({
+    where: { integration_job_id: BigInt(input.integration_job_id) },
+    data: {
+      status: input.status,
+      attempt_count: input.attempt_count,
+      queue_message_id: input.queue_message_id,
+      last_error: input.last_error,
+      started_at: input.started_at,
+      ended_at: input.ended_at,
+    },
+  }).catch(() => null);
+
+  return row ? serializeIntegrationJob(row) : null;
+}
+
+export async function markIntegrationJobEnqueued(
+  integrationJobId: number,
+  queueMessageId?: string | null,
+): Promise<IntegrationJob | null> {
+  return updateIntegrationJob({
+    integration_job_id: integrationJobId,
+    status: 'ENQUEUED',
+    queue_message_id: queueMessageId ?? null,
+  });
+}
+
+export async function markIntegrationJobRunning(
+  integrationJobId: number,
+  nextAttemptCount: number,
+): Promise<IntegrationJob | null> {
+  return updateIntegrationJob({
+    integration_job_id: integrationJobId,
+    status: 'RUNNING',
+    attempt_count: nextAttemptCount,
+    started_at: new Date(),
+    ended_at: null,
+    last_error: null,
+  });
+}
+
+export async function finalizeIntegrationJob(input: {
+  integration_job_id: number;
+  status: Extract<IntegrationJobStatus, 'SUCCEEDED' | 'FAILED' | 'DEAD_LETTERED'>;
+  last_error?: string | null;
+}): Promise<IntegrationJob | null> {
+  return updateIntegrationJob({
+    integration_job_id: input.integration_job_id,
+    status: input.status,
+    last_error: input.last_error ?? null,
+    ended_at: new Date(),
+  });
+}
+
+export async function createIntegrationJobEvent(
+  input: IntegrationJobEventCreateInput,
+): Promise<IntegrationJobEvent> {
+  const row = await prisma.integrationJobEvent.create({
+    data: {
+      integration_job_id: BigInt(input.integration_job_id),
+      event_name: input.event_name,
+      level: input.level ?? 'info',
+      payload: toJson(input.payload),
+    },
+  });
+  return serializeIntegrationJobEvent(row);
+}
+
+export async function listIntegrationJobEvents(
+  integrationJobId: number,
+  limit = 50,
+): Promise<IntegrationJobEvent[]> {
+  const rows = await prisma.integrationJobEvent.findMany({
+    where: {
+      integration_job_id: BigInt(integrationJobId),
+    },
+    orderBy: {
+      integration_job_event_id: 'desc',
+    },
+    take: limit,
+  });
+  return rows.map(serializeIntegrationJobEvent);
+}
+
+export async function createOperatorTrace(
+  input: OperatorTraceCreateInput,
+): Promise<OperatorTrace> {
+  const row = await prisma.operatorTrace.create({
+    data: {
+      category: input.category,
+      correlation_id: input.correlation_id,
+      vendor_id: input.vendor_id ?? null,
+      integration_job_id: input.integration_job_id ? BigInt(input.integration_job_id) : null,
+      order_integration_state_id: input.order_integration_state_id
+        ? BigInt(input.order_integration_state_id)
+        : null,
+      sync_run_id: input.sync_run_id ? BigInt(input.sync_run_id) : null,
+      method: input.method,
+      target: input.target,
+      action: input.action,
+      status_code: input.status_code ?? null,
+      snapshot_bucket: input.snapshot_bucket ?? null,
+      snapshot_key: input.snapshot_key ?? null,
+      metadata: toJson(input.metadata),
+    },
+  });
+
+  return serializeOperatorTrace(row);
+}
+
+export async function getOperatorTraceById(operatorTraceId: number): Promise<OperatorTrace | null> {
+  const row = await prisma.operatorTrace.findUnique({
+    where: { operator_trace_id: BigInt(operatorTraceId) },
+  });
+  return row ? serializeOperatorTrace(row) : null;
+}
+
+export async function listOperatorTraces(filters?: {
+  vendor_id?: number;
+  integration_job_id?: number;
+  order_integration_state_id?: number;
+  sync_run_id?: number;
+  correlation_id?: string;
+  categories?: OperatorTraceCategory[];
+  limit?: number;
+}): Promise<OperatorTrace[]> {
+  const rows = await prisma.operatorTrace.findMany({
+    where: {
+      vendor_id: filters?.vendor_id,
+      integration_job_id: filters?.integration_job_id ? BigInt(filters.integration_job_id) : undefined,
+      order_integration_state_id: filters?.order_integration_state_id
+        ? BigInt(filters.order_integration_state_id)
+        : undefined,
+      sync_run_id: filters?.sync_run_id ? BigInt(filters.sync_run_id) : undefined,
+      correlation_id: filters?.correlation_id,
+      category: filters?.categories?.length ? { in: filters.categories } : undefined,
+    },
+    orderBy: {
+      created_at: 'desc',
+    },
+    take: filters?.limit ?? 100,
+  });
+
+  return rows.map(serializeOperatorTrace);
+}
+
+export async function createOrderIntegrationState(
+  input: OrderIntegrationStateCreateInput,
+): Promise<OrderIntegrationState> {
+  const row = await prisma.orderIntegrationState.create({
+    data: {
+      vendor_id: input.vendor_id,
+      external_order_id: input.external_order_id,
+      order_source: input.order_source ?? 'BIGCOMMERCE',
+      purchase_order_number: input.purchase_order_number,
+      sales_order_number: input.sales_order_number ?? null,
+      order_type: input.order_type ?? null,
+      lifecycle_status: input.lifecycle_status ?? 'PENDING_SUBMISSION',
+      status_label: input.status_label ?? null,
+      status_code: input.status_code ?? null,
+      shipment_status: input.shipment_status ?? null,
+      invoice_status: input.invoice_status ?? null,
+      remittance_status: input.remittance_status ?? null,
+      submission_payload: toJson(input.submission_payload),
+      latest_vendor_payload: toJson(input.latest_vendor_payload),
+      metadata: toJson(input.metadata),
+      last_error: input.last_error ?? null,
+      submitted_at: input.submitted_at ?? null,
+      last_status_polled_at: input.last_status_polled_at ?? null,
+      next_status_poll_at: input.next_status_poll_at ?? null,
+      last_shipment_polled_at: input.last_shipment_polled_at ?? null,
+      next_shipment_poll_at: input.next_shipment_poll_at ?? null,
+      last_invoice_polled_at: input.last_invoice_polled_at ?? null,
+      next_invoice_poll_at: input.next_invoice_poll_at ?? null,
+      last_remittance_submitted_at: input.last_remittance_submitted_at ?? null,
+      completed_at: input.completed_at ?? null,
+    },
+  });
+
+  return serializeOrderIntegrationState(row);
+}
+
+export async function updateOrderIntegrationState(
+  input: OrderIntegrationStateUpdateInput,
+): Promise<OrderIntegrationState | null> {
+  const row = await prisma.orderIntegrationState.update({
+    where: { order_integration_state_id: BigInt(input.order_integration_state_id) },
+    data: {
+      sales_order_number: input.sales_order_number,
+      lifecycle_status: input.lifecycle_status,
+      status_label: input.status_label,
+      status_code: input.status_code,
+      shipment_status: input.shipment_status,
+      invoice_status: input.invoice_status,
+      remittance_status: input.remittance_status,
+      latest_vendor_payload: input.latest_vendor_payload ? toJson(input.latest_vendor_payload) : undefined,
+      metadata: input.metadata ? toJson(input.metadata) : undefined,
+      last_error: input.last_error,
+      submitted_at: input.submitted_at,
+      last_status_polled_at: input.last_status_polled_at,
+      next_status_poll_at: input.next_status_poll_at,
+      last_shipment_polled_at: input.last_shipment_polled_at,
+      next_shipment_poll_at: input.next_shipment_poll_at,
+      last_invoice_polled_at: input.last_invoice_polled_at,
+      next_invoice_poll_at: input.next_invoice_poll_at,
+      last_remittance_submitted_at: input.last_remittance_submitted_at,
+      completed_at: input.completed_at,
+      updated_at: new Date(),
+    },
+  }).catch(() => null);
+
+  return row ? serializeOrderIntegrationState(row) : null;
+}
+
+export async function getOrderIntegrationStateById(
+  orderIntegrationStateId: number,
+): Promise<OrderIntegrationState | null> {
+  const row = await prisma.orderIntegrationState.findUnique({
+    where: { order_integration_state_id: BigInt(orderIntegrationStateId) },
+  });
+
+  return row ? serializeOrderIntegrationState(row) : null;
+}
+
+export async function listOrderIntegrationStates(filters?: {
+  vendor_id?: number;
+  lifecycle_statuses?: OrderLifecycleStatus[];
+  limit?: number;
+}): Promise<OrderIntegrationState[]> {
+  const rows = await prisma.orderIntegrationState.findMany({
+    where: {
+      vendor_id: filters?.vendor_id,
+      lifecycle_status: filters?.lifecycle_statuses?.length
+        ? { in: filters.lifecycle_statuses }
+        : undefined,
+    },
+    orderBy: [
+      { updated_at: 'desc' },
+      { order_integration_state_id: 'desc' },
+    ],
+    take: filters?.limit ?? 100,
+  });
+
+  return rows.map(serializeOrderIntegrationState);
+}
+
+export async function findOrderIntegrationStateByExternalOrder(
+  vendorId: number,
+  externalOrderId: string,
+): Promise<OrderIntegrationState | null> {
+  const row = await prisma.orderIntegrationState.findFirst({
+    where: {
+      vendor_id: vendorId,
+      external_order_id: externalOrderId,
+    },
+    orderBy: { updated_at: 'desc' },
+  });
+
+  return row ? serializeOrderIntegrationState(row) : null;
+}
+
+export async function listIntegrationJobsForOrderIntegrationState(
+  orderIntegrationStateId: number,
+  limit = 25,
+): Promise<IntegrationJob[]> {
+  const rows = await prisma.integrationJob.findMany({
+    where: {
+      order_integration_state_id: BigInt(orderIntegrationStateId),
+    },
+    orderBy: {
+      submitted_at: 'desc',
+    },
+    take: limit,
+  });
+
+  return rows.map(serializeIntegrationJob);
+}
+
+export async function findDueOrderIntegrationStates(input: {
+  pollField: 'next_status_poll_at' | 'next_shipment_poll_at' | 'next_invoice_poll_at';
+  dueBefore?: Date;
+  limit?: number;
+}): Promise<OrderIntegrationState[]> {
+  const dueBefore = input.dueBefore ?? new Date();
+  const take = input.limit ?? 100;
+
+  const baseWhere = {
+    lifecycle_status: {
+      notIn: ['FAILED', 'CANCELLED', 'COMPLETED'] as OrderLifecycleStatus[],
+    },
+  };
+
+  let rows;
+  switch (input.pollField) {
+    case 'next_shipment_poll_at':
+      rows = await prisma.orderIntegrationState.findMany({
+        where: {
+          ...baseWhere,
+          next_shipment_poll_at: {
+            lte: dueBefore,
+          },
+        },
+        orderBy: {
+          next_shipment_poll_at: 'asc',
+        },
+        take,
+      });
+      break;
+    case 'next_invoice_poll_at':
+      rows = await prisma.orderIntegrationState.findMany({
+        where: {
+          ...baseWhere,
+          next_invoice_poll_at: {
+            lte: dueBefore,
+          },
+        },
+        orderBy: {
+          next_invoice_poll_at: 'asc',
+        },
+        take,
+      });
+      break;
+    case 'next_status_poll_at':
+    default:
+      rows = await prisma.orderIntegrationState.findMany({
+        where: {
+          ...baseWhere,
+          next_status_poll_at: {
+            lte: dueBefore,
+          },
+        },
+        orderBy: {
+          next_status_poll_at: 'asc',
+        },
+        take,
+      });
+      break;
+  }
+
+  return rows.map(serializeOrderIntegrationState);
+}
+
 export async function markSyncRunRunning(syncRunId: number): Promise<EtlSyncRun | null> {
   const row = await prisma.etlSyncRun.update({
     where: { sync_run_id: BigInt(syncRunId) },
@@ -573,6 +1255,28 @@ export async function listVendorProductMap(vendorId: number): Promise<VendorProd
     where: { vendor_id: vendorId },
     orderBy: { last_synced_at: 'desc' },
   });
+  return rows.map(serializeVendorProductMap);
+}
+
+export async function findVendorProductMapsByBigCommerceProductIds(
+  bigcommerceProductIds: number[],
+): Promise<VendorProductMap[]> {
+  if (bigcommerceProductIds.length === 0) {
+    return [];
+  }
+
+  const rows = await prisma.vendorProductMap.findMany({
+    where: {
+      bigcommerce_product_id: {
+        in: bigcommerceProductIds.map(value => BigInt(value)),
+      },
+    },
+    orderBy: [
+      { vendor_id: 'asc' },
+      { last_synced_at: 'desc' },
+    ],
+  });
+
   return rows.map(serializeVendorProductMap);
 }
 

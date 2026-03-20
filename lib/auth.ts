@@ -3,6 +3,7 @@ import { NextApiRequest } from 'next';
 import BigCommerce from 'node-bigcommerce';
 import { ApiConfig, QueryParams, SessionContextProps, SessionProps } from '../types';
 import db from './db';
+import { getPrimaryStoreConnection } from './db';
 
 const { API_URL, AUTH_CALLBACK, CLIENT_ID, CLIENT_SECRET, JWT_KEY, LOGIN_URL } = process.env;
 
@@ -72,6 +73,23 @@ export async function getSession({ query: { context = '' } }: NextApiRequest) {
     const accessToken = await db.getStoreToken(storeHash);
 
     return { accessToken, storeHash, user };
+}
+
+export async function getSystemSessionContext(): Promise<SessionContextProps> {
+    const store = await getPrimaryStoreConnection();
+    if (!store?.accessToken || !store.storeHash) {
+        throw new Error('No BigCommerce store connection is configured for background execution.');
+    }
+
+    return {
+        accessToken: store.accessToken,
+        storeHash: store.storeHash,
+        user: {
+            id: 0,
+            email: 'system@merchmonk.local',
+            username: 'system',
+        },
+    };
 }
 
 // JWT functions to sign/ verify 'context' query param from /api/auth||load

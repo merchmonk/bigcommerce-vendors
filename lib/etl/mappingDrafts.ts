@@ -6,7 +6,7 @@ import {
   upsertVendorEndpointMapping,
 } from './repository';
 
-interface ResolvedMappingDraft {
+export interface ResolvedMappingDraft {
   mappingId: number;
   enabled: boolean;
   runtimeConfig: Record<string, unknown>;

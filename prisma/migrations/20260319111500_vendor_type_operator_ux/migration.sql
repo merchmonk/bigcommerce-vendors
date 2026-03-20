@@ -1,0 +1,4 @@
+CREATE TYPE "VendorType" AS ENUM ('SUPPLIER', 'DECORATOR');
+
+ALTER TABLE "vendors"
+ADD COLUMN "vendor_type" "VendorType" NOT NULL DEFAULT 'SUPPLIER';

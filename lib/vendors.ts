@@ -1,4 +1,4 @@
-import type { MappingProtocol, MappingStandardType } from '../types';
+import type { MappingProtocol, MappingStandardType, VendorType } from '../types';
 import { Prisma } from '@prisma/client';
 import prisma from './prisma';
 import { replaceVendorEndpointMappings } from './etl/repository';
@@ -9,6 +9,7 @@ export type ApiProtocol = MappingProtocol;
 export interface Vendor {
   vendor_id: number;
   vendor_name: string;
+  vendor_type: VendorType;
   vendor_api_url: string | null;
   vendor_account_id: string | null;
   vendor_secret: string | null;
@@ -22,6 +23,7 @@ export interface Vendor {
 
 export interface VendorInput {
   vendor_name: string;
+  vendor_type?: VendorType;
   vendor_api_url?: string;
   vendor_account_id?: string;
   vendor_secret?: string;
@@ -35,6 +37,7 @@ export interface VendorInput {
 function serializeVendor(row: {
   vendor_id: number;
   vendor_name: string;
+  vendor_type: VendorType;
   vendor_api_url: string | null;
   vendor_account_id: string | null;
   vendor_secret: string | null;
@@ -76,6 +79,7 @@ export async function createVendor(input: VendorInput): Promise<Vendor> {
   const row = await prisma.vendor.create({
     data: {
       vendor_name: input.vendor_name,
+      vendor_type: input.vendor_type ?? 'SUPPLIER',
       vendor_api_url: input.vendor_api_url ?? null,
       vendor_account_id: input.vendor_account_id ?? null,
       vendor_secret: input.vendor_secret ?? null,
@@ -101,6 +105,7 @@ export async function updateVendor(vendorId: number, input: Partial<VendorInput>
     where: { vendor_id: vendorId },
     data: {
       vendor_name: input.vendor_name ?? existing.vendor_name,
+      vendor_type: input.vendor_type ?? existing.vendor_type,
       vendor_api_url: input.vendor_api_url ?? existing.vendor_api_url,
       vendor_account_id: input.vendor_account_id ?? existing.vendor_account_id,
       vendor_secret: input.vendor_secret ?? existing.vendor_secret,

@@ -7,7 +7,7 @@ The ETL layer is now database-first and API-agnostic:
 - Endpoint mappings are stored in `endpoint_mappings`.
 - Vendor mapping assignments are stored in `vendor_endpoint_mappings`.
 - Mapping definitions can be JSON or XML structures and are not sourced from local files.
-- PromoStandards support is seeded into the database (no runtime folder scanning).
+- PromoStandards support is seeded into the database through bootstrap-time seed flows (no runtime folder scanning or request-time seeding).
 
 ## Database Model
 
@@ -38,8 +38,9 @@ Legacy fields are removed from runtime usage:
 
 ## Seeding Strategy
 
-`lib/etl/promostandardsSeed.ts` upserts deterministic PromoStandards mappings into the database.
-This seed path is used by APIs and replaces filesystem-derived mapping generation.
+`prisma/seed.ts` upserts deterministic PromoStandards mappings into the database.
+
+This seed path replaces filesystem-derived mapping generation and should be run during bootstrap or migration workflows, not from request-time operator actions.
 
 ## Adapter Architecture
 
@@ -61,15 +62,15 @@ Scaffolded:
 - `GET|POST /api/etl/mappings`
   - list mappings by filters
   - upsert mappings
-  - optionally seed PromoStandards mappings
 - `POST /api/vendors`
-  - create vendor with inline mapping definitions
+  - create vendor with discovery-backed onboarding for PromoStandards vendors
 - `PUT /api/vendors/[vendorId]`
   - update vendor and mapping assignments
 - `GET|PUT /api/vendors/[vendorId]/mappings`
   - inspect and update vendor mapping assignments
 - `POST /api/vendors/test-connection`
   - protocol-aware connection test
+  - PromoStandards endpoint/version discovery and capability recording
 - `GET|POST /api/vendors/[vendorId]/sync`
   - list runs and execute sync
 
@@ -77,10 +78,11 @@ Scaffolded:
 
 Vendor form now supports:
 
-- Integration family selection
-- API protocol selection
-- Inline endpoint mapping rows
-- Per-row JSON/XML structure input
-- Connection testing before save for PromoStandards
+- vendor type selection
+- integration family selection
+- guided PromoStandards discovery instead of manual endpoint-by-endpoint setup
+- capability detection and version recording for PromoStandards vendors
+- custom integration configuration for non-PromoStandards vendors
+- connection testing before save
 
 ProductData-specific orchestration details are documented in `docs/productdata-workflow.md`.

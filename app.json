@@ -1,29 +1,39 @@
 {
-  "name": "Vendors BigCommerce",
-  "description": "Merch Monk internal appplication to manage vendors",
+  "name": "MerchMonk Vendors (Legacy Manifest)",
+  "description": "Legacy app manifest retained for repository metadata compatibility. Deployment source of truth is the sibling cdk-app AWS/CDK stack, not this file.",
   "repository": "https://github.com/merchmonk/bigcommerce-vendors",
-  "addons": ["cleardb:ignite"],
   "env": {
     "CLIENT_ID": {
-      "description": "The client id of your app, provided by the BigCommerce developer portal."
+      "description": "BigCommerce app client ID from the Developer Portal."
     },
-    "CLIENT_SECRET":{
-      "description": "The client secret of your app, provided by the BigCommerce developer portal."
+    "CLIENT_SECRET": {
+      "description": "BigCommerce app client secret from the Developer Portal."
     },
-    "AUTH_CALLBACK":{
-      "description": "The fully qualified authentication endpoint provided by this app. Replace the app name with the app name chosen above.",
-      "value": "https://<APP NAME>.herokuapp.com/api/auth"
+    "ACCOUNT_UUID": {
+      "description": "BigCommerce account UUID used for API and OAuth configuration."
     },
-    "DB_TYPE":{
-      "description": "Which type of database we are using. Options are 'mysql' or 'firebase'. Can safely leave unchanged.",
-      "value": "mysql"
+    "AUTH_CALLBACK": {
+      "description": "Fully qualified auth callback for the deployed or locally tunneled app.",
+      "value": "https://<app-url>/api/auth"
     },
-    "JWT_KEY":{
-      "description": "Key the app will use for signing JWT. Can safely leave unchanged.",
+    "DATABASE_URL": {
+      "description": "PostgreSQL connection string for Prisma. In AWS, credentials come from Secrets Manager and the Aurora/proxy endpoint provisioned by cdk-app."
+    },
+    "JWT_KEY": {
+      "description": "JWT signing key. Must be at least 32 characters.",
       "generator": "secret"
+    },
+    "ENVIRONMENT": {
+      "description": "BigCommerce environment domain.",
+      "value": "bigcommerce.com"
+    },
+    "LOGIN_URL": {
+      "description": "BigCommerce login host for the configured environment.",
+      "value": "login.bigcommerce.com"
+    },
+    "API_URL": {
+      "description": "BigCommerce API host for the configured environment.",
+      "value": "api.bigcommerce.com"
     }
-  },
-  "scripts": {
-    "postdeploy": "npm run db:setup"
   }
 }

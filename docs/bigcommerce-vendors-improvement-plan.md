@@ -659,9 +659,23 @@ This should be built on the same job and observability model established for cat
 
 ## 12. Phase Plan
 
+The first implementation wave for this roadmap is tracked separately in [`docs/bigcommerce-vendors-foundation-tranche-implementation-plan.md`](./bigcommerce-vendors-foundation-tranche-implementation-plan.md). That document is the execution source of truth for what the initial tranche will and will not do.
+
+The Phase 0 baseline-reconciliation cleanup wave is tracked separately in [`docs/bigcommerce-vendors-phase-0-cleanup-implementation-plan.md`](./bigcommerce-vendors-phase-0-cleanup-implementation-plan.md). That document is the execution source of truth for the documentation, manifest, and ADR cleanup work that aligns the repository with the implemented platform.
+
+The operator workflow implementation wave for Phase 5 is tracked separately in [`docs/bigcommerce-vendors-operator-ux-tranche-implementation-plan.md`](./bigcommerce-vendors-operator-ux-tranche-implementation-plan.md). That document is the execution source of truth for the dashboard, vendor list, and onboarding/edit UX changes in this tranche.
+
+The operator diagnostics implementation wave for failed-item drilldown and trace inspection is tracked separately in [`docs/bigcommerce-vendors-operator-diagnostics-tranche-implementation-plan.md`](./bigcommerce-vendors-operator-diagnostics-tranche-implementation-plan.md). That document is the execution source of truth for the next diagnostics-focused operator tranche.
+
+The first order lifecycle implementation wave for Phase 6 is tracked separately in [`docs/bigcommerce-vendors-order-lifecycle-tranche-implementation-plan.md`](./bigcommerce-vendors-order-lifecycle-tranche-implementation-plan.md). That document is the execution source of truth for the initial order-domain control plane, polling, and operator workflow tranche.
+
+The checkout and order-orchestration implementation wave that follows Phase 6 is tracked separately in [`docs/bigcommerce-vendors-checkout-order-orchestration-tranche-implementation-plan.md`](./bigcommerce-vendors-checkout-order-orchestration-tranche-implementation-plan.md). That document is the execution source of truth for automatic BigCommerce order intake, vendor split resolution, payload building, and webhook/platform intake wiring.
+
 ## Phase 0: Baseline Reconciliation
 
 Objective: align documentation, architectural assumptions, and operational source of truth before deeper implementation.
+
+Execution for this phase is tracked in [`docs/bigcommerce-vendors-phase-0-cleanup-implementation-plan.md`](./bigcommerce-vendors-phase-0-cleanup-implementation-plan.md).
 
 Deliverables:
 
@@ -677,6 +691,7 @@ Deliverables:
   - BigCommerce vs MerchMonk ownership
   - customization projection contract
   - logging and observability standards
+- publish the ADR set in `docs/adrs/`
 
 Success criteria:
 
@@ -686,6 +701,8 @@ Success criteria:
 ## Phase 1: BigCommerce Product Contract And Design Schema
 
 Objective: define the BigCommerce object contract for blank products, decoration configuration, and design-step pricing behavior before further implementation.
+
+Execution for the next implementation tranche is tracked in [`docs/bigcommerce-vendors-storefront-designer-bff-tranche-implementation-plan.md`](./bigcommerce-vendors-storefront-designer-bff-tranche-implementation-plan.md).
 
 Deliverables:
 
@@ -730,6 +747,8 @@ Success criteria:
 ## Phase 3: Pricing Boundary And Projection
 
 Objective: separate pricing policy from the catalog writer and make B2B price lists authoritative.
+
+Execution for the next implementation tranche is tracked in [`docs/bigcommerce-vendors-pricing-product-projection-tranche-implementation-plan.md`](./bigcommerce-vendors-pricing-product-projection-tranche-implementation-plan.md).
 
 Deliverables:
 
@@ -808,6 +827,27 @@ Success criteria:
 
 - order lifecycle state is tracked consistently
 - time-sensitive order events can be surfaced reliably
+
+## Phase 7: Checkout And Order Orchestration
+
+Objective: turn the supplier order lifecycle into an automated downstream of real BigCommerce commerce events instead of manual operator-prepared payloads.
+
+Deliverables:
+
+- automatic BigCommerce order intake from webhook and/or trusted platform callers
+- BigCommerce order runtime hydration for order detail, products, and shipping addresses
+- vendor split logic for multi-vendor orders
+- automatic PromoStandards purchase-order payload building with support for enriched line-item overrides
+- idempotent creation of vendor-scoped order integrations from a single customer order
+- same-origin `merchmonk-app` proxy for future checkout-side order submission
+- EventBridge events for intake success/failure and vendor split outcomes
+- webhook registration/ensure flow for BigCommerce order-created events
+
+Success criteria:
+
+- real BigCommerce orders can be converted into vendor-scoped order integrations without operator-authored supplier payload JSON
+- repeated webhook or checkout submissions do not create duplicate vendor order integrations
+- intake failures are visible and diagnosable from operator traces and structured logs
 
 ## 13. Public APIs, Interfaces, And Service Boundaries
 

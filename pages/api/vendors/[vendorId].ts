@@ -1,137 +1,130 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getSession } from '../../../lib/auth';
-import { applyVendorMappingDrafts, resolveMappingDrafts } from '../../../lib/etl/mappingDrafts';
-import { seedPromoStandardsMappings } from '../../../lib/etl/promostandardsSeed';
-import { listEnabledVendorEndpointMappings } from '../../../lib/etl/repository';
+import { recordInternalFailure } from '../../../lib/apiTelemetry';
+import { applyVendorMappingDrafts } from '../../../lib/etl/mappingDrafts';
+import { listEnabledVendorEndpointMappings, replaceVendorEndpointMappings } from '../../../lib/etl/repository';
 import logger from '../../../lib/logger';
+import { buildApiRequestContext, runWithRequestContext } from '../../../lib/requestContext';
 import {
   deactivateVendor,
   deleteVendor,
   getVendorById,
-  type VendorInput,
   updateVendor,
 } from '../../../lib/vendors';
-import type { EndpointMappingDraft } from '../../../types';
+import { assertVendorCanDeactivate } from '../../../lib/vendors/operatorInsights';
+import { getVendorConnectionSections } from '../../../lib/vendors/vendorConfig';
+import { prepareVendorSubmission, type VendorSubmissionInput } from '../../../lib/vendors/vendorSubmission';
 
-interface UpdateVendorBody extends Partial<VendorInput> {
-  endpoint_mappings?: EndpointMappingDraft[];
-}
+interface UpdateVendorBody extends VendorSubmissionInput {}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const vendorId = Number(req.query.vendorId);
-  logger.info('vendor by id API request', { method: req.method, vendorId });
-  try {
-    await getSession(req);
+  return runWithRequestContext(buildApiRequestContext(req, { vendorId }), async () => {
+    logger.info('vendor by id API request', { method: req.method, vendorId });
+    try {
+      await getSession(req);
 
-    if (!Number.isFinite(vendorId)) {
-      res.status(400).json({ message: 'Invalid vendorId' });
-      return;
-    }
-
-    switch (req.method) {
-      case 'GET': {
-        const vendor = await getVendorById(vendorId);
-        if (!vendor) {
-          res.status(404).json({ message: 'Vendor not found' });
-          return;
-        }
-        const assignedMappings = await listEnabledVendorEndpointMappings(vendorId);
-        res.status(200).json({
-          ...vendor,
-          endpoint_mappings: assignedMappings.map(item => ({
-            mapping_id: item.mapping_id,
-            enabled: item.is_enabled,
-            endpoint_name: item.mapping.endpoint_name,
-            endpoint_version: item.mapping.endpoint_version,
-            operation_name: item.mapping.operation_name,
-            protocol: item.mapping.protocol,
-            payload_format: item.mapping.payload_format,
-            is_product_endpoint: item.mapping.is_product_endpoint,
-            structure_input:
-              item.mapping.payload_format === 'XML'
-                ? item.mapping.structure_xml ?? ''
-                : JSON.stringify(item.mapping.structure_json ?? {}, null, 2),
-            runtime_config: item.runtime_config ?? {},
-            transform_schema: item.mapping.transform_schema ?? {},
-            metadata: item.mapping.metadata ?? {},
-          })),
-        });
-        break;
+      if (!Number.isFinite(vendorId)) {
+        res.status(400).json({ message: 'Invalid vendorId' });
+        return;
       }
-      case 'PUT': {
-        const body = req.body as UpdateVendorBody;
 
-        if (body.is_active === false) {
-          await deactivateVendor(vendorId);
-          logger.info('vendor deactivated', { vendorId });
+      switch (req.method) {
+        case 'GET': {
           const vendor = await getVendorById(vendorId);
-          res.status(200).json(vendor);
-          return;
-        }
-
-        const existingVendor = await getVendorById(vendorId);
-        if (!existingVendor) {
-          res.status(404).json({ message: 'Vendor not found' });
-          return;
-        }
-
-        const integrationFamily = body.integration_family ?? existingVendor.integration_family;
-        const defaultProtocol = body.api_protocol ?? existingVendor.api_protocol ?? 'SOAP';
-
-        if (integrationFamily === 'PROMOSTANDARDS') {
-          await seedPromoStandardsMappings();
-        }
-
-        const updated = await updateVendor(vendorId, {
-          vendor_name: body.vendor_name,
-          vendor_api_url: body.vendor_api_url,
-          vendor_account_id: body.vendor_account_id,
-          vendor_secret: body.vendor_secret,
-          integration_family: integrationFamily,
-          api_protocol: defaultProtocol,
-          connection_config: body.connection_config,
-          is_active: body.is_active,
-        });
-        if (!updated) {
-          res.status(404).json({ message: 'Vendor not found' });
-          return;
-        }
-
-        if (Array.isArray(body.endpoint_mappings)) {
-          const resolvedDrafts = await resolveMappingDrafts({
-            integrationFamily,
-            defaultProtocol,
-            drafts: body.endpoint_mappings,
-          });
-          if (resolvedDrafts.length === 0) {
-            return res.status(400).json({ message: 'At least one enabled endpoint mapping is required.' });
+          if (!vendor) {
+            res.status(404).json({ message: 'Vendor not found' });
+            return;
           }
-          await applyVendorMappingDrafts(vendorId, resolvedDrafts);
+          const assignedMappings = await listEnabledVendorEndpointMappings(vendorId);
+          res.status(200).json({
+            ...vendor,
+            ...getVendorConnectionSections(vendor.connection_config),
+            endpoint_mappings: assignedMappings.map(item => ({
+              mapping_id: item.mapping_id,
+              enabled: item.is_enabled,
+              endpoint_name: item.mapping.endpoint_name,
+              endpoint_version: item.mapping.endpoint_version,
+              operation_name: item.mapping.operation_name,
+              protocol: item.mapping.protocol,
+              payload_format: item.mapping.payload_format,
+              is_product_endpoint: item.mapping.is_product_endpoint,
+              structure_input:
+                item.mapping.payload_format === 'XML'
+                  ? item.mapping.structure_xml ?? ''
+                  : JSON.stringify(item.mapping.structure_json ?? {}, null, 2),
+              runtime_config: item.runtime_config ?? {},
+              transform_schema: item.mapping.transform_schema ?? {},
+              metadata: item.mapping.metadata ?? {},
+            })),
+          });
+          break;
         }
+        case 'PUT': {
+          const body = req.body as UpdateVendorBody;
 
-        logger.info('vendor updated', { vendorId });
-        res.status(200).json(updated);
-        break;
+          if (body.is_active === false) {
+            await assertVendorCanDeactivate(vendorId);
+            await deactivateVendor(vendorId);
+            logger.info('vendor deactivated', { vendorId });
+            const vendor = await getVendorById(vendorId);
+            res.status(200).json(vendor);
+            return;
+          }
+
+          const existingVendor = await getVendorById(vendorId);
+          if (!existingVendor) {
+            res.status(404).json({ message: 'Vendor not found' });
+            return;
+          }
+
+          const prepared = await prepareVendorSubmission({
+            body,
+            existingVendor,
+          });
+
+          const updated = await updateVendor(vendorId, {
+            ...prepared.vendorInput,
+          });
+          if (!updated) {
+            res.status(404).json({ message: 'Vendor not found' });
+            return;
+          }
+
+          if (prepared.mappingAction.type === 'apply') {
+            await applyVendorMappingDrafts(vendorId, prepared.mappingAction.resolvedDrafts);
+          } else if (prepared.mappingAction.type === 'clear') {
+            await replaceVendorEndpointMappings(vendorId, []);
+          }
+
+          logger.info('vendor updated', { vendorId });
+          res.status(200).json(updated);
+          break;
+        }
+        case 'DELETE': {
+          await deleteVendor(vendorId);
+          logger.info('vendor deleted', { vendorId });
+          res.status(204).end();
+          break;
+        }
+        default: {
+          res.setHeader('Allow', ['GET', 'PUT', 'DELETE']);
+          res.status(405).end(`Method ${req.method} Not Allowed`);
+        }
       }
-      case 'DELETE': {
-        await deleteVendor(vendorId);
-        logger.info('vendor deleted', { vendorId });
-        res.status(204).end();
-        break;
-      }
-      default: {
-        res.setHeader('Allow', ['GET', 'PUT', 'DELETE']);
-        res.status(405).end(`Method ${req.method} Not Allowed`);
-      }
+    } catch (error: any) {
+      await recordInternalFailure({
+        action: 'vendor_by_id_api_request',
+        payload: {
+          method: req.method ?? 'UNKNOWN',
+          url: req.url ?? '',
+          vendor_id: vendorId,
+          body: typeof req.body === 'object' ? req.body : {},
+        },
+        error,
+      });
+      const { message, response, statusCode } = error;
+      res.status(response?.status || statusCode || 500).json({ message: message ?? 'Vendor API error' });
     }
-  } catch (error: any) {
-    logger.error('vendor by id API error', {
-      vendorId,
-      message: error?.message,
-      stack: error?.stack,
-      status: error?.response?.status,
-    });
-    const { message, response } = error;
-    res.status(response?.status || 500).json({ message: message ?? 'Vendor API error' });
-  }
+  });
 }

@@ -876,8 +876,8 @@ The example below shows a resolved designer payload for a selected size variant 
     "decorationUnitPrice": 1.1,
     "oneTimeCharges": 45.0,
     "recurringCharges": 105.6,
-    "estimatedUnitSellPrice": 9.57,
-    "estimatedLineTotal": 1023.72
+    "estimatedUnitSellPrice": 10.02,
+    "estimatedLineTotal": 961.8
   }
 }
 ```

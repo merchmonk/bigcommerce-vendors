@@ -1,5 +1,9 @@
 import type { MappingProtocol, SessionContextProps } from '../../types';
 import { getVendorById } from '../vendors';
+import { mergeRequestContext } from '../requestContext';
+import {
+  resolveBigCommercePricingContext,
+} from './bigcommercePricingContext';
 import {
   upsertBigCommerceProduct,
   upsertRelatedProducts,
@@ -222,6 +226,10 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     sync_scope: input.syncAll ? 'ALL' : 'MAPPING',
     details: {},
   });
+  mergeRequestContext({
+    vendorId: input.vendorId,
+    syncRunId: syncRun.sync_run_id,
+  });
   await markSyncRunRunning(syncRun.sync_run_id);
 
   try {
@@ -357,6 +365,11 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     }
 
     let recordsWritten = 0;
+    const pricingContext = await resolveBigCommercePricingContext({
+      accessToken: input.session.accessToken,
+      storeHash: input.session.storeHash,
+      fallback_markup_percent: 30,
+    });
     for (const product of assembly.products) {
       const upsertResult = await upsertBigCommerceProduct({
         accessToken: input.session.accessToken,
@@ -364,6 +377,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         vendorId: input.vendorId,
         product,
         defaultMarkupPercent: 30,
+        pricingContext,
       });
 
       await upsertVendorProductMap({
@@ -378,6 +392,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
           duplicate: upsertResult.duplicate,
           action: upsertResult.action,
           markup_percent: upsertResult.markupPercent,
+          pricing_reconciliation: upsertResult.pricingReconciliation,
           enrichment: product.enrichment_status ?? {},
         },
       });

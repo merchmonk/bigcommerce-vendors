@@ -2,24 +2,38 @@ import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 
 export const TabIds = {
+    DASHBOARD: 'dashboard',
     VENDORS: 'vendors',
+    ORDERS: 'orders',
 };
 
 export const TabRoutes = {
+    [TabIds.DASHBOARD]: '/dashboard',
     [TabIds.VENDORS]: '/vendors',
+    [TabIds.ORDERS]: '/orders',
 };
 
 const Header = () => {
     const router = useRouter();
     const { pathname } = router;
-    const activeTab = Object.keys(TabRoutes).find(key => TabRoutes[key] === pathname) ?? '';
+    const activeTab = pathname.startsWith('/vendors')
+        ? TabIds.VENDORS
+        : pathname.startsWith('/orders')
+            ? TabIds.ORDERS
+        : pathname.startsWith('/dashboard')
+            ? TabIds.DASHBOARD
+            : '';
 
     useEffect(() => {
+        router.prefetch('/dashboard');
         router.prefetch('/vendors');
+        router.prefetch('/orders');
     }, [router]);
 
     const items = [
+        { ariaControls: 'dashboard', id: TabIds.DASHBOARD, title: 'Dashboard' },
         { ariaControls: 'vendors', id: TabIds.VENDORS, title: 'Vendors' },
+        { ariaControls: 'orders', id: TabIds.ORDERS, title: 'Orders' },
     ];
 
     const handleTabClick = (tabId: string) => {

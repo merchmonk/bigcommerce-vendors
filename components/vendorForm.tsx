@@ -1,8 +1,20 @@
 import { useMemo, useState } from 'react';
-import useSWR from 'swr';
-import { useSession } from '../context/session';
-import type { EndpointMappingDraft, VendorFormData } from '../types';
-import type { MappingPayloadFormat, MappingProtocol } from '../types';
+import type {
+  CustomApiServiceType,
+  MappingProtocol,
+  PromostandardsCapabilityMatrix,
+  VendorConnectionTestResult,
+  VendorFormData,
+} from '../types';
+import {
+  InlineNotice,
+  fieldLabelStyle,
+  pageCardStyle,
+  primaryButtonStyle,
+  secondaryButtonStyle,
+  sectionTitleStyle,
+  textInputStyle,
+} from './operator/ui';
 
 interface VendorFormProps {
   initialValues?: VendorFormData;
@@ -12,58 +24,73 @@ interface VendorFormProps {
     vendor_api_url?: string;
     vendor_account_id?: string;
     vendor_secret?: string;
+    integration_family?: VendorFormData['integration_family'];
     api_protocol?: MappingProtocol;
-    operation_name?: string;
-    endpoint_version?: string;
-    runtime_config?: Record<string, unknown>;
-  }) => Promise<{ ok: boolean; message?: string }>;
+  }) => Promise<VendorConnectionTestResult>;
   requireConnectionTest?: boolean;
 }
 
-interface MappingListResponse {
-  data: Array<{
-    mapping_id: number;
-    endpoint_name: string;
-    endpoint_version: string;
-    operation_name: string;
-    protocol: MappingProtocol;
-    payload_format: MappingPayloadFormat;
-    is_product_endpoint: boolean;
-    metadata?: Record<string, unknown>;
-    transform_schema?: Record<string, unknown>;
-  }>;
-}
-
-const integrationFamilyOptions: Array<{ value: 'PROMOSTANDARDS' | 'CUSTOM'; content: string }> = [
-  { value: 'PROMOSTANDARDS', content: 'PromoStandards' },
-  { value: 'CUSTOM', content: 'Custom API' },
+const integrationFamilyOptions: Array<{ value: VendorFormData['integration_family']; label: string }> = [
+  { value: 'PROMOSTANDARDS', label: 'PromoStandards' },
+  { value: 'CUSTOM', label: 'Other' },
 ];
 
-const protocolOptions: Array<{ value: MappingProtocol; content: string }> = [
-  { value: 'SOAP', content: 'SOAP' },
-  { value: 'REST', content: 'REST' },
-  { value: 'RPC', content: 'RPC' },
-  { value: 'XML', content: 'XML' },
-  { value: 'JSON', content: 'JSON' },
+const vendorTypeOptions: Array<{ value: VendorFormData['vendor_type']; label: string }> = [
+  { value: 'SUPPLIER', label: 'Supplier' },
+  { value: 'DECORATOR', label: 'Decorator' },
 ];
 
-const fetcher = (url: string) => fetch(url).then(res => res.json());
+const customApiServiceTypeOptions: Array<{ value: CustomApiServiceType; label: string }> = [
+  { value: 'REST_API', label: 'REST API' },
+  { value: 'SOAP_API', label: 'SOAP API' },
+  { value: 'JSON_FEED', label: 'JSON Feed' },
+  { value: 'XML_FEED', label: 'XML Feed' },
+  { value: 'CSV_FEED', label: 'CSV Feed' },
+];
 
-function getDefaultPayloadFormat(protocol: MappingProtocol): MappingPayloadFormat {
-  return protocol === 'SOAP' || protocol === 'XML' ? 'XML' : 'JSON';
+function getProtocolForServiceType(serviceType: CustomApiServiceType | undefined): MappingProtocol | null {
+  switch (serviceType) {
+    case 'REST_API':
+      return 'REST';
+    case 'SOAP_API':
+      return 'SOAP';
+    case 'JSON_FEED':
+      return 'JSON';
+    case 'XML_FEED':
+      return 'XML';
+    case 'CSV_FEED':
+    default:
+      return null;
+  }
 }
 
-function createEmptyMapping(protocol: MappingProtocol): EndpointMappingDraft {
+function buildConnectionFingerprint(values: VendorFormData): string {
+  return [
+    values.vendor_api_url ?? '',
+    values.vendor_account_id ?? '',
+    values.vendor_secret ?? '',
+    values.integration_family,
+    values.api_protocol ?? '',
+  ].join('|');
+}
+
+function getInitialValues(initialValues?: VendorFormData): VendorFormData {
   return {
-    enabled: true,
-    endpoint_name: '',
-    endpoint_version: '',
-    operation_name: '',
-    protocol,
-    payload_format: getDefaultPayloadFormat(protocol),
-    is_product_endpoint: true,
-    structure_input: '',
-    runtime_config: {},
+    vendor_name: initialValues?.vendor_name ?? '',
+    vendor_type: initialValues?.vendor_type ?? 'SUPPLIER',
+    vendor_api_url: initialValues?.vendor_api_url ?? '',
+    vendor_account_id: initialValues?.vendor_account_id ?? '',
+    vendor_secret: initialValues?.vendor_secret ?? '',
+    integration_family: initialValues?.integration_family ?? 'PROMOSTANDARDS',
+    api_protocol: initialValues?.api_protocol ?? 'SOAP',
+    custom_api_service_type: initialValues?.custom_api_service_type,
+    custom_api_format_data: initialValues?.custom_api_format_data ?? '',
+    endpoint_mappings: initialValues?.endpoint_mappings ?? [],
+    endpoint_mapping_ids: initialValues?.endpoint_mapping_ids ?? [],
+    promostandards_capabilities: initialValues?.promostandards_capabilities ?? null,
+    connection_tested: initialValues?.connection_tested ?? false,
+    connection_config: initialValues?.connection_config ?? {},
+    auto_sync: initialValues?.auto_sync ?? true,
   };
 }
 
@@ -74,547 +101,388 @@ const VendorForm = ({
   onTestConnection,
   requireConnectionTest = false,
 }: VendorFormProps) => {
-  const { context } = useSession();
-  const [values, setValues] = useState<VendorFormData>(() => ({
-    vendor_name: initialValues?.vendor_name ?? '',
-    vendor_api_url: initialValues?.vendor_api_url ?? '',
-    vendor_account_id: initialValues?.vendor_account_id ?? '',
-    vendor_secret: initialValues?.vendor_secret ?? '',
-    integration_family: initialValues?.integration_family ?? 'PROMOSTANDARDS',
-    api_protocol: initialValues?.api_protocol ?? 'SOAP',
-    endpoint_mappings: initialValues?.endpoint_mappings?.length
-      ? initialValues.endpoint_mappings
-      : [createEmptyMapping(initialValues?.api_protocol ?? 'SOAP')],
-    endpoint_mapping_ids: initialValues?.endpoint_mapping_ids ?? [],
-    connection_config: initialValues?.connection_config ?? {},
-    auto_sync: initialValues?.auto_sync ?? true,
-  }));
-  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
+  const [values, setValues] = useState<VendorFormData>(() => getInitialValues(initialValues));
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>(
+    initialValues?.promostandards_capabilities ? 'success' : 'idle',
+  );
   const [connectionMessage, setConnectionMessage] = useState('');
-  const [lastTestFingerprint, setLastTestFingerprint] = useState('');
-
-  const shouldLoadPromoDefaults = values.integration_family === 'PROMOSTANDARDS' && !!context;
-  const { data: promoSeedMappings } = useSWR<MappingListResponse>(
-    shouldLoadPromoDefaults
-      ? `/api/etl/mappings?context=${encodeURIComponent(context)}&standard_type=PROMOSTANDARDS&seed=1`
-      : null,
-    fetcher,
+  const [submissionError, setSubmissionError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastTestFingerprint, setLastTestFingerprint] = useState(() =>
+    initialValues?.promostandards_capabilities ? buildConnectionFingerprint(getInitialValues(initialValues)) : '',
   );
 
-  const connectionFingerprint = [
-    values.vendor_api_url ?? '',
-    values.vendor_account_id ?? '',
-    values.vendor_secret ?? '',
-    values.api_protocol ?? '',
-  ].join('|');
+  const currentFingerprint = buildConnectionFingerprint(values);
+  const requiresPromoTest = requireConnectionTest && values.integration_family === 'PROMOSTANDARDS';
+  const hasAvailablePromoEndpoints =
+    (values.promostandards_capabilities?.available_endpoint_count ?? 0) > 0;
+  const isPromoDiscoveryCurrent =
+    connectionStatus === 'success' &&
+    lastTestFingerprint === currentFingerprint &&
+    hasAvailablePromoEndpoints;
 
-  const canRequireTest = requireConnectionTest && values.integration_family === 'PROMOSTANDARDS';
-  const isConnectionValidForSave = connectionStatus === 'success' && lastTestFingerprint === connectionFingerprint;
   const activeConnectionMessage =
-    connectionStatus === 'success' && !isConnectionValidForSave
-      ? 'Connection changed. Please run test again.'
+    connectionStatus === 'success' && !isPromoDiscoveryCurrent
+      ? 'Vendor settings changed. Run Test Vendor again to refresh PromoStandards capabilities.'
       : connectionMessage;
-  const activeConnectionTone =
-    connectionStatus === 'success' && !isConnectionValidForSave ? 'failed' : connectionStatus;
-  const hasValidMappings = useMemo(
-    () =>
-      values.endpoint_mappings.some(
-        mapping =>
-          mapping.enabled &&
-          (mapping.mapping_id ||
-            (mapping.endpoint_name && mapping.endpoint_version && mapping.operation_name)),
-      ),
-    [values.endpoint_mappings],
+  const promoEndpointRows = useMemo(
+    () => values.promostandards_capabilities?.endpoints ?? [],
+    [values.promostandards_capabilities],
   );
 
-  const updateMapping = (index: number, updater: (current: EndpointMappingDraft) => EndpointMappingDraft) => {
-    setValues(prev => ({
-      ...prev,
-      endpoint_mappings: prev.endpoint_mappings.map((mapping, i) => (i === index ? updater(mapping) : mapping)),
-    }));
-  };
+  const canSubmit =
+    !isSubmitting &&
+    values.vendor_name.trim().length > 0 &&
+    (values.integration_family === 'PROMOSTANDARDS'
+      ? !requiresPromoTest || isPromoDiscoveryCurrent
+      : Boolean(values.custom_api_service_type));
 
-  const addMapping = () => {
-    setValues(prev => ({
-      ...prev,
-      endpoint_mappings: [...prev.endpoint_mappings, createEmptyMapping(prev.api_protocol)],
-    }));
-  };
-
-  const removeMapping = (index: number) => {
-    setValues(prev => {
-      const next = prev.endpoint_mappings.filter((_, i) => i !== index);
-      return {
-        ...prev,
-        endpoint_mappings: next.length > 0 ? next : [createEmptyMapping(prev.api_protocol)],
-      };
-    });
-  };
-
-  const addPromoDefaults = () => {
-    const seeded = promoSeedMappings?.data ?? [];
-    if (seeded.length === 0) return;
-
-    setValues(prev => {
-      const existingKeys = new Set(
-        prev.endpoint_mappings.map(
-          mapping => `${mapping.endpoint_name}|${mapping.endpoint_version}|${mapping.operation_name}`,
-        ),
-      );
-
-      const nextMappings = [...prev.endpoint_mappings];
-      seeded.forEach(mapping => {
-        const key = `${mapping.endpoint_name}|${mapping.endpoint_version}|${mapping.operation_name}`;
-        if (existingKeys.has(key)) return;
-
-        nextMappings.push({
-          mapping_id: mapping.mapping_id,
-          enabled: true,
-          endpoint_name: mapping.endpoint_name,
-          endpoint_version: mapping.endpoint_version,
-          operation_name: mapping.operation_name,
-          protocol: mapping.protocol,
-          payload_format: mapping.payload_format,
-          is_product_endpoint: mapping.is_product_endpoint,
-          structure_input: mapping.payload_format === 'XML' ? '' : '{}',
-          transform_schema: mapping.transform_schema ?? {},
-          metadata: mapping.metadata ?? {},
-          runtime_config: {},
-        });
-      });
-
-      return {
-        ...prev,
-        endpoint_mappings: nextMappings,
-      };
-    });
-  };
-
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (canRequireTest && !isConnectionValidForSave) {
-      setConnectionStatus('failed');
-      setConnectionMessage('Please run Test Connection successfully before saving this vendor.');
-      return;
+  const handleFieldChange = <K extends keyof VendorFormData>(key: K, nextValue: VendorFormData[K]) => {
+    setSubmissionError('');
+    if (key === 'integration_family') {
+      setConnectionStatus('idle');
+      setConnectionMessage('');
+      setLastTestFingerprint('');
     }
+    setValues(prev => {
+      const next = {
+        ...prev,
+        [key]: nextValue,
+      };
 
-    const payload: VendorFormData = {
-      ...values,
-      vendor_name: values.vendor_name.trim(),
-      vendor_api_url: values.vendor_api_url?.trim() || undefined,
-      vendor_account_id: values.vendor_account_id?.trim() || undefined,
-      vendor_secret: values.vendor_secret?.trim() || undefined,
-      endpoint_mappings: values.endpoint_mappings
-        .filter(
-          mapping =>
-            mapping.enabled &&
-            (mapping.mapping_id ||
-              (mapping.endpoint_name && mapping.endpoint_version && mapping.operation_name)),
-        )
-        .map(mapping => ({
-          ...mapping,
-          endpoint_name: mapping.endpoint_name?.trim(),
-          endpoint_version: mapping.endpoint_version?.trim(),
-          operation_name: mapping.operation_name?.trim(),
-          structure_input: mapping.structure_input?.trim() ?? '',
-        })),
-      connection_tested: !canRequireTest || isConnectionValidForSave,
-    };
+      if (key === 'integration_family') {
+        if (nextValue === 'PROMOSTANDARDS') {
+          next.api_protocol = 'SOAP';
+          next.custom_api_service_type = undefined;
+          next.custom_api_format_data = '';
+        } else {
+          next.promostandards_capabilities = null;
+          next.connection_tested = false;
+          next.api_protocol = getProtocolForServiceType(next.custom_api_service_type);
+        }
+      }
 
-    await onSubmit(payload);
+      if (key === 'custom_api_service_type') {
+        next.api_protocol = getProtocolForServiceType(nextValue as CustomApiServiceType);
+      }
+
+      return next;
+    });
   };
 
   const handleTestConnection = async () => {
     if (!onTestConnection) return;
-    if (!values.vendor_api_url) {
+    if (!values.vendor_api_url?.trim()) {
       setConnectionStatus('failed');
-      setConnectionMessage('Vendor API URL is required to test connection.');
+      setConnectionMessage('Vendor API is required before testing.');
       return;
     }
 
-    const companyDataMapping = values.endpoint_mappings.find(
-      mapping => mapping.endpoint_name?.toLowerCase() === 'companydata',
-    );
-
     setConnectionStatus('testing');
-    setConnectionMessage('Testing connection...');
+    setConnectionMessage('Testing vendor connection and discovering available PromoStandards endpoints...');
+
     try {
       const result = await onTestConnection({
         vendor_api_url: values.vendor_api_url,
         vendor_account_id: values.vendor_account_id,
         vendor_secret: values.vendor_secret,
-        api_protocol: values.api_protocol,
-        operation_name: companyDataMapping?.operation_name ?? 'getCompanyData',
-        endpoint_version: companyDataMapping?.endpoint_version ?? '1.0.0',
-        runtime_config: companyDataMapping?.runtime_config ?? {},
+        integration_family: values.integration_family,
+        api_protocol: values.api_protocol ?? 'SOAP',
       });
-      if (result.ok) {
-        setConnectionStatus('success');
-        setConnectionMessage(result.message ?? 'Connection successful.');
-        setLastTestFingerprint(connectionFingerprint);
-      } else {
-        setConnectionStatus('failed');
-        setConnectionMessage(result.message ?? 'Connection test failed.');
-      }
-    } catch (error: any) {
+
+      const capabilities: PromostandardsCapabilityMatrix | null =
+        values.integration_family === 'PROMOSTANDARDS'
+          ? {
+              available_endpoint_count: result.available_endpoint_count ?? 0,
+              endpoints: result.endpoints ?? [],
+              fingerprint: result.fingerprint ?? '',
+              tested_at: result.tested_at ?? new Date().toISOString(),
+            }
+          : null;
+
+      setValues(prev => ({
+        ...prev,
+        promostandards_capabilities: capabilities,
+        connection_tested: result.ok,
+      }));
+      setConnectionStatus(result.ok ? 'success' : 'failed');
+      setConnectionMessage(result.message ?? (result.ok ? 'Connection successful.' : 'Connection failed.'));
+      setLastTestFingerprint(currentFingerprint);
+    } catch (error) {
       setConnectionStatus('failed');
-      setConnectionMessage(error?.message ?? 'Connection test failed.');
+      setConnectionMessage(error instanceof Error ? error.message : 'Vendor connection test failed.');
+    }
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit) {
+      if (requiresPromoTest && !isPromoDiscoveryCurrent) {
+        setConnectionStatus('failed');
+        setConnectionMessage('Run Test Vendor successfully before saving this PromoStandards vendor.');
+      }
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmissionError('');
+
+    try {
+      await onSubmit({
+        ...values,
+        vendor_name: values.vendor_name.trim(),
+        vendor_api_url: values.vendor_api_url?.trim() || undefined,
+        vendor_account_id: values.vendor_account_id?.trim() || undefined,
+        vendor_secret: values.vendor_secret?.trim() || undefined,
+        api_protocol:
+          values.integration_family === 'PROMOSTANDARDS'
+            ? 'SOAP'
+            : getProtocolForServiceType(values.custom_api_service_type),
+        endpoint_mappings: [],
+        promostandards_capabilities:
+          values.integration_family === 'PROMOSTANDARDS' ? values.promostandards_capabilities ?? null : null,
+        connection_tested:
+          values.integration_family === 'PROMOSTANDARDS' ? isPromoDiscoveryCurrent : true,
+      });
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : 'Failed to save vendor.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <section style={panelStyle}>
-      <h2 style={{ marginTop: 0 }}>Vendor</h2>
-      <form onSubmit={handleSubmit}>
-        <label style={fieldStyle}>
-          <span style={labelStyle}>Vendor name</span>
-          <input
-            autoComplete="off"
-            required
-            value={values.vendor_name}
-            onChange={event => setValues(prev => ({ ...prev, vendor_name: event.target.value }))}
-            style={inputStyle}
-          />
-        </label>
-
-        <label style={fieldStyle}>
-          <span style={labelStyle}>Vendor API URL</span>
-          <span style={helpTextStyle}>Base URL for the vendor API.</span>
-          <input
-            autoComplete="url"
-            required
-            value={values.vendor_api_url ?? ''}
-            onChange={event => setValues(prev => ({ ...prev, vendor_api_url: event.target.value }))}
-            style={inputStyle}
-          />
-        </label>
-
-        <label style={fieldStyle}>
-          <span style={labelStyle}>Vendor account ID</span>
-          <input
-            autoComplete="off"
-            value={values.vendor_account_id ?? ''}
-            onChange={event => setValues(prev => ({ ...prev, vendor_account_id: event.target.value }))}
-            style={inputStyle}
-          />
-        </label>
-
-        <label style={fieldStyle}>
-          <span style={labelStyle}>Vendor secret</span>
-          <input
-            autoComplete="new-password"
-            type="password"
-            value={values.vendor_secret ?? ''}
-            onChange={event => setValues(prev => ({ ...prev, vendor_secret: event.target.value }))}
-            style={inputStyle}
-          />
-        </label>
-
-        <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-          <label style={fieldStyle}>
-            <span style={labelStyle}>Integration family</span>
-            <select
-              value={values.integration_family}
-              onChange={event =>
-                setValues(prev => ({
-                  ...prev,
-                  integration_family: event.target.value as VendorFormData['integration_family'],
-                }))
-              }
-              style={inputStyle}
-            >
-              {integrationFamilyOptions.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.content}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label style={fieldStyle}>
-            <span style={labelStyle}>API protocol</span>
-            <select
-              value={values.api_protocol}
-              onChange={event =>
-                setValues(prev => ({
-                  ...prev,
-                  api_protocol: event.target.value as MappingProtocol,
-                }))
-              }
-              style={inputStyle}
-            >
-              {protocolOptions.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.content}
-                </option>
-              ))}
-            </select>
-          </label>
+    <form onSubmit={handleSubmit} style={{ ...pageCardStyle, display: 'grid', gap: '24px' }}>
+      <div style={{ alignItems: 'flex-start', display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+        <div>
+          <h2 style={sectionTitleStyle}>{initialValues ? 'Edit Vendor' : 'Add New Vendor'}</h2>
+          <p style={{ color: '#475569', margin: '8px 0 0' }}>
+            Configure vendor credentials, choose the API family, and validate the connection before saving.
+          </p>
         </div>
-
-        <div style={{ ...fieldStyle, marginBottom: '20px' }}>
+        {values.integration_family === 'PROMOSTANDARDS' ? (
           <button
             type="button"
             onClick={handleTestConnection}
             disabled={connectionStatus === 'testing'}
-            style={secondaryButtonStyle}
+            style={{
+              ...secondaryButtonStyle,
+              opacity: connectionStatus === 'testing' ? 0.6 : 1,
+            }}
           >
-            {connectionStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+            {connectionStatus === 'testing' ? 'Testing Vendor...' : 'Test Vendor'}
           </button>
-          {activeConnectionMessage && (
+        ) : null}
+      </div>
+
+      <div style={{ display: 'grid', gap: '18px', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+        <label>
+          <span style={fieldLabelStyle}>Vendor Name</span>
+          <input
+            value={values.vendor_name}
+            onChange={event => handleFieldChange('vendor_name', event.target.value)}
+            style={textInputStyle}
+          />
+        </label>
+
+        <label>
+          <span style={fieldLabelStyle}>Vendor Type</span>
+          <select
+            value={values.vendor_type}
+            onChange={event => handleFieldChange('vendor_type', event.target.value as VendorFormData['vendor_type'])}
+            style={textInputStyle}
+          >
+            {vendorTypeOptions.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          <span style={fieldLabelStyle}>API Type</span>
+          <select
+            value={values.integration_family}
+            onChange={event =>
+              handleFieldChange('integration_family', event.target.value as VendorFormData['integration_family'])
+            }
+            style={textInputStyle}
+          >
+            {integrationFamilyOptions.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          <span style={fieldLabelStyle}>Vendor API</span>
+          <input
+            value={values.vendor_api_url ?? ''}
+            onChange={event => handleFieldChange('vendor_api_url', event.target.value)}
+            style={textInputStyle}
+          />
+        </label>
+
+        <label>
+          <span style={fieldLabelStyle}>Vendor Account ID</span>
+          <input
+            value={values.vendor_account_id ?? ''}
+            onChange={event => handleFieldChange('vendor_account_id', event.target.value)}
+            style={textInputStyle}
+          />
+        </label>
+
+        <label>
+          <span style={fieldLabelStyle}>Vendor Secret</span>
+          <input
+            type="password"
+            value={values.vendor_secret ?? ''}
+            onChange={event => handleFieldChange('vendor_secret', event.target.value)}
+            style={textInputStyle}
+          />
+        </label>
+      </div>
+
+      {values.integration_family === 'CUSTOM' ? (
+        <div style={{ display: 'grid', gap: '18px' }}>
+          <label>
+            <span style={fieldLabelStyle}>API Service Type</span>
+            <select
+              value={values.custom_api_service_type ?? ''}
+              onChange={event =>
+                handleFieldChange(
+                  'custom_api_service_type',
+                  (event.target.value || undefined) as VendorFormData['custom_api_service_type'],
+                )
+              }
+              style={textInputStyle}
+            >
+              <option value="">Select a service type</option>
+              {customApiServiceTypeOptions.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span style={fieldLabelStyle}>Format Data</span>
+            <textarea
+              value={values.custom_api_format_data ?? ''}
+              onChange={event => handleFieldChange('custom_api_format_data', event.target.value)}
+              rows={8}
+              style={{
+                ...textInputStyle,
+                minHeight: '180px',
+                resize: 'vertical',
+              }}
+            />
+          </label>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <InlineNotice
+            tone={connectionStatus === 'failed' ? 'error' : connectionStatus === 'success' ? 'success' : 'info'}
+            title={
+              connectionStatus === 'success'
+                ? 'PromoStandards discovery complete'
+                : connectionStatus === 'testing'
+                  ? 'Testing vendor connection'
+                  : 'PromoStandards discovery required'
+            }
+            description={
+              activeConnectionMessage ||
+              'Run Test Vendor to discover which PromoStandards endpoint versions are available for this vendor.'
+            }
+          />
+
+          <div
+            style={{
+              border: '1px solid #dbe3ef',
+              borderRadius: '14px',
+              overflow: 'hidden',
+            }}
+          >
             <div
               style={{
-                color: activeConnectionTone === 'success' ? '#166534' : '#b91c1c',
-                fontSize: '14px',
+                background: '#f8fafc',
+                borderBottom: '1px solid #dbe3ef',
+                color: '#0f172a',
+                display: 'grid',
+                fontSize: '13px',
+                fontWeight: 700,
+                gap: '12px',
+                gridTemplateColumns: '1.1fr 0.8fr 1fr 0.8fr',
+                padding: '12px 16px',
               }}
             >
-              {activeConnectionMessage}
+              <span>Endpoint</span>
+              <span>Version</span>
+              <span>Operation</span>
+              <span>Status</span>
             </div>
-          )}
-        </div>
-
-        <section style={mappingPanelStyle}>
-          <div style={{ alignItems: 'center', display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <h3 style={{ margin: 0 }}>Endpoint Mapping Records</h3>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {values.integration_family === 'PROMOSTANDARDS' && (
-                <button type="button" style={secondaryButtonStyle} onClick={addPromoDefaults}>
-                  Add Promo Defaults
-                </button>
-              )}
-              <button type="button" style={secondaryButtonStyle} onClick={addMapping}>
-                Add Mapping
-              </button>
-            </div>
-          </div>
-
-          {values.endpoint_mappings.map((mapping, index) => (
-            <div key={`${mapping.mapping_id ?? 'new'}-${index}`} style={mappingRowStyle}>
-              <div style={mappingRowHeaderStyle}>
-                <label style={checkboxLabelStyle}>
-                  <input
-                    checked={mapping.enabled}
-                    type="checkbox"
-                    onChange={event => updateMapping(index, current => ({ ...current, enabled: event.target.checked }))}
-                  />
-                  Enabled
-                </label>
-                <button type="button" style={textButtonStyle} onClick={() => removeMapping(index)}>
-                  Remove
-                </button>
+            {promoEndpointRows.length === 0 ? (
+              <div style={{ color: '#64748b', padding: '18px 16px' }}>
+                No PromoStandards discovery results yet.
               </div>
-
-              <div style={mappingGridStyle}>
-                <label style={fieldStyle}>
-                  <span style={labelStyle}>Endpoint name</span>
-                  <input
-                    value={mapping.endpoint_name ?? ''}
-                    onChange={event => updateMapping(index, current => ({ ...current, endpoint_name: event.target.value }))}
-                    style={inputStyle}
-                    required={mapping.enabled}
-                  />
-                </label>
-
-                <label style={fieldStyle}>
-                  <span style={labelStyle}>Endpoint version</span>
-                  <input
-                    value={mapping.endpoint_version ?? ''}
-                    onChange={event => updateMapping(index, current => ({ ...current, endpoint_version: event.target.value }))}
-                    style={inputStyle}
-                    required={mapping.enabled}
-                  />
-                </label>
-
-                <label style={fieldStyle}>
-                  <span style={labelStyle}>Operation name</span>
-                  <input
-                    value={mapping.operation_name ?? ''}
-                    onChange={event => updateMapping(index, current => ({ ...current, operation_name: event.target.value }))}
-                    style={inputStyle}
-                    required={mapping.enabled}
-                  />
-                </label>
-
-                <label style={fieldStyle}>
-                  <span style={labelStyle}>Protocol</span>
-                  <select
-                    value={mapping.protocol ?? values.api_protocol}
-                    onChange={event =>
-                      updateMapping(index, current => ({
-                        ...current,
-                        protocol: event.target.value as MappingProtocol,
-                        payload_format: getDefaultPayloadFormat(event.target.value as MappingProtocol),
-                      }))
-                    }
-                    style={inputStyle}
+            ) : (
+              promoEndpointRows.map(endpoint => (
+                <div
+                  key={`${endpoint.endpoint_name}|${endpoint.endpoint_version}`}
+                  style={{
+                    borderBottom: '1px solid #eef2f7',
+                    display: 'grid',
+                    gap: '12px',
+                    gridTemplateColumns: '1.1fr 0.8fr 1fr 0.8fr',
+                    padding: '14px 16px',
+                  }}
+                >
+                  <div>
+                    <div style={{ color: '#0f172a', fontWeight: 700 }}>{endpoint.endpoint_name}</div>
+                    <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>{endpoint.message}</div>
+                  </div>
+                  <div style={{ color: '#334155' }}>{endpoint.endpoint_version}</div>
+                  <div style={{ color: '#334155' }}>{endpoint.operation_name}</div>
+                  <div
+                    style={{
+                      color: endpoint.available ? '#047857' : '#b91c1c',
+                      fontWeight: 700,
+                    }}
                   >
-                    {protocolOptions.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {option.content}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label style={fieldStyle}>
-                  <span style={labelStyle}>Structure format</span>
-                  <select
-                    value={mapping.payload_format ?? 'JSON'}
-                    onChange={event =>
-                      updateMapping(index, current => ({
-                        ...current,
-                        payload_format: event.target.value as MappingPayloadFormat,
-                      }))
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="JSON">JSON</option>
-                    <option value="XML">XML</option>
-                  </select>
-                </label>
-
-                <label style={{ ...fieldStyle, alignSelf: 'end' }}>
-                  <span style={labelStyle}>Product endpoint</span>
-                  <label style={checkboxLabelStyle}>
-                    <input
-                      checked={!!mapping.is_product_endpoint}
-                      type="checkbox"
-                      onChange={event =>
-                        updateMapping(index, current => ({
-                          ...current,
-                          is_product_endpoint: event.target.checked,
-                        }))
-                      }
-                    />
-                    Yes
-                  </label>
-                </label>
-              </div>
-
-              <label style={fieldStyle}>
-                <span style={labelStyle}>JSON/XML structure entry</span>
-                <textarea
-                  rows={6}
-                  value={mapping.structure_input ?? ''}
-                  onChange={event => updateMapping(index, current => ({ ...current, structure_input: event.target.value }))}
-                  style={inputStyle}
-                  placeholder={mapping.payload_format === 'XML' ? '<Envelope>...</Envelope>' : '{ "path": "value" }'}
-                />
-              </label>
-            </div>
-          ))}
-        </section>
-
-        {!hasValidMappings && (
-          <div style={{ color: '#b91c1c', fontSize: '14px', marginBottom: '12px' }}>
-            Add at least one enabled endpoint mapping before saving.
+                    {endpoint.available ? 'Available' : 'Unavailable'}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-          <button type="button" onClick={onCancel} style={secondaryButtonStyle}>
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!hasValidMappings || (canRequireTest && !isConnectionValidForSave)}
-            style={primaryButtonStyle}
-          >
-            Save vendor
-          </button>
         </div>
-      </form>
-    </section>
+      )}
+
+      {submissionError ? (
+        <InlineNotice tone="error" title="Unable to save vendor" description={submissionError} />
+      ) : null}
+
+      <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+        <button type="button" onClick={onCancel} style={secondaryButtonStyle}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          style={{
+            ...primaryButtonStyle,
+            opacity: canSubmit ? 1 : 0.55,
+          }}
+        >
+          {isSubmitting ? 'Saving Vendor...' : initialValues ? 'Save Vendor Changes' : 'Save Vendor'}
+        </button>
+      </div>
+    </form>
   );
-};
-
-const panelStyle: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid #e5e7eb',
-  borderRadius: '12px',
-  padding: '24px',
-};
-
-const fieldStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '6px',
-  marginBottom: '16px',
-};
-
-const labelStyle: React.CSSProperties = {
-  fontWeight: 600,
-};
-
-const helpTextStyle: React.CSSProperties = {
-  color: '#6b7280',
-  fontSize: '14px',
-};
-
-const inputStyle: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid #d1d5db',
-  borderRadius: '8px',
-  padding: '10px 12px',
-  width: '100%',
-};
-
-const checkboxLabelStyle: React.CSSProperties = {
-  alignItems: 'center',
-  display: 'flex',
-  gap: '8px',
-};
-
-const secondaryButtonStyle: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid #d1d5db',
-  borderRadius: '8px',
-  cursor: 'pointer',
-  padding: '10px 14px',
-};
-
-const primaryButtonStyle: React.CSSProperties = {
-  background: '#2563eb',
-  border: 'none',
-  borderRadius: '8px',
-  color: '#ffffff',
-  cursor: 'pointer',
-  padding: '10px 14px',
-};
-
-const mappingPanelStyle: React.CSSProperties = {
-  border: '1px solid #e5e7eb',
-  borderRadius: '10px',
-  marginBottom: '16px',
-  padding: '16px',
-};
-
-const mappingRowStyle: React.CSSProperties = {
-  border: '1px solid #e5e7eb',
-  borderRadius: '10px',
-  marginBottom: '12px',
-  padding: '12px',
-};
-
-const mappingRowHeaderStyle: React.CSSProperties = {
-  alignItems: 'center',
-  display: 'flex',
-  justifyContent: 'space-between',
-  marginBottom: '10px',
-};
-
-const mappingGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: '10px',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
-};
-
-const textButtonStyle: React.CSSProperties = {
-  background: 'transparent',
-  border: 'none',
-  color: '#b91c1c',
-  cursor: 'pointer',
-  padding: 0,
 };
 
 export default VendorForm;

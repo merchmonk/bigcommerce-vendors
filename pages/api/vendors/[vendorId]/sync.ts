@@ -1,7 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getSession } from '../../../../lib/auth';
+import { recordInternalFailure } from '../../../../lib/apiTelemetry';
+import { getIntegrationJobStatus, submitCatalogSyncJob } from '../../../../lib/integrationJobs';
 import logger from '../../../../lib/logger';
-import { runVendorSync } from '../../../../lib/etl/runner';
+import { buildApiRequestContext, getRequestContext, runWithRequestContext } from '../../../../lib/requestContext';
 import { listSyncRunsForVendor } from '../../../../lib/etl/repository';
 
 interface RunSyncBody {
@@ -11,44 +13,60 @@ interface RunSyncBody {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const vendorId = Number(req.query.vendorId);
-  logger.info('vendor sync API request', { method: req.method, vendorId });
+  return runWithRequestContext(buildApiRequestContext(req, { vendorId }), async () => {
+    logger.info('vendor sync API request', { method: req.method, vendorId });
 
-  try {
-    const session = await getSession(req);
-    if (!session) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
+    try {
+      const session = await getSession(req);
+      if (!session) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
 
-    if (!Number.isFinite(vendorId)) {
-      return res.status(400).json({ message: 'Invalid vendorId' });
-    }
+      if (!Number.isFinite(vendorId)) {
+        return res.status(400).json({ message: 'Invalid vendorId' });
+      }
 
-    if (req.method === 'GET') {
-      const runs = await listSyncRunsForVendor(vendorId);
-      return res.status(200).json({ data: runs });
-    }
+      if (req.method === 'GET') {
+        const runs = await listSyncRunsForVendor(vendorId);
+        return res.status(200).json({ data: runs });
+      }
 
-    if (req.method === 'POST') {
-      const body = req.body as RunSyncBody;
-      const result = await runVendorSync({
-        vendorId,
-        session,
-        mappingId: body.mapping_id,
-        syncAll: body.sync_all,
+      if (req.method === 'POST') {
+        const body = req.body as RunSyncBody;
+        const submittedJob = await submitCatalogSyncJob({
+          vendorId,
+          mappingId: body.mapping_id,
+          syncAll: body.sync_all,
+          sourceAction: 'manual_sync',
+          correlationId: getRequestContext()?.correlationId ?? 'unknown',
+          requestPayload: {
+            mapping_id: body.mapping_id ?? null,
+            sync_all: body.sync_all ?? false,
+          },
+        });
+        const status = await getIntegrationJobStatus(submittedJob.job.integration_job_id);
+        return res.status(202).json({
+          data: status.job,
+          events: status.events,
+          deduplicated: submittedJob.deduplicated,
+        });
+      }
+
+      res.setHeader('Allow', ['GET', 'POST']);
+      return res.status(405).json({ message: `Method ${req.method} not allowed` });
+    } catch (error: any) {
+      await recordInternalFailure({
+        action: 'vendor_sync_api_request',
+        payload: {
+          method: req.method ?? 'UNKNOWN',
+          url: req.url ?? '',
+          vendor_id: vendorId,
+          body: typeof req.body === 'object' ? req.body : {},
+        },
+        error,
       });
-      return res.status(200).json({ data: result });
+      const { message, response } = error;
+      return res.status(response?.status || 500).json({ message: message ?? 'Vendor sync failed' });
     }
-
-    res.setHeader('Allow', ['GET', 'POST']);
-    return res.status(405).json({ message: `Method ${req.method} not allowed` });
-  } catch (error: any) {
-    logger.error('vendor sync API error', {
-      vendorId,
-      message: error?.message,
-      stack: error?.stack,
-      status: error?.response?.status,
-    });
-    const { message, response } = error;
-    return res.status(response?.status || 500).json({ message: message ?? 'Vendor sync failed' });
-  }
+  });
 }

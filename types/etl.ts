@@ -7,6 +7,21 @@ export type MappingPayloadFormat = 'JSON' | 'XML';
 export type SyncScope = 'MAPPING' | 'ALL';
 
 export type SyncRunStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+export type IntegrationJobKind =
+  | 'CATALOG_SYNC'
+  | 'ORDER_SUBMISSION'
+  | 'ORDER_STATUS_POLL'
+  | 'ORDER_SHIPMENT_POLL'
+  | 'ORDER_INVOICE_POLL'
+  | 'ORDER_REMITTANCE_SUBMISSION';
+export type IntegrationJobStatus =
+  | 'PENDING'
+  | 'ENQUEUED'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'DEAD_LETTERED';
+export type OperatorTraceCategory = 'VENDOR_API' | 'BIGCOMMERCE_API' | 'INTERNAL_FAILURE';
 export type PendingRelatedLinkStatus = 'PENDING' | 'RESOLVED' | 'FAILED';
 export type EnrichmentSource = 'PRICING' | 'INVENTORY' | 'MEDIA';
 export type EnrichmentRetryStatus = 'PENDING' | 'RETRYING' | 'RESOLVED' | 'FAILED';
@@ -38,6 +53,53 @@ export interface VendorEndpointMapping {
   runtime_config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface IntegrationJob {
+  integration_job_id: number;
+  job_kind: IntegrationJobKind;
+  vendor_id: number;
+  mapping_id: number | null;
+  order_integration_state_id: number | null;
+  sync_scope: SyncScope;
+  source_action: string;
+  dedupe_key: string;
+  correlation_id: string;
+  request_payload: Record<string, unknown>;
+  status: IntegrationJobStatus;
+  attempt_count: number;
+  queue_message_id: string | null;
+  last_error: string | null;
+  submitted_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+export interface OperatorTrace {
+  operator_trace_id: number;
+  category: OperatorTraceCategory;
+  correlation_id: string;
+  vendor_id: number | null;
+  integration_job_id: number | null;
+  order_integration_state_id: number | null;
+  sync_run_id: number | null;
+  method: string;
+  target: string;
+  action: string;
+  status_code: number | null;
+  snapshot_bucket: string | null;
+  snapshot_key: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface IntegrationJobEvent {
+  integration_job_event_id: number;
+  integration_job_id: number;
+  event_name: string;
+  level: 'info' | 'warn' | 'error';
+  payload: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface EtlSyncRun {

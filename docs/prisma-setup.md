@@ -21,4 +21,5 @@ This project now uses Prisma ORM for schema, migrations, and seed data.
 ## Notes
 
 - The initial migration is create-only for an empty database.
-- PromoStandards endpoint mappings are seeded through Prisma seed (`prisma/seed.ts`) and reused by runtime seeding.
+- PromoStandards endpoint mappings are seeded through Prisma seed (`prisma/seed.ts`).
+- Request-time PromoStandards seeding has been removed from operator routes. Bootstrap and migration flows should use `npm run db:seed` or `npm run db:migrate` instead of trying to seed through vendor APIs.

@@ -15,6 +15,7 @@ const mockClearProductEnrichmentRetry = jest.fn();
 const mockListPendingRelatedProductLinks = jest.fn();
 const mockFindVendorProductMapByVendorProductId = jest.fn();
 const mockUpsertRelatedProducts = jest.fn();
+const mockResolveBigCommercePricingContext = jest.fn();
 
 jest.mock('@lib/vendors', () => ({
   getVendorById: (...args: unknown[]) => mockGetVendorById(...args),
@@ -36,6 +37,10 @@ jest.mock('@lib/etl/repository', () => ({
 jest.mock('@lib/etl/bigcommerceCatalog', () => ({
   upsertBigCommerceProduct: (...args: unknown[]) => mockUpsertBigCommerceProduct(...args),
   upsertRelatedProducts: (...args: unknown[]) => mockUpsertRelatedProducts(...args),
+}));
+
+jest.mock('@lib/etl/bigcommercePricingContext', () => ({
+  resolveBigCommercePricingContext: (...args: unknown[]) => mockResolveBigCommercePricingContext(...args),
 }));
 
 jest.mock('@lib/etl/adapters/factory', () => ({
@@ -154,6 +159,13 @@ describe('runVendorSync', () => {
     mockListPendingRelatedProductLinks.mockResolvedValue([]);
     mockFindVendorProductMapByVendorProductId.mockResolvedValue(null);
     mockUpsertRelatedProducts.mockResolvedValue(undefined);
+    mockResolveBigCommercePricingContext.mockResolvedValue({
+      markup_percent: 30,
+      price_list_id: 1,
+      currency: 'USD',
+      markup_namespace: 'merchmonk',
+      markup_key: 'product_markup',
+    });
   });
 
   test('runs product assembly flow, writes BigCommerce product, and finalizes sync run', async () => {

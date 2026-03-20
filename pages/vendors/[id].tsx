@@ -1,12 +1,14 @@
 import { useRouter } from 'next/router';
 import useSWR from 'swr';
+import { InlineNotice } from '../../components/operator/ui';
 import VendorForm from '../../components/vendorForm';
 import VendorSyncPanel from '../../components/vendorSyncPanel';
 import ErrorMessage from '../../components/error';
 import Loading from '../../components/loading';
 import { useSession } from '../../context/session';
+import { getVendorConnectionSections } from '../../lib/vendors/vendorConfig';
 import type { Vendor } from '../../lib/vendors';
-import type { MappingProtocol, VendorFormData } from '../../types';
+import type { MappingProtocol, VendorConnectionTestResult, VendorFormData } from '../../types';
 import type { EndpointMappingDraft } from '../../types';
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
@@ -50,11 +52,9 @@ const EditVendorPage = () => {
     vendor_api_url?: string;
     vendor_account_id?: string;
     vendor_secret?: string;
+    integration_family?: VendorFormData['integration_family'];
     api_protocol?: MappingProtocol;
-    operation_name?: string;
-    endpoint_version?: string;
-    runtime_config?: Record<string, unknown>;
-  }) => {
+  }): Promise<VendorConnectionTestResult> => {
     const response = await fetch(`/api/vendors/test-connection?context=${encodeURIComponent(context)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -64,6 +64,10 @@ const EditVendorPage = () => {
     return {
       ok: response.ok && !!payload?.ok,
       message: payload?.message,
+      available_endpoint_count: payload?.available_endpoint_count,
+      fingerprint: payload?.fingerprint,
+      tested_at: payload?.tested_at,
+      endpoints: payload?.endpoints,
     };
   };
 
@@ -71,19 +75,33 @@ const EditVendorPage = () => {
   if (error) return <ErrorMessage error={error} />;
   if (!data) return null;
 
+  const sections = getVendorConnectionSections(data.connection_config ?? {});
   const initialValues: VendorFormData = {
     vendor_name: data.vendor_name,
+    vendor_type: data.vendor_type,
     vendor_api_url: data.vendor_api_url ?? undefined,
     vendor_account_id: data.vendor_account_id ?? undefined,
     vendor_secret: data.vendor_secret ?? undefined,
     integration_family: data.integration_family,
     api_protocol: (data.api_protocol ?? 'SOAP') as MappingProtocol,
-    endpoint_mappings: data.endpoint_mappings ?? [],
+    endpoint_mappings: [],
+    custom_api_service_type: sections.custom_api?.service_type,
+    custom_api_format_data: sections.custom_api?.format_data ?? '',
+    promostandards_capabilities: sections.promostandards_capabilities ?? null,
     connection_config: data.connection_config ?? {},
   };
 
   return (
     <>
+      {data.is_active ? (
+        <div style={{ marginBottom: '18px' }}>
+          <InlineNotice
+            tone="warning"
+            title="Editing an active vendor can break live sync behavior"
+            description="Changing credentials, vendor type, or API configuration for an active vendor can disrupt syncs and downstream catalog behavior. Confirm the new configuration before saving."
+          />
+        </div>
+      ) : null}
       <VendorForm
         initialValues={initialValues}
         onSubmit={handleSubmit}

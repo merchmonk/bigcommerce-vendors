@@ -1,6 +1,6 @@
 import { GetServerSideProps } from 'next';
 import { encodePayload, getBCVerify, setSession } from '../lib/auth';
-import logger from '../lib/logger';
+import { ensureBigCommerceOrderWebhooks } from '../lib/orders/bigcommerceOrderWebhooks';
 import type { SessionProps } from '../types';
 
 /**
@@ -19,11 +19,27 @@ function buildRedirectUrl(url: string | undefined, encodedContext: string): stri
  * BigCommerce calls GET /load when a user opens the app in the control panel.
  * We verify the signed_payload_jwt, persist the session, then redirect to the app UI.
  */
-export const getServerSideProps: GetServerSideProps = async ({ query }) => {
+export const getServerSideProps: GetServerSideProps = async (context) => {
+  const { default: logger } = await import('../lib/logger');
   try {
+    const { query } = context;
     const session = await getBCVerify(query as { signed_payload?: string; signed_payload_jwt?: string });
     const encodedContext = encodePayload(session as SessionProps);
     await setSession(session as SessionProps);
+    const accessToken = (session as SessionProps).access_token?.trim();
+    if (accessToken) {
+      try {
+        await ensureBigCommerceOrderWebhooks({
+          accessToken,
+          storeHash: ((session as SessionProps).context ?? (session as SessionProps).sub ?? '').split('/')[1] ?? '',
+          headers: context.req.headers,
+        });
+      } catch (webhookError) {
+        logger.warn('failed to ensure BigCommerce order webhooks during load page render', {
+          error: webhookError instanceof Error ? webhookError.message : 'Unknown error',
+        });
+      }
+    }
 
     const redirectUrl = buildRedirectUrl((session as SessionProps & { url?: string }).url, encodedContext);
     logger.info('load page success', { redirectUrl });

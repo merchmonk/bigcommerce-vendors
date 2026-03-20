@@ -12,6 +12,6 @@ jest.mock('next/router', () => ({
 describe('Index page', () => {
   test('redirects users to vendors', () => {
     render(<Index />);
-    expect(mockReplace).toHaveBeenCalledWith('/vendors');
+    expect(mockReplace).toHaveBeenCalledWith('/dashboard');
   });
 });

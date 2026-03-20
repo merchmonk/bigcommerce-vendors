@@ -48,6 +48,7 @@ describe('runProductDataWorkflow', () => {
       vendor: {
         vendor_id: 10,
         vendor_name: 'Vendor',
+        vendor_type: 'SUPPLIER',
         vendor_api_url: 'https://vendor.example.com/productdata',
         vendor_account_id: 'acct',
         vendor_secret: 'secret',

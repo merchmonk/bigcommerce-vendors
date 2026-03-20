@@ -1,6 +1,10 @@
 import type { EndpointMapping, MappingProtocol, VendorEndpointMapping } from '../../types';
 import type { Vendor } from '../vendors';
 import { resolveEndpointAdapter } from './adapters/factory';
+import {
+  applyPricingConfigurationToProduct,
+  buildProductPricingConfiguration,
+} from './pricingConfiguration';
 import type {
   ModifierCharge,
   NormalizedBulkPricingRule,
@@ -161,13 +165,23 @@ function mergeRequestFields(
   };
 }
 
-function buildBaseRequestFields(product: NormalizedProduct): Record<string, unknown> {
-  return {
+function buildBaseRequestFields(
+  product: NormalizedProduct,
+  options?: {
+    includePartId?: boolean;
+  },
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
     productId: product.vendor_product_id ?? product.sku,
-    partId: product.source_sku ?? product.sku,
     localizationCountry: DEFAULT_LOCALIZATION_COUNTRY,
     localizationLanguage: DEFAULT_LOCALIZATION_LANGUAGE,
   };
+
+  if (options?.includePartId !== false) {
+    fields.partId = product.source_sku ?? product.sku;
+  }
+
+  return fields;
 }
 
 function extractInventoryLevel(payload: unknown): number | undefined {
@@ -331,7 +345,16 @@ async function runProductOperation(input: {
     };
   }
 
-  const runtime = mergeRequestFields(runtimeConfig, buildBaseRequestFields(input.product));
+  const shouldOmitPartId =
+    input.mapping.mapping.endpoint_name === 'PricingAndConfiguration' &&
+    input.mapping.mapping.operation_name === 'getConfigurationAndPricing' &&
+    (input.product.variants?.length ?? 0) > 0;
+  const runtime = mergeRequestFields(
+    runtimeConfig,
+    buildBaseRequestFields(input.product, {
+      includePartId: !shouldOmitPartId,
+    }),
+  );
   const result = await adapter.invokeEndpoint({
     endpointUrl,
     operationName,
@@ -530,12 +553,18 @@ export async function buildProductAssembly(input: {
     }
 
     if (pricingPayloads.length > 0) {
+      const pricingConfiguration = buildProductPricingConfiguration(pricingPayloads);
+      if (pricingConfiguration) {
+        Object.assign(product, applyPricingConfigurationToProduct(product, pricingConfiguration));
+      }
+
       const extractedCost = extractPricingCost(pricingPayloads, product.cost_price ?? product.price);
       if (extractedCost !== undefined) {
         product.cost_price = extractedCost;
+        product.price = product.price ?? extractedCost;
       }
       const extractedBulkRules = pricingPayloads.flatMap(payload => extractBulkRules(payload));
-      if (extractedBulkRules.length > 0) {
+      if (extractedBulkRules.length > 0 && (!product.bulk_pricing_rules || product.bulk_pricing_rules.length === 0)) {
         product.bulk_pricing_rules = dedupeBulkRules(extractedBulkRules);
       }
       const blueprint = extractModifierBlueprint(pricingPayloads);

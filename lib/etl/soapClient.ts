@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { recordApiExchange } from '../apiTelemetry';
 
 export interface SoapCallOptions {
   endpointUrl: string;
@@ -134,11 +135,46 @@ export async function callSoapEndpoint(options: SoapCallOptions): Promise<SoapCa
       parsedBody = null;
     }
 
+    await recordApiExchange({
+      category: 'vendor-api',
+      target: options.endpointUrl,
+      method: 'POST',
+      action: `${options.operationName}:${options.endpointVersion}`,
+      status: response.status,
+      request: {
+        endpoint_version: options.endpointVersion,
+        operation_name: options.operationName,
+        soap_action: options.soapAction ?? options.operationName,
+        request_fields: options.requestFields ?? {},
+        envelope,
+      },
+      response: {
+        raw_xml: rawXml,
+        parsed_body: parsedBody ?? {},
+      },
+    });
+
     return {
       status: response.status,
       rawXml,
       parsedBody,
     };
+  } catch (error) {
+    await recordApiExchange({
+      category: 'vendor-api',
+      target: options.endpointUrl,
+      method: 'POST',
+      action: `${options.operationName}:${options.endpointVersion}`,
+      request: {
+        endpoint_version: options.endpointVersion,
+        operation_name: options.operationName,
+        soap_action: options.soapAction ?? options.operationName,
+        request_fields: options.requestFields ?? {},
+        envelope,
+      },
+      error,
+    });
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

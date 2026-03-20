@@ -12,6 +12,11 @@ enum IntegrationFamily {
   CUSTOM
 }
 
+enum VendorType {
+  SUPPLIER
+  DECORATOR
+}
+
 enum MappingProtocol {
   SOAP
   REST
@@ -35,6 +40,43 @@ enum SyncRunStatus {
   RUNNING
   SUCCESS
   FAILED
+}
+
+enum IntegrationJobKind {
+  CATALOG_SYNC
+  ORDER_SUBMISSION
+  ORDER_STATUS_POLL
+  ORDER_SHIPMENT_POLL
+  ORDER_INVOICE_POLL
+  ORDER_REMITTANCE_SUBMISSION
+}
+
+enum IntegrationJobStatus {
+  PENDING
+  ENQUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  DEAD_LETTERED
+}
+
+enum OperatorTraceCategory {
+  VENDOR_API
+  BIGCOMMERCE_API
+  INTERNAL_FAILURE
+}
+
+enum OrderLifecycleStatus {
+  PENDING_SUBMISSION
+  SUBMISSION_QUEUED
+  SUBMITTED
+  ISSUE
+  PARTIALLY_SHIPPED
+  SHIPPED
+  INVOICED
+  COMPLETED
+  FAILED
+  CANCELLED
 }
 
 enum PendingRelatedLinkStatus {
@@ -87,6 +129,7 @@ model StoreUser {
 model Vendor {
   vendor_id          Int                     @id @default(autoincrement())
   vendor_name        String                  @db.VarChar(255)
+  vendor_type        VendorType              @default(SUPPLIER)
   vendor_api_url     String?                 @db.VarChar(2048)
   vendor_account_id  String?                 @db.VarChar(255)
   vendor_secret      String?
@@ -98,9 +141,11 @@ model Vendor {
   datetime_modified  DateTime                @default(now()) @db.Timestamptz(6)
   endpoint_mappings  VendorEndpointMapping[]
   sync_runs          EtlSyncRun[]
+  integration_jobs   IntegrationJob[]
   product_map        VendorProductMap[]
   pending_related    PendingRelatedProductLink[]
   enrichment_retries ProductEnrichmentRetry[]
+  order_integrations OrderIntegrationState[]
 
   @@map("vendors")
 }
@@ -124,6 +169,7 @@ model EndpointMapping {
   updated_at             DateTime                @default(now()) @db.Timestamptz(6)
   vendor_endpoint_links  VendorEndpointMapping[]
   sync_runs              EtlSyncRun[]
+  integration_jobs       IntegrationJob[]
   vendor_product_records VendorProductMap[]
 
   @@unique([standard_type, endpoint_name, endpoint_version, operation_name])
@@ -161,6 +207,113 @@ model EtlSyncRun {
   mapping         EndpointMapping? @relation(fields: [mapping_id], references: [mapping_id], onDelete: SetNull)
 
   @@map("etl_sync_runs")
+}
+
+model IntegrationJob {
+  integration_job_id BigInt                @id @default(autoincrement())
+  job_kind           IntegrationJobKind
+  vendor_id          Int
+  mapping_id         Int?
+  order_integration_state_id BigInt?
+  sync_scope         SyncScope             @default(MAPPING)
+  source_action      String                @db.VarChar(128)
+  dedupe_key         String                @db.VarChar(512)
+  correlation_id     String                @db.VarChar(128)
+  request_payload    Json                  @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  status             IntegrationJobStatus  @default(PENDING)
+  attempt_count      Int                   @default(0)
+  queue_message_id   String?               @db.VarChar(255)
+  last_error         String?
+  submitted_at       DateTime              @default(now()) @db.Timestamptz(6)
+  started_at         DateTime?             @db.Timestamptz(6)
+  ended_at           DateTime?             @db.Timestamptz(6)
+  vendor             Vendor                @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
+  mapping            EndpointMapping?      @relation(fields: [mapping_id], references: [mapping_id], onDelete: SetNull)
+  events             IntegrationJobEvent[]
+
+  @@index([vendor_id, status])
+  @@index([order_integration_state_id, status])
+  @@index([dedupe_key, status])
+  @@index([submitted_at])
+  @@map("integration_jobs")
+}
+
+model OperatorTrace {
+  operator_trace_id   BigInt                @id @default(autoincrement())
+  category            OperatorTraceCategory
+  correlation_id      String                @db.VarChar(128)
+  vendor_id           Int?
+  integration_job_id  BigInt?
+  order_integration_state_id BigInt?
+  sync_run_id         BigInt?
+  method              String                @db.VarChar(16)
+  target              String                @db.VarChar(2048)
+  action              String                @db.VarChar(255)
+  status_code         Int?
+  snapshot_bucket     String?               @db.VarChar(255)
+  snapshot_key        String?               @db.VarChar(1024)
+  metadata            Json                  @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+
+  @@index([vendor_id, created_at])
+  @@index([integration_job_id, created_at])
+  @@index([order_integration_state_id, created_at])
+  @@index([sync_run_id, created_at])
+  @@index([correlation_id, created_at])
+  @@map("operator_traces")
+}
+
+model IntegrationJobEvent {
+  integration_job_event_id BigInt          @id @default(autoincrement())
+  integration_job_id       BigInt
+  event_name               String          @db.VarChar(128)
+  level                    String          @db.VarChar(16)
+  payload                  Json            @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  created_at               DateTime        @default(now()) @db.Timestamptz(6)
+  integration_job          IntegrationJob  @relation(fields: [integration_job_id], references: [integration_job_id], onDelete: Cascade)
+
+  @@index([integration_job_id, created_at])
+  @@map("integration_job_events")
+}
+
+model OrderIntegrationState {
+  order_integration_state_id   BigInt               @id @default(autoincrement())
+  vendor_id                    Int
+  external_order_id            String               @db.VarChar(255)
+  order_source                 String               @default("BIGCOMMERCE") @db.VarChar(64)
+  purchase_order_number        String               @db.VarChar(255)
+  sales_order_number           String?              @db.VarChar(255)
+  order_type                   String?              @db.VarChar(64)
+  lifecycle_status             OrderLifecycleStatus @default(PENDING_SUBMISSION)
+  status_label                 String?              @db.VarChar(255)
+  status_code                  String?              @db.VarChar(64)
+  shipment_status              String?              @db.VarChar(64)
+  invoice_status               String?              @db.VarChar(64)
+  remittance_status            String?              @db.VarChar(64)
+  submission_payload           Json                 @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  latest_vendor_payload        Json                 @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  metadata                     Json                 @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  last_error                   String?
+  submitted_at                 DateTime?            @db.Timestamptz(6)
+  last_status_polled_at        DateTime?            @db.Timestamptz(6)
+  next_status_poll_at          DateTime?            @db.Timestamptz(6)
+  last_shipment_polled_at      DateTime?            @db.Timestamptz(6)
+  next_shipment_poll_at        DateTime?            @db.Timestamptz(6)
+  last_invoice_polled_at       DateTime?            @db.Timestamptz(6)
+  next_invoice_poll_at         DateTime?            @db.Timestamptz(6)
+  last_remittance_submitted_at DateTime?            @db.Timestamptz(6)
+  completed_at                 DateTime?            @db.Timestamptz(6)
+  created_at                   DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at                   DateTime             @default(now()) @db.Timestamptz(6)
+  vendor                       Vendor               @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
+
+  @@unique([vendor_id, external_order_id])
+  @@unique([vendor_id, purchase_order_number])
+  @@index([vendor_id, lifecycle_status])
+  @@index([next_status_poll_at])
+  @@index([next_shipment_poll_at])
+  @@index([next_invoice_poll_at])
+  @@map("order_integration_states")
 }
 
 model VendorProductMap {

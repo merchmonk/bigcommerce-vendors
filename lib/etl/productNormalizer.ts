@@ -43,6 +43,123 @@ export interface ProductModifierBlueprint {
   metadata?: Record<string, unknown>;
 }
 
+export interface NormalizedPhysicalDimensions {
+  height?: number;
+  width?: number;
+  depth?: number;
+  diameter?: number;
+  uom?: string;
+}
+
+export interface NormalizedVariantPhysical {
+  shape?: string;
+  dimension?: NormalizedPhysicalDimensions;
+  lead_time_days?: number;
+  rush_service?: boolean;
+}
+
+export interface PricingConfigurationPartPriceTier {
+  min_quantity: number;
+  price: number;
+  quantity_max?: number;
+  price_uom?: string;
+  discount_code?: string;
+  price_effective_date?: string;
+  price_expiry_date?: string;
+}
+
+export interface PricingConfigurationChargeTier {
+  x_min_qty: number;
+  x_uom?: string;
+  y_min_qty?: number;
+  y_uom?: string;
+  price: number;
+  repeat_price?: number;
+  discount_code?: string;
+  repeat_discount_code?: string;
+  price_effective_date?: string;
+  price_expiry_date?: string;
+}
+
+export interface PricingConfigurationCharge {
+  charge_id?: string;
+  charge_name?: string;
+  charge_description?: string;
+  charge_type?: string;
+  charges_applies_ltm?: boolean;
+  charges_per_location?: number;
+  charges_per_color?: number;
+  charge_price_tiers: PricingConfigurationChargeTier[];
+}
+
+export interface PricingConfigurationDecoration {
+  decoration_id?: string;
+  decoration_name?: string;
+  decoration_geometry?: string;
+  decoration_height?: number;
+  decoration_width?: number;
+  decoration_diameter?: number;
+  decoration_uom?: string;
+  allow_sub_for_default_location?: boolean;
+  allow_sub_for_default_method?: boolean;
+  item_part_quantity_ltm?: number;
+  decoration_units_included?: number;
+  decoration_units_included_uom?: string;
+  decoration_units_max?: number;
+  default_decoration?: boolean;
+  lead_time_days?: number;
+  rush_lead_time_days?: number;
+  charges: PricingConfigurationCharge[];
+}
+
+export interface PricingConfigurationLocation {
+  location_id?: string;
+  location_name?: string;
+  decorations_included?: number;
+  default_location?: boolean;
+  max_decoration?: number;
+  min_decoration?: number;
+  location_rank?: number;
+  decorations: PricingConfigurationDecoration[];
+}
+
+export interface PricingConfigurationPart {
+  part_id: string;
+  part_description?: string;
+  part_group?: string;
+  next_part_group?: string;
+  part_group_required?: boolean;
+  part_group_description?: string;
+  ratio?: number;
+  default_part?: boolean;
+  location_ids?: string[];
+  price_tiers: PricingConfigurationPartPriceTier[];
+}
+
+export interface PricingConfigurationFobPoint {
+  fob_id?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+}
+
+export interface ProductPricingConfiguration {
+  product_id?: string;
+  currency?: string;
+  price_type?: string;
+  parts: PricingConfigurationPart[];
+  locations: PricingConfigurationLocation[];
+  fob_points: PricingConfigurationFobPoint[];
+  available_locations?: Array<{ location_id?: string; location_name?: string }>;
+  available_charges?: Array<{
+    charge_id?: string;
+    charge_name?: string;
+    charge_description?: string;
+    charge_type?: string;
+  }>;
+}
+
 export interface NormalizedProduct {
   sku: string;
   source_sku?: string;
@@ -63,15 +180,20 @@ export interface NormalizedProduct {
   location_decoration_data?: Record<string, unknown>;
   shared_option_values?: SharedOptionValues;
   modifier_blueprint?: ProductModifierBlueprint;
+  pricing_configuration?: ProductPricingConfiguration;
   enrichment_status?: ProductEnrichmentStatus;
 }
 
 export interface NormalizedVariant {
   sku: string;
   source_sku?: string;
+  part_id?: string;
   price?: number;
   cost_price?: number;
   inventory_level?: number;
+  color?: string;
+  size?: string;
+  physical?: NormalizedVariantPhysical;
   option_values: Array<{
     option_display_name: string;
     label: string;
@@ -229,6 +351,7 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
         ...(product.shared_option_values ?? {}),
       },
       modifier_blueprint: product.modifier_blueprint ?? existing.modifier_blueprint,
+      pricing_configuration: product.pricing_configuration ?? existing.pricing_configuration,
       enrichment_status: product.enrichment_status ?? existing.enrichment_status,
     });
   }
@@ -350,6 +473,41 @@ function extractPartSize(part: AnyRecord): string | undefined {
   return getFirstString(apparelSize, ['labelSize', 'labelSizeEnum']);
 }
 
+function extractPartPhysical(part: AnyRecord): NormalizedVariantPhysical | undefined {
+  const dimension = asRecord(part.Dimension);
+  const physical: NormalizedVariantPhysical = {
+    shape: getFirstString(part, ['shape']),
+    lead_time_days: getFirstNumber(part, ['leadTime']),
+    rush_service:
+      typeof part.isRushService === 'boolean'
+        ? part.isRushService
+        : typeof part.isRushService === 'string'
+          ? part.isRushService.toLowerCase() === 'true'
+          : undefined,
+  };
+
+  if (dimension) {
+    physical.dimension = {
+      height: getFirstNumber(dimension, ['height']),
+      width: getFirstNumber(dimension, ['width']),
+      depth: getFirstNumber(dimension, ['depth']),
+      diameter: getFirstNumber(dimension, ['diameter']),
+      uom: getFirstString(dimension, ['dimensionUom', 'uom']),
+    };
+  }
+
+  if (
+    physical.shape === undefined &&
+    physical.lead_time_days === undefined &&
+    physical.rush_service === undefined &&
+    !physical.dimension
+  ) {
+    return undefined;
+  }
+
+  return physical;
+}
+
 function extractVariantsFromProduct(
   node: AnyRecord,
   fallbackPrice?: number,
@@ -397,8 +555,12 @@ function extractVariantsFromProduct(
       variants.push({
         sku: partSku,
         source_sku: partSku,
+        part_id: partSku,
         price: fallbackPrice,
         cost_price: fallbackPrice,
+        color,
+        size,
+        physical: extractPartPhysical(part),
         option_values: optionValues,
       });
     }

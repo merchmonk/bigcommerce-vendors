@@ -1,9 +1,24 @@
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { Db, SessionProps, StoreData } from '../types';
+import { seedPromoStandardsMappings } from './etl/promostandardsSeed';
 import prisma from './prisma';
 
 const execFileAsync = promisify(execFile);
+const PRISMA_SCHEMA_PATH = path.join(process.cwd(), 'prisma', 'schema.prisma');
+const PRISMA_CLI_PATH = path.join(process.cwd(), 'node_modules', 'prisma', 'build', 'index.js');
+
+function getLambdaSafeEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    HOME: process.env.HOME || '/tmp',
+    XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || '/tmp/.cache',
+    npm_config_cache: process.env.npm_config_cache || '/tmp/.npm',
+    PRISMA_HIDE_UPDATE_MESSAGE: 'true',
+    PRISMA_GENERATE_SKIP_AUTOINSTALL: 'true',
+  };
+}
 
 function parseStoreHash(session: SessionProps): string {
   const contextString = session.context ?? session.sub ?? '';
@@ -162,17 +177,37 @@ const db: Db = {
 };
 
 export async function runMigrations(options?: { seed?: boolean }): Promise<void> {
-  await execFileAsync('npx', ['prisma', 'migrate', 'deploy'], {
+  await execFileAsync(process.execPath, [PRISMA_CLI_PATH, 'migrate', 'deploy', '--schema', PRISMA_SCHEMA_PATH], {
     cwd: process.cwd(),
-    env: process.env,
+    env: getLambdaSafeEnv(),
   });
 
   if (options?.seed) {
-    await execFileAsync('npx', ['prisma', 'db', 'seed'], {
-      cwd: process.cwd(),
-      env: process.env,
-    });
+    await seedPromoStandardsMappings();
   }
+}
+
+export async function getPrimaryStoreConnection(): Promise<StoreData | null> {
+  const store = await prisma.store.findFirst({
+    orderBy: {
+      id: 'asc',
+    },
+    select: {
+      storeHash: true,
+      accessToken: true,
+      scope: true,
+    },
+  });
+
+  if (!store?.storeHash || !store.accessToken) {
+    return null;
+  }
+
+  return {
+    storeHash: store.storeHash,
+    accessToken: store.accessToken,
+    scope: store.scope ?? undefined,
+  };
 }
 
 export default db;

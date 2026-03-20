@@ -1,4 +1,8 @@
 import type { IntegrationFamily, MappingPayloadFormat, MappingProtocol } from '@prisma/client';
+import {
+  PROMOSTANDARDS_ORDER_CAPABILITIES,
+  getPromostandardsOrderCapabilityMetadata,
+} from '../../lib/orders/promostandardsOrderCapabilities';
 
 export interface PromoSeedRecord {
   standard_type: IntegrationFamily;
@@ -14,6 +18,14 @@ export interface PromoSeedRecord {
   response_schema: Record<string, unknown>;
   transform_schema: Record<string, unknown>;
   metadata: Record<string, unknown>;
+}
+
+interface PromoSeedSourceRecord {
+  endpoint_name: string;
+  endpoint_version: string;
+  operation_name: string;
+  is_product_endpoint: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 function createDefaultTransform(endpointName: string, operationName: string): Record<string, unknown> {
@@ -73,7 +85,7 @@ function createDefaultTransform(endpointName: string, operationName: string): Re
   };
 }
 
-export const PROMOSTANDARDS_SEED_RECORDS: PromoSeedRecord[] = [
+const PROMOSTANDARDS_SEED_SOURCE_RECORDS: PromoSeedSourceRecord[] = [
   { endpoint_name: 'CompanyData', endpoint_version: '1.0.0', operation_name: 'getCompanyData', is_product_endpoint: false },
   { endpoint_name: 'Inventory', endpoint_version: '1.2.1', operation_name: 'getInventoryLevels', is_product_endpoint: true },
   { endpoint_name: 'ProductMedia', endpoint_version: '1.0.0', operation_name: 'getMediaContent', is_product_endpoint: true },
@@ -128,7 +140,16 @@ export const PROMOSTANDARDS_SEED_RECORDS: PromoSeedRecord[] = [
     operation_name: 'getConfigurationAndPricing',
     is_product_endpoint: true,
   },
-].map(item => ({
+  ...PROMOSTANDARDS_ORDER_CAPABILITIES.map(capability => ({
+    endpoint_name: capability.endpoint_name,
+    endpoint_version: capability.endpoint_version,
+    operation_name: capability.operation_name,
+    is_product_endpoint: false,
+    metadata: getPromostandardsOrderCapabilityMetadata(capability),
+  })),
+];
+
+export const PROMOSTANDARDS_SEED_RECORDS: PromoSeedRecord[] = PROMOSTANDARDS_SEED_SOURCE_RECORDS.map(item => ({
   standard_type: 'PROMOSTANDARDS',
   endpoint_name: item.endpoint_name,
   endpoint_version: item.endpoint_version,
@@ -147,5 +168,7 @@ export const PROMOSTANDARDS_SEED_RECORDS: PromoSeedRecord[] = [
   transform_schema: createDefaultTransform(item.endpoint_name, item.operation_name),
   metadata: {
     seed: 'promostandards',
+    capability_scope: item.is_product_endpoint ? 'catalog' : 'generic',
+    ...(item.metadata ?? {}),
   },
 }));

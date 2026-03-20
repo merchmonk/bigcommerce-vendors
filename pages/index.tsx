@@ -5,7 +5,7 @@ const Index = () => {
     const router = useRouter();
 
     useEffect(() => {
-        router.replace('/vendors');
+        router.replace('/dashboard');
     }, [router]);
 
     return null;
