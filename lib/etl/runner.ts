@@ -1,4 +1,5 @@
 import type { MappingProtocol, SessionContextProps } from '../../types';
+import logger from '../logger';
 import { getVendorById } from '../vendors';
 import { mergeRequestContext } from '../requestContext';
 import {
@@ -11,15 +12,21 @@ import {
 import { resolveEndpointAdapter } from './adapters/factory';
 import { normalizeProductsFromEndpoint, type NormalizedProduct } from './productNormalizer';
 import { buildProductAssembly } from './productEnrichment';
-import { runProductDataWorkflow } from './productDataWorkflow';
+import {
+  discoverProductDataReferences,
+  fetchProductDataReference,
+} from './productDataWorkflow';
 import {
   clearProductEnrichmentRetry,
   completeSyncRun,
   createSyncRun,
+  getIntegrationJobById,
   findVendorProductMapByVendorProductId,
   listEnabledVendorEndpointMappings,
+  listSyncRunsForVendor,
   listPendingRelatedProductLinks,
   markSyncRunRunning,
+  updateSyncRunProgress,
   upsertPendingRelatedProductLink,
   upsertProductEnrichmentRetry,
   upsertVendorProductMap,
@@ -30,6 +37,7 @@ export interface RunVendorSyncInput {
   session: SessionContextProps;
   mappingId?: number;
   syncAll?: boolean;
+  integrationJobId?: number;
 }
 
 export interface TestConnectionInput {
@@ -58,6 +66,14 @@ export interface SyncRunResult {
     status: number;
     products_found: number;
     message?: string;
+  }>;
+}
+
+interface ProductAssemblyStatusSummary {
+  blockedCount: number;
+  topGatingReasons: Array<{
+    reason: string;
+    count: number;
   }>;
 }
 
@@ -103,6 +119,19 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
       (image, index) => mergedImages.findIndex(item => item.image_url === image.image_url) === index,
     );
 
+    const mergedMediaAssets = [...(existing.media_assets ?? []), ...(product.media_assets ?? [])];
+    const uniqueMediaAssets = mergedMediaAssets.filter(
+      (asset, index) =>
+        mergedMediaAssets.findIndex(
+          item =>
+            item.media_type === asset.media_type &&
+            item.url === asset.url &&
+            item.part_id === asset.part_id &&
+            JSON.stringify(item.location_ids ?? []) === JSON.stringify(asset.location_ids ?? []) &&
+            JSON.stringify(item.decoration_ids ?? []) === JSON.stringify(asset.decoration_ids ?? []),
+        ) === index,
+    );
+
     const mergedRelated = [...(existing.related_vendor_product_ids ?? []), ...(product.related_vendor_product_ids ?? [])];
     const uniqueRelated = mergedRelated.filter((value, index) => mergedRelated.indexOf(value) === index);
 
@@ -120,6 +149,7 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
       variants: uniqueVariants.length > 0 ? uniqueVariants : undefined,
       bulk_pricing_rules: uniqueBulkRules.length > 0 ? uniqueBulkRules : undefined,
       images: uniqueImages.length > 0 ? uniqueImages : undefined,
+      media_assets: uniqueMediaAssets.length > 0 ? uniqueMediaAssets : undefined,
       custom_fields: uniqueCustomFields.length > 0 ? uniqueCustomFields : undefined,
       search_keywords: product.search_keywords ?? existing.search_keywords,
       related_vendor_product_ids: uniqueRelated.length > 0 ? uniqueRelated : undefined,
@@ -153,6 +183,136 @@ function shouldRunMapping(input: {
   if (input.mappingId) return input.mapping.mapping_id === input.mappingId;
   if (input.syncAll) return input.mapping.is_product_endpoint;
   return input.mapping.is_product_endpoint;
+}
+
+function summarizeBlockedProducts(
+  statuses: Array<{
+    blocked: boolean;
+    gating_reasons: string[];
+  }>,
+): ProductAssemblyStatusSummary {
+  const reasonCounts = new Map<string, number>();
+  let blockedCount = 0;
+
+  for (const status of statuses) {
+    if (!status.blocked) continue;
+    blockedCount += 1;
+
+    for (const reason of status.gating_reasons) {
+      reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+    }
+  }
+
+  return {
+    blockedCount,
+    topGatingReasons: Array.from(reasonCounts.entries())
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((left, right) => right.count - left.count)
+      .slice(0, 5),
+  };
+}
+
+function formatGatingReasonSummary(summary: ProductAssemblyStatusSummary): string {
+  if (summary.topGatingReasons.length === 0) {
+    return 'No gating reasons were captured.';
+  }
+
+  return summary.topGatingReasons
+    .map(item => `${item.reason} (${item.count})`)
+    .join('; ');
+}
+
+function buildSyncProgressDetails(input: {
+  phase: 'DISCOVERY' | 'ENRICHMENT' | 'UPSERT' | 'FINALIZING' | 'CANCELLED';
+  totalReferences?: number;
+  processedReferences?: number;
+  recordsRead: number;
+  recordsWritten: number;
+  blockedProductCount: number;
+  currentProductId?: string | null;
+  currentSku?: string | null;
+  endpointResults?: SyncRunResult['endpointResults'];
+  productStatuses?: Array<{
+    sku: string;
+    vendor_product_id?: string;
+    blocked: boolean;
+    gating_reasons: string[];
+    enrichment_status: NonNullable<NormalizedProduct['enrichment_status']>;
+  }>;
+  mediaRetries?: Array<{
+    sku: string;
+    vendor_product_id: string;
+    message: string;
+  }>;
+}): Record<string, unknown> {
+  return {
+    phase: input.phase,
+    progress: {
+      total_references: input.totalReferences ?? null,
+      processed_references: input.processedReferences ?? 0,
+      records_read: input.recordsRead,
+      records_written: input.recordsWritten,
+      blocked_product_count: input.blockedProductCount,
+      current_product_id: input.currentProductId ?? null,
+      current_sku: input.currentSku ?? null,
+    },
+    endpointResults: input.endpointResults ?? [],
+    productStatuses: input.productStatuses ?? [],
+    mediaRetries: input.mediaRetries ?? [],
+  };
+}
+
+async function persistSyncProgress(input: {
+  syncRunId: number;
+  phase: 'DISCOVERY' | 'ENRICHMENT' | 'UPSERT' | 'FINALIZING' | 'CANCELLED';
+  totalReferences?: number;
+  processedReferences?: number;
+  recordsRead: number;
+  recordsWritten: number;
+  blockedProductCount: number;
+  currentProductId?: string | null;
+  currentSku?: string | null;
+  endpointResults?: SyncRunResult['endpointResults'];
+  productStatuses?: Array<{
+    sku: string;
+    vendor_product_id?: string;
+    blocked: boolean;
+    gating_reasons: string[];
+    enrichment_status: NonNullable<NormalizedProduct['enrichment_status']>;
+  }>;
+  mediaRetries?: Array<{
+    sku: string;
+    vendor_product_id: string;
+    message: string;
+  }>;
+}): Promise<void> {
+  await updateSyncRunProgress({
+    sync_run_id: input.syncRunId,
+    records_read: input.recordsRead,
+    records_written: input.recordsWritten,
+    details: buildSyncProgressDetails(input),
+  });
+}
+
+function shouldPersistProgress(processedReferences: number): boolean {
+  return processedReferences <= 5 || processedReferences % 25 === 0;
+}
+
+async function throwIfSyncCancelled(integrationJobId?: number): Promise<void> {
+  if (!integrationJobId) {
+    return;
+  }
+
+  const job = await getIntegrationJobById(integrationJobId);
+  if (!job) {
+    return;
+  }
+
+  if (job.status === 'CANCEL_REQUESTED' || job.status === 'CANCELLED') {
+    const error = new Error(`Integration job ${integrationJobId} was cancelled by operator.`);
+    error.name = 'IntegrationJobCancelledError';
+    throw error;
+  }
 }
 
 async function resolveDeferredRelatedProducts(input: {
@@ -232,7 +392,29 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
   });
   await markSyncRunRunning(syncRun.sync_run_id);
 
+  let endpointResults: SyncRunResult['endpointResults'] = [];
+  let mergedBaseProducts: NormalizedProduct[] = [];
+  let assemblyStatuses: Array<{
+    sku: string;
+    vendor_product_id?: string;
+    blocked: boolean;
+    gating_reasons: string[];
+    enrichment_status: NonNullable<NormalizedProduct['enrichment_status']>;
+  }> = [];
+  let mediaRetries: Array<{
+    sku: string;
+    vendor_product_id: string;
+    message: string;
+  }> = [];
+  let recordsRead = 0;
+  let recordsWritten = 0;
+
   try {
+    const lastSuccessfulSync = (await listSyncRunsForVendor(input.vendorId)).find(
+      run => run.sync_run_id !== syncRun.sync_run_id && run.status === 'SUCCESS',
+    );
+    const lastSuccessfulSyncAt = lastSuccessfulSync?.ended_at ?? lastSuccessfulSync?.started_at ?? null;
+
     const assignedMappings = await listEnabledVendorEndpointMappings(input.vendorId);
     const selectedMappings = assignedMappings.filter(item =>
       shouldRunMapping({
@@ -261,8 +443,11 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       };
     }
 
-    const endpointResults: SyncRunResult['endpointResults'] = [];
+    endpointResults = [];
     const baseProducts: NormalizedProduct[] = [];
+    const seenReadProductKeys = new Set<string>();
+    const writtenProductKeys = new Set<string>();
+    let blockedProductCount = 0;
 
     const selectedKeys = new Set(selectedMappings.map(item => mappingKey(item.mapping)));
     const productDataMappings = assignedMappings.filter(item => item.mapping.endpoint_name === 'ProductData');
@@ -274,13 +459,224 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         ? productDataMappings
         : [];
 
+    logger.info('vendor sync mapping selection completed', {
+      syncRunId: syncRun.sync_run_id,
+      vendorId: input.vendorId,
+      assignedMappingCount: assignedMappings.length,
+      selectedMappingCount: selectedMappings.length,
+      productDataMappingCount: productDataToRun.length,
+    });
+
+    const pricingContext = await resolveBigCommercePricingContext({
+      accessToken: input.session.accessToken,
+      storeHash: input.session.storeHash,
+      fallback_markup_percent: 30,
+    });
+
     if (productDataToRun.length > 0) {
-      const productDataResult = await runProductDataWorkflow({
+      await throwIfSyncCancelled(input.integrationJobId);
+
+      const discovery = await discoverProductDataReferences({
         vendor,
         assignedMappings: productDataToRun,
+        lastSuccessfulSyncAt,
       });
-      productDataResult.endpointResults.forEach(result => endpointResults.push(result));
-      baseProducts.push(...productDataResult.products);
+      discovery.endpointResults.forEach(result => endpointResults.push(result));
+
+      logger.info('vendor sync product discovery completed', {
+        syncRunId: syncRun.sync_run_id,
+        vendorId: input.vendorId,
+        discoveredProductCount: discovery.references.length,
+        discoveryEndpointCount: discovery.endpointResults.length,
+      });
+
+      await persistSyncProgress({
+        syncRunId: syncRun.sync_run_id,
+        phase: 'DISCOVERY',
+        totalReferences: discovery.references.length,
+        processedReferences: 0,
+        recordsRead,
+        recordsWritten,
+        blockedProductCount,
+        endpointResults,
+        productStatuses: assemblyStatuses,
+        mediaRetries,
+      });
+
+      if (discovery.getProductConfig && discovery.references.length > 0) {
+        logger.info('vendor sync BigCommerce upsert phase started', {
+          syncRunId: syncRun.sync_run_id,
+          vendorId: input.vendorId,
+          productCount: discovery.references.length,
+          markupPercent: pricingContext.markup_percent,
+          priceListId: pricingContext.price_list_id,
+        });
+      }
+
+      let getProductCallCount = 0;
+      for (const reference of discovery.references) {
+        await throwIfSyncCancelled(input.integrationJobId);
+        getProductCallCount += 1;
+
+        const fetchResult = await fetchProductDataReference({
+          vendor,
+          discovery,
+          reference,
+        });
+
+        if (fetchResult.status >= 400) {
+          endpointResults.push({
+            mapping_id: discovery.getProductConfig?.mapping.mapping_id ?? 0,
+            endpoint_name: discovery.getProductConfig?.mapping.endpoint_name ?? 'ProductData',
+            endpoint_version: discovery.getProductConfig?.mapping.endpoint_version ?? '',
+            operation_name: 'getProduct',
+            status: fetchResult.status,
+            products_found: 0,
+            message: fetchResult.message,
+          });
+          throw new Error(fetchResult.message ?? `getProduct failed for ${reference.productId}.`);
+        }
+
+        const mergedFetchedProducts = mergeProducts(fetchResult.products);
+        for (const product of mergedFetchedProducts) {
+          const readKey = product.vendor_product_id ?? product.sku;
+          if (!seenReadProductKeys.has(readKey)) {
+            seenReadProductKeys.add(readKey);
+            recordsRead += 1;
+          }
+        }
+
+        const assembly = await buildProductAssembly({
+          vendor,
+          assignedMappings: assignedMappings.filter(item => {
+            if (item.mapping.endpoint_name === 'ProductData') return false;
+            if (!['Inventory', 'PricingAndConfiguration', 'ProductMedia'].includes(item.mapping.endpoint_name)) return false;
+            if (input.mappingId && selectedKeys.size > 0) {
+              return selectedKeys.has(mappingKey(item.mapping));
+            }
+            return true;
+          }),
+          baseProducts: mergedFetchedProducts,
+        });
+
+        assembly.endpointResults.forEach(result => endpointResults.push(result));
+        assemblyStatuses.push(...assembly.statuses);
+        mediaRetries.push(...assembly.mediaRetries);
+        blockedProductCount += assembly.statuses.filter(status => status.blocked).length;
+
+        for (const retry of assembly.mediaRetries) {
+          await upsertProductEnrichmentRetry({
+            vendor_id: input.vendorId,
+            vendor_product_id: retry.vendor_product_id,
+            source: 'MEDIA',
+            status: 'PENDING',
+            last_error: retry.message,
+            metadata: { sku: retry.sku },
+          });
+        }
+
+        if (mergedFetchedProducts.length > 0 && assembly.products.length === 0) {
+          const blockedSummary = summarizeBlockedProducts(assembly.statuses);
+          throw new Error(
+            `Vendor sync halted before BigCommerce write for ${reference.productId}. ${formatGatingReasonSummary(blockedSummary)}`,
+          );
+        }
+
+        for (const product of assembly.products) {
+          await throwIfSyncCancelled(input.integrationJobId);
+
+          const upsertResult = await upsertBigCommerceProduct({
+            accessToken: input.session.accessToken,
+            storeHash: input.session.storeHash,
+            vendorId: input.vendorId,
+            product,
+            defaultMarkupPercent: 30,
+            pricingContext,
+          });
+
+          await upsertVendorProductMap({
+            vendor_id: input.vendorId,
+            mapping_id: input.mappingId ?? null,
+            vendor_product_id: product.vendor_product_id ?? product.sku,
+            bigcommerce_product_id: upsertResult.product.id,
+            sku: upsertResult.resolvedSku,
+            product_name: product.name,
+            metadata: {
+              source: 'etl-sync',
+              duplicate: upsertResult.duplicate,
+              action: upsertResult.action,
+              markup_percent: upsertResult.markupPercent,
+              pricing_reconciliation: upsertResult.pricingReconciliation,
+              enrichment: product.enrichment_status ?? {},
+            },
+          });
+
+          if (product.vendor_product_id) {
+            await clearProductEnrichmentRetry({
+              vendor_id: input.vendorId,
+              vendor_product_id: product.vendor_product_id,
+              source: 'MEDIA',
+            });
+          }
+
+          const related = product.related_vendor_product_ids ?? [];
+          for (const targetVendorProductId of related) {
+            if (!product.vendor_product_id) continue;
+            await upsertPendingRelatedProductLink({
+              vendor_id: input.vendorId,
+              source_vendor_product_id: product.vendor_product_id,
+              target_vendor_product_id: targetVendorProductId,
+              source_bigcommerce_product_id: upsertResult.product.id,
+              status: 'PENDING',
+              metadata: {
+                source_sku: upsertResult.resolvedSku,
+              },
+            });
+          }
+
+          if (!writtenProductKeys.has(upsertResult.resolvedSku)) {
+            writtenProductKeys.add(upsertResult.resolvedSku);
+            recordsWritten += 1;
+          }
+
+          logger.info('vendor sync BigCommerce product upsert completed', {
+            syncRunId: syncRun.sync_run_id,
+            vendorId: input.vendorId,
+            sku: upsertResult.resolvedSku,
+            vendorProductId: product.vendor_product_id ?? null,
+            bigcommerceProductId: upsertResult.product.id,
+            action: upsertResult.action,
+            recordsWritten,
+          });
+        }
+
+        if (shouldPersistProgress(getProductCallCount)) {
+          await persistSyncProgress({
+            syncRunId: syncRun.sync_run_id,
+            phase: 'UPSERT',
+            totalReferences: discovery.references.length,
+            processedReferences: getProductCallCount,
+            recordsRead,
+            recordsWritten,
+            blockedProductCount,
+            currentProductId: reference.productId,
+            currentSku: mergedFetchedProducts[0]?.sku ?? null,
+            endpointResults,
+            productStatuses: assemblyStatuses,
+            mediaRetries,
+          });
+        }
+      }
+
+      endpointResults.push({
+        mapping_id: discovery.getProductConfig.mapping.mapping_id,
+        endpoint_name: discovery.getProductConfig.mapping.endpoint_name,
+        endpoint_version: discovery.getProductConfig.mapping.endpoint_version,
+        operation_name: discovery.getProductConfig.mapping.operation_name,
+        status: 200,
+        products_found: recordsRead,
+        message: `getProduct completed for ${discovery.references.length} product references.`,
+      });
     }
 
     for (const assigned of selectedMappings) {
@@ -311,6 +707,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       const adapter = resolveEndpointAdapter(protocol);
       const result = await adapter.invokeEndpoint({
         endpointUrl,
+        endpointName: mapping.endpoint_name,
         operationName,
         endpointVersion: mapping.endpoint_version,
         vendorAccountId: vendor.vendor_account_id,
@@ -345,83 +742,144 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       return true;
     });
 
-    const mergedBaseProducts = mergeProducts(baseProducts);
-    const assembly = await buildProductAssembly({
-      vendor,
-      assignedMappings: enrichmentMappings,
-      baseProducts: mergedBaseProducts,
+    mergedBaseProducts = mergeProducts(baseProducts);
+    logger.info('vendor sync base product merge completed', {
+      syncRunId: syncRun.sync_run_id,
+      vendorId: input.vendorId,
+      rawProductCount: baseProducts.length,
+      mergedProductCount: mergedBaseProducts.length,
     });
-    assembly.endpointResults.forEach(result => endpointResults.push(result));
 
-    for (const retry of assembly.mediaRetries) {
-      await upsertProductEnrichmentRetry({
-        vendor_id: input.vendorId,
-        vendor_product_id: retry.vendor_product_id,
-        source: 'MEDIA',
-        status: 'PENDING',
-        last_error: retry.message,
-        metadata: { sku: retry.sku },
+    if (mergedBaseProducts.length > 0) {
+      const assembly = await buildProductAssembly({
+        vendor,
+        assignedMappings: enrichmentMappings,
+        baseProducts: mergedBaseProducts,
       });
-    }
+      assembly.endpointResults.forEach(result => endpointResults.push(result));
+      assemblyStatuses.push(...assembly.statuses);
+      mediaRetries.push(...assembly.mediaRetries);
+      blockedProductCount += assembly.statuses.filter(status => status.blocked).length;
 
-    let recordsWritten = 0;
-    const pricingContext = await resolveBigCommercePricingContext({
-      accessToken: input.session.accessToken,
-      storeHash: input.session.storeHash,
-      fallback_markup_percent: 30,
-    });
-    for (const product of assembly.products) {
-      const upsertResult = await upsertBigCommerceProduct({
-        accessToken: input.session.accessToken,
-        storeHash: input.session.storeHash,
+      const blockedSummary = summarizeBlockedProducts(assembly.statuses);
+      logger.info('vendor sync product assembly completed', {
+        syncRunId: syncRun.sync_run_id,
         vendorId: input.vendorId,
-        product,
-        defaultMarkupPercent: 30,
-        pricingContext,
+        baseProductCount: mergedBaseProducts.length,
+        assembledProductCount: assembly.products.length,
+        blockedProductCount: blockedSummary.blockedCount,
+        mediaRetryCount: assembly.mediaRetries.length,
+        topGatingReasons: blockedSummary.topGatingReasons,
       });
 
-      await upsertVendorProductMap({
-        vendor_id: input.vendorId,
-        mapping_id: input.mappingId ?? null,
-        vendor_product_id: product.vendor_product_id ?? product.sku,
-        bigcommerce_product_id: upsertResult.product.id,
-        sku: upsertResult.resolvedSku,
-        product_name: product.name,
-        metadata: {
-          source: 'etl-sync',
-          duplicate: upsertResult.duplicate,
-          action: upsertResult.action,
-          markup_percent: upsertResult.markupPercent,
-          pricing_reconciliation: upsertResult.pricingReconciliation,
-          enrichment: product.enrichment_status ?? {},
-        },
-      });
+      if (mergedBaseProducts.length > 0 && assembly.products.length === 0) {
+        throw new Error(
+          `Vendor sync halted before BigCommerce write: 0 of ${mergedBaseProducts.length} products passed enrichment. ${formatGatingReasonSummary(blockedSummary)}`,
+        );
+      }
 
-      if (product.vendor_product_id) {
-        await clearProductEnrichmentRetry({
+      for (const retry of assembly.mediaRetries) {
+        await upsertProductEnrichmentRetry({
           vendor_id: input.vendorId,
-          vendor_product_id: product.vendor_product_id,
+          vendor_product_id: retry.vendor_product_id,
           source: 'MEDIA',
+          status: 'PENDING',
+          last_error: retry.message,
+          metadata: { sku: retry.sku },
         });
       }
 
-      const related = product.related_vendor_product_ids ?? [];
-      for (const targetVendorProductId of related) {
-        if (!product.vendor_product_id) continue;
-        await upsertPendingRelatedProductLink({
+      logger.info('vendor sync BigCommerce upsert phase started', {
+        syncRunId: syncRun.sync_run_id,
+        vendorId: input.vendorId,
+        productCount: assembly.products.length,
+        markupPercent: pricingContext.markup_percent,
+        priceListId: pricingContext.price_list_id,
+      });
+
+      for (const product of assembly.products) {
+        await throwIfSyncCancelled(input.integrationJobId);
+
+        const upsertResult = await upsertBigCommerceProduct({
+          accessToken: input.session.accessToken,
+          storeHash: input.session.storeHash,
+          vendorId: input.vendorId,
+          product,
+          defaultMarkupPercent: 30,
+          pricingContext,
+        });
+
+        await upsertVendorProductMap({
           vendor_id: input.vendorId,
-          source_vendor_product_id: product.vendor_product_id,
-          target_vendor_product_id: targetVendorProductId,
-          source_bigcommerce_product_id: upsertResult.product.id,
-          status: 'PENDING',
+          mapping_id: input.mappingId ?? null,
+          vendor_product_id: product.vendor_product_id ?? product.sku,
+          bigcommerce_product_id: upsertResult.product.id,
+          sku: upsertResult.resolvedSku,
+          product_name: product.name,
           metadata: {
-            source_sku: upsertResult.resolvedSku,
+            source: 'etl-sync',
+            duplicate: upsertResult.duplicate,
+            action: upsertResult.action,
+            markup_percent: upsertResult.markupPercent,
+            pricing_reconciliation: upsertResult.pricingReconciliation,
+            enrichment: product.enrichment_status ?? {},
           },
         });
-      }
 
-      recordsWritten += 1;
+        if (product.vendor_product_id) {
+          await clearProductEnrichmentRetry({
+            vendor_id: input.vendorId,
+            vendor_product_id: product.vendor_product_id,
+            source: 'MEDIA',
+          });
+        }
+
+        const related = product.related_vendor_product_ids ?? [];
+        for (const targetVendorProductId of related) {
+          if (!product.vendor_product_id) continue;
+          await upsertPendingRelatedProductLink({
+            vendor_id: input.vendorId,
+            source_vendor_product_id: product.vendor_product_id,
+            target_vendor_product_id: targetVendorProductId,
+            source_bigcommerce_product_id: upsertResult.product.id,
+            status: 'PENDING',
+            metadata: {
+              source_sku: upsertResult.resolvedSku,
+            },
+          });
+        }
+
+        if (!seenReadProductKeys.has(product.vendor_product_id ?? product.sku)) {
+          seenReadProductKeys.add(product.vendor_product_id ?? product.sku);
+          recordsRead += 1;
+        }
+        if (!writtenProductKeys.has(upsertResult.resolvedSku)) {
+          writtenProductKeys.add(upsertResult.resolvedSku);
+          recordsWritten += 1;
+        }
+
+        logger.info('vendor sync BigCommerce product upsert completed', {
+          syncRunId: syncRun.sync_run_id,
+          vendorId: input.vendorId,
+          sku: upsertResult.resolvedSku,
+          vendorProductId: product.vendor_product_id ?? null,
+          bigcommerceProductId: upsertResult.product.id,
+          action: upsertResult.action,
+          recordsWritten,
+        });
+      }
     }
+
+    await persistSyncProgress({
+      syncRunId: syncRun.sync_run_id,
+      phase: 'FINALIZING',
+      recordsRead,
+      recordsWritten,
+      blockedProductCount,
+      endpointResults,
+      productStatuses: assemblyStatuses,
+      mediaRetries,
+    });
 
     await resolveDeferredRelatedProducts({
       accessToken: input.session.accessToken,
@@ -432,27 +890,59 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     await completeSyncRun({
       sync_run_id: syncRun.sync_run_id,
       status: 'SUCCESS',
-      records_read: mergedBaseProducts.length,
+      records_read: recordsRead,
       records_written: recordsWritten,
       details: {
         endpointResults,
-        productStatuses: assembly.statuses,
-        mediaRetries: assembly.mediaRetries,
+        productStatuses: assemblyStatuses,
+        mediaRetries,
       },
     });
 
     return {
       syncRunId: syncRun.sync_run_id,
-      recordsRead: mergedBaseProducts.length,
+      recordsRead,
       recordsWritten,
       endpointResults,
     };
   } catch (error: any) {
+    if (error?.name === 'IntegrationJobCancelledError') {
+      await persistSyncProgress({
+        syncRunId: syncRun.sync_run_id,
+        phase: 'CANCELLED',
+        recordsRead,
+        recordsWritten,
+        blockedProductCount: assemblyStatuses.filter(status => status.blocked).length,
+        endpointResults,
+        productStatuses: assemblyStatuses,
+        mediaRetries,
+      });
+    }
+
+    logger.error('vendor sync failed', {
+      syncRunId: syncRun.sync_run_id,
+      vendorId: input.vendorId,
+      recordsRead,
+      recordsWritten,
+      endpointResultCount: endpointResults.length,
+      blockedProductCount: assemblyStatuses.filter(status => status.blocked).length,
+      mediaRetryCount: mediaRetries.length,
+      error: {
+        message: error?.message ?? 'ETL sync failed',
+      },
+    });
+
     await completeSyncRun({
       sync_run_id: syncRun.sync_run_id,
-      status: 'FAILED',
+      status: error?.name === 'IntegrationJobCancelledError' ? 'CANCELLED' : 'FAILED',
       error_message: error?.message ?? 'ETL sync failed',
-      details: { stack: error?.stack },
+      details: {
+        endpointResults,
+        productStatuses: assemblyStatuses,
+        mediaRetries,
+        recordsWritten,
+        stack: error?.stack,
+      },
     });
     throw error;
   }
@@ -482,6 +972,7 @@ export async function testVendorConnectionConfig(
   const adapter = resolveEndpointAdapter(protocol);
   return adapter.testConnection({
     endpointUrl: input.vendorApiUrl,
+    endpointName: 'CompanyData',
     vendorAccountId: input.vendorAccountId,
     vendorSecret: input.vendorSecret,
     operationName: input.operationName,

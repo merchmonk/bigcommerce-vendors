@@ -8,6 +8,7 @@ export const soapAdapter: EndpointAdapter = {
     const endpointVersion = input.endpointVersion ?? '1.0.0';
     const result = await callSoapEndpoint({
       endpointUrl: input.endpointUrl,
+      endpointName: input.endpointName ?? 'CompanyData',
       operationName,
       endpointVersion,
       vendorAccountId: input.vendorAccountId,
@@ -29,6 +30,7 @@ export const soapAdapter: EndpointAdapter = {
   async invokeEndpoint(input) {
     const result = await callSoapEndpoint({
       endpointUrl: input.endpointUrl,
+      endpointName: input.endpointName,
       operationName: input.operationName,
       endpointVersion: input.endpointVersion,
       vendorAccountId: input.vendorAccountId,

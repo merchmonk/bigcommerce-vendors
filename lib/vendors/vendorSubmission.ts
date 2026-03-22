@@ -1,5 +1,6 @@
 import type { EndpointMappingDraft, VendorFormData, VendorType } from '../../types';
 import { resolveMappingDrafts, type ResolvedMappingDraft } from '../etl/mappingDrafts';
+import { listEndpointMappingsByIds } from '../etl/repository';
 import { buildVendorConnectionConfig, getVendorConnectionSections } from './vendorConfig';
 import {
   isPromostandardsCapabilityMatrixCurrent,
@@ -40,6 +41,49 @@ function requireVendorName(vendorName: string | undefined): string {
   return normalized;
 }
 
+function normalizeEndpointMappingIds(mappingIds: number[] | undefined): number[] {
+  if (!Array.isArray(mappingIds)) {
+    return [];
+  }
+
+  return mappingIds.filter((mappingId): mappingId is number => Number.isInteger(mappingId) && mappingId > 0);
+}
+
+async function buildStoredPromostandardsCapabilities(input: {
+  capabilities: NonNullable<VendorFormData['promostandards_capabilities']>;
+  endpointMappingIds: number[];
+}): Promise<NonNullable<VendorFormData['promostandards_capabilities']>> {
+  const mappings = await listEndpointMappingsByIds(input.endpointMappingIds);
+
+  return {
+    fingerprint: input.capabilities.fingerprint,
+    tested_at: input.capabilities.tested_at,
+    available_endpoint_count: mappings.length,
+    credentials_valid: input.capabilities.credentials_valid ?? null,
+    endpoints: mappings.map(mapping => {
+      const metadata = (mapping.metadata ?? {}) as Record<string, unknown>;
+
+      return {
+        endpoint_name: mapping.endpoint_name,
+        endpoint_version: mapping.endpoint_version,
+        operation_name: mapping.operation_name,
+        capability_scope:
+          typeof metadata.capability_scope === 'string'
+            ? (metadata.capability_scope as 'catalog' | 'order')
+            : undefined,
+        lifecycle_role: typeof metadata.lifecycle_role === 'string' ? metadata.lifecycle_role : undefined,
+        optional_by_vendor:
+          typeof metadata.optional_by_vendor === 'boolean' ? metadata.optional_by_vendor : undefined,
+        recommended_poll_minutes:
+          typeof metadata.recommended_poll_minutes === 'number' ? metadata.recommended_poll_minutes : null,
+        available: true,
+        status_code: null,
+        message: 'Endpoint selected from PromoStandards discovery.',
+      };
+    }),
+  };
+}
+
 export async function prepareVendorSubmission(input: {
   body: VendorSubmissionInput;
   existingVendor?: Vendor | null;
@@ -61,7 +105,7 @@ export async function prepareVendorSubmission(input: {
     input.body.custom_api_service_type ?? existingSections.custom_api?.service_type;
   const customApiFormatData =
     input.body.custom_api_format_data ?? existingSections.custom_api?.format_data;
-  const connectionConfig = buildVendorConnectionConfig({
+  let connectionConfig = buildVendorConnectionConfig({
     existingConfig: existingVendor?.connection_config,
     integrationFamily,
     customApiServiceType,
@@ -88,10 +132,26 @@ export async function prepareVendorSubmission(input: {
       throw makeError('Please run Test Vendor again so PromoStandards capabilities can be rediscovered.');
     }
 
-    const mappingIds = await resolvePromostandardsCapabilityMappings(promostandardsCapabilities);
+    const submittedMappingIds = normalizeEndpointMappingIds(input.body.endpoint_mapping_ids);
+    const mappingIds =
+      submittedMappingIds.length > 0
+        ? submittedMappingIds
+        : await resolvePromostandardsCapabilityMappings(promostandardsCapabilities);
     if (mappingIds.length === 0) {
       throw makeError('At least one available PromoStandards endpoint is required.');
     }
+
+    const storedCapabilities = await buildStoredPromostandardsCapabilities({
+      capabilities: promostandardsCapabilities,
+      endpointMappingIds: mappingIds,
+    });
+    connectionConfig = buildVendorConnectionConfig({
+      existingConfig: existingVendor?.connection_config,
+      integrationFamily,
+      customApiServiceType,
+      customApiFormatData,
+      promostandardsCapabilities: storedCapabilities,
+    });
 
     mappingAction = {
       type: 'apply',

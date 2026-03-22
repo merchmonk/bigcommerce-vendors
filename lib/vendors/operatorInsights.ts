@@ -49,7 +49,7 @@ export function calculateVendorHealthPercent(input: {
 }
 
 function getTerminalJobStatus(status: IntegrationJobStatus): IntegrationJobStatus | null {
-  if (status === 'FAILED' || status === 'DEAD_LETTERED' || status === 'SUCCEEDED') {
+  if (status === 'FAILED' || status === 'DEAD_LETTERED' || status === 'SUCCEEDED' || status === 'CANCELLED') {
     return status;
   }
 
@@ -198,7 +198,7 @@ export async function listVendorOperatorSummaries(includeInactive = true): Promi
   const hasActiveJobByVendor = new Set<number>();
   const latestTerminalJobStatusByVendor = new Map<number, IntegrationJobStatus>();
   for (const job of jobs) {
-    if (job.status === 'PENDING' || job.status === 'ENQUEUED' || job.status === 'RUNNING') {
+    if (job.status === 'PENDING' || job.status === 'ENQUEUED' || job.status === 'RUNNING' || job.status === 'CANCEL_REQUESTED') {
       hasActiveJobByVendor.add(job.vendor_id);
       continue;
     }

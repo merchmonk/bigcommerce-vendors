@@ -2,6 +2,7 @@ import type { MappingProtocol } from '../../../types';
 
 export interface AdapterTestConnectionInput {
   endpointUrl: string;
+  endpointName?: string;
   vendorAccountId?: string | null;
   vendorSecret?: string | null;
   operationName?: string;
@@ -11,6 +12,7 @@ export interface AdapterTestConnectionInput {
 
 export interface AdapterInvokeInput {
   endpointUrl: string;
+  endpointName: string;
   operationName: string;
   endpointVersion: string;
   vendorAccountId?: string | null;

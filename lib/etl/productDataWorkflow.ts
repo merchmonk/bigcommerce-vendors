@@ -23,15 +23,50 @@ export interface ProductDataWorkflowResult {
   products: NormalizedProduct[];
 }
 
+export interface ProductDataDiscoveryResult {
+  endpointResults: ProductDataEndpointResult[];
+  references: ProductReference[];
+  getProductConfig: {
+    mapping: EndpointMapping;
+    runtimeConfig: Record<string, unknown>;
+    endpointUrl: string;
+    localizationCountry: string;
+    localizationLanguage: string;
+  } | null;
+}
+
+export interface ProductDataFetchResult {
+  status: number;
+  products: NormalizedProduct[];
+  message?: string;
+}
+
 type AssignedMapping = VendorEndpointMapping & { mapping: EndpointMapping };
 
 const DEFAULT_LOCALIZATION_COUNTRY = 'US';
 const DEFAULT_LOCALIZATION_LANGUAGE = 'en';
-const DEFAULT_DELTA_TIMESTAMP = '1970-01-01T00:00:00Z';
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function extractSoapFaultMessage(parsedBody: Record<string, unknown> | null, rawPayload: string): string {
+  const fault = parsedBody?.Fault;
+  if (fault && typeof fault === 'object') {
+    const faultRecord = fault as Record<string, unknown>;
+    const faultString = faultRecord.faultstring;
+    if (typeof faultString === 'string' && faultString.trim()) {
+      return faultString.trim();
+    }
+  }
+
+  const match = rawPayload.match(/<faultstring>([\s\S]*?)<\/faultstring>/i);
+  if (match?.[1]) {
+    return match[1].trim();
+  }
+
+  return '';
 }
 
 function readStringConfig(config: Record<string, unknown>, keys: string[], fallback = ''): string {
@@ -135,37 +170,18 @@ function getLocalization(runtimeConfig: Record<string, unknown>): {
   };
 }
 
-function markCloseoutProducts(
-  products: NormalizedProduct[],
-  closeoutProductIds: Set<string>,
-): NormalizedProduct[] {
-  if (closeoutProductIds.size === 0) return products;
-
-  return products.map(product => {
-    const vendorProductId = product.vendor_product_id ?? product.sku;
-    if (!closeoutProductIds.has(vendorProductId)) return product;
-
-    const existingCustomFields = product.custom_fields ?? [];
-    const withoutCloseout = existingCustomFields.filter(field => field.name !== 'is_closeout');
-    return {
-      ...product,
-      custom_fields: [...withoutCloseout, { name: 'is_closeout', value: 'true' }],
-    };
-  });
-}
-
-export async function runProductDataWorkflow(input: {
+export async function discoverProductDataReferences(input: {
   vendor: Vendor;
   assignedMappings: AssignedMapping[];
-}): Promise<ProductDataWorkflowResult> {
+  lastSuccessfulSyncAt?: string | null;
+}): Promise<ProductDataDiscoveryResult> {
   const endpointResults: ProductDataEndpointResult[] = [];
-  const products: NormalizedProduct[] = [];
-
   const mappings = input.assignedMappings.filter(item => item.mapping.endpoint_name === 'ProductData');
   if (mappings.length === 0) {
     return {
       endpointResults,
-      products,
+      references: [],
+      getProductConfig: null,
     };
   }
 
@@ -194,15 +210,17 @@ export async function runProductDataWorkflow(input: {
 
     return {
       endpointResults,
-      products,
+      references: [],
+      getProductConfig: null,
     };
   }
 
   const lookupRefs: ProductReference[] = [];
-  const closeoutProductIds = new Set<string>();
+  const discoveryErrors: string[] = [];
+  const discoveryOperationName = input.lastSuccessfulSyncAt ? 'getProductDateModified' : 'getProductSellable';
 
   async function runDiscoveryOperation(
-    operationName: 'getProductSellable' | 'getProductDateModified' | 'getProductCloseOut',
+    operationName: 'getProductSellable' | 'getProductDateModified',
   ): Promise<void> {
     const operationMappings = operationMap.get(operationName) ?? [];
     for (const assigned of operationMappings) {
@@ -233,16 +251,13 @@ export async function runProductDataWorkflow(input: {
         requestFields.isSellable = readBooleanConfig(runtimeConfig, ['isSellable', 'is_sellable'], true);
       }
       if (operationName === 'getProductDateModified') {
-        requestFields.changeTimeStamp = readStringConfig(
-          runtimeConfig,
-          ['changeTimeStamp', 'change_timestamp'],
-          DEFAULT_DELTA_TIMESTAMP,
-        );
+        requestFields.changeTimeStamp = input.lastSuccessfulSyncAt;
       }
 
       try {
         const invokeResult = await adapter.invokeEndpoint({
           endpointUrl,
+          endpointName: mapping.endpoint_name,
           operationName,
           endpointVersion: mapping.endpoint_version,
           vendorAccountId: input.vendor.vendor_account_id,
@@ -250,11 +265,17 @@ export async function runProductDataWorkflow(input: {
           runtimeConfig: mergeRequestFields(runtimeConfig, requestFields),
         });
 
+        const responseMessage =
+          invokeResult.status >= 400
+            ? extractSoapFaultMessage(invokeResult.parsedBody, invokeResult.rawPayload)
+            : undefined;
+        if (invokeResult.status >= 400) {
+          const summarizedMessage = responseMessage || `${operationName} returned HTTP ${invokeResult.status}.`;
+          discoveryErrors.push(`${operationName}: ${summarizedMessage}`);
+        }
+
         const refs = extractProductReferencesFromPayload(invokeResult.parsedBody ?? invokeResult.rawPayload);
         lookupRefs.push(...refs);
-        if (operationName === 'getProductCloseOut') {
-          refs.forEach(ref => closeoutProductIds.add(ref.productId));
-        }
 
         endpointResults.push({
           mapping_id: mapping.mapping_id,
@@ -263,8 +284,10 @@ export async function runProductDataWorkflow(input: {
           operation_name: mapping.operation_name,
           status: invokeResult.status,
           products_found: refs.length,
+          message: responseMessage,
         });
       } catch (error: any) {
+        discoveryErrors.push(`${operationName}: ${error?.message ?? 'Discovery operation failed'}`);
         endpointResults.push({
           mapping_id: mapping.mapping_id,
           endpoint_name: mapping.endpoint_name,
@@ -278,16 +301,18 @@ export async function runProductDataWorkflow(input: {
     }
   }
 
-  await runDiscoveryOperation('getProductSellable');
-  await runDiscoveryOperation('getProductDateModified');
-  await runDiscoveryOperation('getProductCloseOut');
+  await runDiscoveryOperation(discoveryOperationName);
 
   const primaryGetProductMapping = getProductMappings[0];
   const primaryRuntimeConfig = asRecord(primaryGetProductMapping.runtime_config);
   lookupRefs.push(...parseProductReferencesFromRuntimeConfig(primaryRuntimeConfig));
 
-  const uniqueRefs = dedupeReferences(lookupRefs);
-  if (uniqueRefs.length === 0) {
+  const references = dedupeReferences(lookupRefs);
+  if (references.length === 0) {
+    if (discoveryErrors.length > 0) {
+      throw new Error(`ProductData discovery failed before any product IDs were found. ${discoveryErrors.join(' | ')}`);
+    }
+
     endpointResults.push({
       mapping_id: primaryGetProductMapping.mapping_id,
       endpoint_name: primaryGetProductMapping.mapping.endpoint_name,
@@ -296,23 +321,23 @@ export async function runProductDataWorkflow(input: {
       status: 204,
       products_found: 0,
       message:
-        'No ProductData product IDs discovered. Configure getProductSellable/getProductDateModified or provide runtime product_ids.',
+        `No ProductData product IDs discovered. Configure ${discoveryOperationName} or provide runtime product_ids.`,
     });
 
     return {
       endpointResults,
-      products,
+      references,
+      getProductConfig: null,
     };
   }
 
-  const getProductMapping = primaryGetProductMapping.mapping;
   const endpointUrl = getEndpointUrl(input.vendor, primaryRuntimeConfig);
   if (!endpointUrl) {
     endpointResults.push({
-      mapping_id: getProductMapping.mapping_id,
-      endpoint_name: getProductMapping.endpoint_name,
-      endpoint_version: getProductMapping.endpoint_version,
-      operation_name: getProductMapping.operation_name,
+      mapping_id: primaryGetProductMapping.mapping.mapping_id,
+      endpoint_name: primaryGetProductMapping.mapping.endpoint_name,
+      endpoint_version: primaryGetProductMapping.mapping.endpoint_version,
+      operation_name: primaryGetProductMapping.mapping.operation_name,
       status: 400,
       products_found: 0,
       message: 'Missing endpoint URL for getProduct operation.',
@@ -320,61 +345,132 @@ export async function runProductDataWorkflow(input: {
 
     return {
       endpointResults,
+      references,
+      getProductConfig: null,
+    };
+  }
+
+  const localization = getLocalization(primaryRuntimeConfig);
+  return {
+    endpointResults,
+    references,
+    getProductConfig: {
+      mapping: primaryGetProductMapping.mapping,
+      runtimeConfig: primaryRuntimeConfig,
+      endpointUrl,
+      localizationCountry: localization.localizationCountry,
+      localizationLanguage: localization.localizationLanguage,
+    },
+  };
+}
+
+export async function fetchProductDataReference(input: {
+  vendor: Vendor;
+  discovery: ProductDataDiscoveryResult;
+  reference: ProductReference;
+}): Promise<ProductDataFetchResult> {
+  if (!input.discovery.getProductConfig) {
+    return {
+      status: 400,
+      products: [],
+      message: 'ProductData discovery did not resolve a getProduct configuration.',
+    };
+  }
+
+  const { mapping, runtimeConfig, endpointUrl, localizationCountry, localizationLanguage } = input.discovery.getProductConfig;
+  const protocol = resolveProtocol(mapping.protocol, input.vendor.api_protocol);
+  const adapter = resolveEndpointAdapter(protocol);
+
+  const invokeResult = await adapter.invokeEndpoint({
+    endpointUrl,
+    endpointName: mapping.endpoint_name,
+    operationName: 'getProduct',
+    endpointVersion: mapping.endpoint_version,
+    vendorAccountId: input.vendor.vendor_account_id,
+    vendorSecret: input.vendor.vendor_secret,
+    runtimeConfig: mergeRequestFields(runtimeConfig, {
+      localizationCountry,
+      localizationLanguage,
+      productId: input.reference.productId,
+      ...(input.reference.partId ? { partId: input.reference.partId } : {}),
+    }),
+  });
+
+  const message =
+    invokeResult.status >= 400
+      ? extractSoapFaultMessage(invokeResult.parsedBody, invokeResult.rawPayload) ||
+        `getProduct returned HTTP ${invokeResult.status}.`
+      : undefined;
+
+  if (invokeResult.status >= 400) {
+    return {
+      status: invokeResult.status,
+      products: [],
+      message,
+    };
+  }
+
+  const normalized = normalizeProductsFromEndpoint(
+    mapping.endpoint_name,
+    mapping.endpoint_version,
+    mapping.operation_name,
+    invokeResult.parsedBody ?? invokeResult.rawPayload,
+    (mapping.transform_schema ?? {}) as Record<string, unknown>,
+  );
+
+  return {
+    status: invokeResult.status,
+    products: normalized,
+  };
+}
+
+export async function runProductDataWorkflow(input: {
+  vendor: Vendor;
+  assignedMappings: AssignedMapping[];
+  lastSuccessfulSyncAt?: string | null;
+}): Promise<ProductDataWorkflowResult> {
+  const discovery = await discoverProductDataReferences(input);
+  const endpointResults = [...discovery.endpointResults];
+  const products: NormalizedProduct[] = [];
+
+  if (!discovery.getProductConfig || discovery.references.length === 0) {
+    return {
+      endpointResults,
       products,
     };
   }
 
-  const protocol = resolveProtocol(getProductMapping.protocol, input.vendor.api_protocol);
-  const adapter = resolveEndpointAdapter(protocol);
-  const localization = getLocalization(primaryRuntimeConfig);
-
   let getProductErrorCount = 0;
   let getProductCallCount = 0;
 
-  for (const ref of uniqueRefs) {
+  for (const reference of discovery.references) {
     getProductCallCount += 1;
 
     try {
-      const invokeResult = await adapter.invokeEndpoint({
-        endpointUrl,
-        operationName: 'getProduct',
-        endpointVersion: getProductMapping.endpoint_version,
-        vendorAccountId: input.vendor.vendor_account_id,
-        vendorSecret: input.vendor.vendor_secret,
-        runtimeConfig: mergeRequestFields(primaryRuntimeConfig, {
-          localizationCountry: localization.localizationCountry,
-          localizationLanguage: localization.localizationLanguage,
-          productId: ref.productId,
-          ...(ref.partId ? { partId: ref.partId } : {}),
-        }),
+      const fetchResult = await fetchProductDataReference({
+        vendor: input.vendor,
+        discovery,
+        reference,
       });
 
-      if (invokeResult.status >= 400) {
+      if (fetchResult.status >= 400) {
         getProductErrorCount += 1;
         continue;
       }
 
-      const normalized = normalizeProductsFromEndpoint(
-        getProductMapping.endpoint_name,
-        getProductMapping.endpoint_version,
-        getProductMapping.operation_name,
-        invokeResult.parsedBody ?? invokeResult.rawPayload,
-        (getProductMapping.transform_schema ?? {}) as Record<string, unknown>,
-      );
-      products.push(...normalized);
+      products.push(...fetchResult.products);
     } catch {
       getProductErrorCount += 1;
     }
   }
 
-  const normalizedProducts = markCloseoutProducts(products, closeoutProductIds);
   endpointResults.push({
-    mapping_id: getProductMapping.mapping_id,
-    endpoint_name: getProductMapping.endpoint_name,
-    endpoint_version: getProductMapping.endpoint_version,
-    operation_name: getProductMapping.operation_name,
+    mapping_id: discovery.getProductConfig.mapping.mapping_id,
+    endpoint_name: discovery.getProductConfig.mapping.endpoint_name,
+    endpoint_version: discovery.getProductConfig.mapping.endpoint_version,
+    operation_name: discovery.getProductConfig.mapping.operation_name,
     status: getProductErrorCount > 0 ? 207 : 200,
-    products_found: normalizedProducts.length,
+    products_found: products.length,
     message:
       getProductErrorCount > 0
         ? `getProduct completed with ${getProductErrorCount} failed calls out of ${getProductCallCount}.`
@@ -383,6 +479,6 @@ export async function runProductDataWorkflow(input: {
 
   return {
     endpointResults,
-    products: normalizedProducts,
+    products,
   };
 }

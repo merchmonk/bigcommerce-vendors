@@ -23,6 +23,7 @@ interface SyncRunDiagnosticsResponse {
 const VendorSyncRunDiagnosticsPage = () => {
   const router = useRouter();
   const { context } = useSession();
+  const withContext = (path: string) => (context ? `${path}?context=${encodeURIComponent(context)}` : path);
   const vendorId = Number(router.query.id);
   const syncRunId = Number(router.query.syncRunId);
 
@@ -59,7 +60,7 @@ const VendorSyncRunDiagnosticsPage = () => {
           </div>
           <button
             type="button"
-            onClick={() => router.push(`/vendors/${vendorId}`)}
+            onClick={() => router.push(withContext(`/vendors/${vendorId}`))}
             style={secondaryButtonStyle}
           >
             Back to Vendor

@@ -40,6 +40,34 @@ describe('projectBigCommerceProductContract', () => {
             ],
           },
         ],
+        media_assets: [
+          {
+            url: 'https://cdn.example.com/products/pc54/hero.jpg',
+            media_type: 'Image',
+            description: 'Hero image',
+            class_types: ['Primary'],
+          },
+          {
+            url: 'https://cdn.example.com/products/pc54/black-xl.jpg',
+            media_type: 'Image',
+            description: 'Black XL',
+            part_id: 'PC54-BLK-XL',
+            class_types: ['Primary'],
+          },
+          {
+            url: 'https://cdn.example.com/products/pc54/full-front.jpg',
+            media_type: 'Image',
+            description: 'Front print placement',
+            location_ids: ['FULL_FRONT'],
+            decoration_ids: ['SCREEN_PRINT'],
+          },
+          {
+            url: 'https://www.youtube.com/watch?v=abc123xyz89',
+            media_type: 'Video',
+            description: 'Promo video',
+            part_id: 'PC54-BLK-XL',
+          },
+        ],
         location_decoration_data: {
           LocationDecoration: [
             {
@@ -135,6 +163,7 @@ describe('projectBigCommerceProductContract', () => {
 
     expect(contract.product_designer_defaults).toEqual(
       expect.objectContaining({
+        contractVersion: '2026-03-22.1',
         source: expect.objectContaining({
           vendorProductId: 'PC54',
         }),
@@ -175,6 +204,21 @@ describe('projectBigCommerceProductContract', () => {
             charge_type: 'run',
           },
         ],
+        media: {
+          videos: {
+            variantAssets: {
+              'PC54-BLK-XL': [
+                {
+                  url: 'https://www.youtube.com/watch?v=abc123xyz89',
+                  alt: 'Promo video',
+                  description: 'Promo video',
+                  kind: 'variant',
+                  partId: 'PC54-BLK-XL',
+                },
+              ],
+            },
+          },
+        },
       }),
     );
     expect((contract.product_designer_defaults.locations as Array<Record<string, unknown>>)[0]).toEqual(

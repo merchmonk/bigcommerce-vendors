@@ -8,9 +8,11 @@ import {
   createIntegrationJobEvent,
   finalizeIntegrationJob,
   findActiveIntegrationJobByDedupeKey,
+  findLatestActiveCatalogSyncJobForVendor,
   getIntegrationJobById,
   listIntegrationJobEvents,
   markIntegrationJobEnqueued,
+  requestIntegrationJobCancellation,
 } from './etl/repository';
 import { serializeError } from './telemetry';
 
@@ -260,6 +262,44 @@ export async function getIntegrationJobStatus(integrationJobId: number): Promise
     error.statusCode = 404;
     throw error;
   }
+
+  const events = await listIntegrationJobEvents(integrationJobId, 25);
+  return {
+    job,
+    events,
+  };
+}
+
+export async function getActiveCatalogSyncJobForVendor(vendorId: number): Promise<IntegrationJob | null> {
+  return findLatestActiveCatalogSyncJobForVendor(vendorId);
+}
+
+export async function cancelIntegrationJob(integrationJobId: number): Promise<{
+  job: IntegrationJob;
+  events: IntegrationJobEvent[];
+}> {
+  const job = await requestIntegrationJobCancellation(integrationJobId);
+  if (!job) {
+    const error = new Error(`Integration job ${integrationJobId} not found`) as Error & {
+      statusCode?: number;
+    };
+    error.statusCode = 404;
+    throw error;
+  }
+
+  await createIntegrationJobEvent({
+    integration_job_id: integrationJobId,
+    event_name: job.status === 'CANCELLED' ? 'job_cancelled' : 'job_cancel_requested',
+    level: 'warn',
+    payload: {
+      status: job.status,
+    },
+  });
+
+  logger.warn('integration job cancellation updated', {
+    integrationJobId: job.integration_job_id,
+    status: job.status,
+  });
 
   const events = await listIntegrationJobEvents(integrationJobId, 25);
   return {

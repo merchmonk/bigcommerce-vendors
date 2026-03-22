@@ -46,7 +46,7 @@ function createDefaultTransform(endpointName: string, operationName: string): Re
 
   if (
     endpointName === 'ProductData' &&
-    ['getProductSellable', 'getProductDateModified', 'getProductCloseOut'].includes(operationName)
+    ['getProductSellable', 'getProductDateModified'].includes(operationName)
   ) {
     return {
       operation: operationName,
@@ -87,10 +87,25 @@ function createDefaultTransform(endpointName: string, operationName: string): Re
 
 const PROMOSTANDARDS_SEED_SOURCE_RECORDS: PromoSeedSourceRecord[] = [
   { endpoint_name: 'CompanyData', endpoint_version: '1.0.0', operation_name: 'getCompanyData', is_product_endpoint: false },
+  { endpoint_name: 'Inventory', endpoint_version: '1.0.0', operation_name: 'getInventoryLevels', is_product_endpoint: true },
   { endpoint_name: 'Inventory', endpoint_version: '1.2.1', operation_name: 'getInventoryLevels', is_product_endpoint: true },
+  { endpoint_name: 'Inventory', endpoint_version: '2.0.0', operation_name: 'getInventoryLevels', is_product_endpoint: true },
   { endpoint_name: 'ProductMedia', endpoint_version: '1.0.0', operation_name: 'getMediaContent', is_product_endpoint: true },
-  { endpoint_name: 'ProductMedia', endpoint_version: '1.0.0', operation_name: 'getMediaDateModified', is_product_endpoint: true },
+  { endpoint_name: 'ProductMedia', endpoint_version: '1.1.0', operation_name: 'getMediaContent', is_product_endpoint: true },
   { endpoint_name: 'ProductCompliance', endpoint_version: '1.0.0', operation_name: 'getComplianceData', is_product_endpoint: true },
+  {
+    endpoint_name: 'ProductData',
+    endpoint_version: '1.0.0',
+    operation_name: 'getProductSellable',
+    is_product_endpoint: true,
+  },
+  {
+    endpoint_name: 'ProductData',
+    endpoint_version: '1.0.0',
+    operation_name: 'getProductDateModified',
+    is_product_endpoint: true,
+  },
+  { endpoint_name: 'ProductData', endpoint_version: '1.0.0', operation_name: 'getProduct', is_product_endpoint: true },
   {
     endpoint_name: 'ProductData',
     endpoint_version: '2.0.0',
@@ -101,12 +116,6 @@ const PROMOSTANDARDS_SEED_SOURCE_RECORDS: PromoSeedSourceRecord[] = [
     endpoint_name: 'ProductData',
     endpoint_version: '2.0.0',
     operation_name: 'getProductDateModified',
-    is_product_endpoint: true,
-  },
-  {
-    endpoint_name: 'ProductData',
-    endpoint_version: '2.0.0',
-    operation_name: 'getProductCloseOut',
     is_product_endpoint: true,
   },
   { endpoint_name: 'ProductData', endpoint_version: '2.0.0', operation_name: 'getProduct', is_product_endpoint: true },

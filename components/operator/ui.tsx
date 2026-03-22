@@ -86,6 +86,8 @@ export const pageCardStyle: React.CSSProperties = {
   borderRadius: '16px',
   boxShadow: '0 10px 30px rgba(15, 23, 42, 0.06)',
   padding: '24px',
+  fontFamily: 'Helvetica, Arial, sans-serif',
+  fontSize: '11px',
 };
 
 export const sectionTitleStyle: React.CSSProperties = {
@@ -97,7 +99,7 @@ export const sectionTitleStyle: React.CSSProperties = {
 export const fieldLabelStyle: React.CSSProperties = {
   color: '#334155',
   display: 'block',
-  fontSize: '14px',
+  fontSize: '11px',
   fontWeight: 600,
   marginBottom: '8px',
 };
@@ -211,7 +213,9 @@ export function StatusBadge({ status }: { status: VendorOperationalStatus }) {
             animation: tone.animated ? 'operatorPulse 1.2s ease-in-out infinite' : undefined,
           }}
         />
-        {tone.label}
+         <span
+          style={{
+            display: 'none'}}>{tone.label}</span>
       </span>
       <style jsx global>{`
         @keyframes operatorPulse {
@@ -400,7 +404,7 @@ export function RowActionMenu(props: {
           color: '#0f172a',
           cursor: 'pointer',
           display: 'inline-flex',
-          fontSize: '20px',
+          fontSize: '16px',
           justifyContent: 'center',
           lineHeight: 1,
           minHeight: '40px',
@@ -440,7 +444,7 @@ export function RowActionMenu(props: {
                 cursor: 'pointer',
                 display: 'block',
                 fontWeight: 600,
-                padding: '10px 12px',
+                padding: '8px',
                 textAlign: 'left',
                 width: '100%',
               }}

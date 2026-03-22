@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { useState } from 'react';
 import useSWR from 'swr';
 
 interface VendorSyncPanelProps {
@@ -30,6 +31,14 @@ interface SyncRunRow {
   ended_at?: string | null;
 }
 
+interface ActiveJobRow {
+  integration_job_id: number;
+  status: string;
+  sync_scope: string;
+  mapping_id: number | null;
+  submitted_at: string;
+}
+
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 const panelStyle: React.CSSProperties = {
@@ -38,6 +47,8 @@ const panelStyle: React.CSSProperties = {
   borderRadius: '12px',
   marginTop: '20px',
   padding: '24px',
+  fontFamily: 'Helvetica, Arial, sans-serif',
+  fontSize: '11px',
 };
 
 const primaryButtonStyle: React.CSSProperties = {
@@ -58,30 +69,100 @@ const subtleButtonStyle: React.CSSProperties = {
 };
 
 const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const withContext = (path: string) => `${path}?context=${encodeURIComponent(context)}`;
   const mappingsUrl = `/api/vendors/${vendorId}/mappings?context=${encodeURIComponent(context)}`;
   const runsUrl = `/api/vendors/${vendorId}/sync?context=${encodeURIComponent(context)}`;
-  const { data: mappingsData, mutate: mutateMappings } = useSWR<{ data: VendorMappingRow[] }>(mappingsUrl, fetcher);
-  const { data: runsData, mutate: mutateRuns } = useSWR<{ data: SyncRunRow[] }>(runsUrl, fetcher);
+  const { data: mappingsData, mutate: mutateMappings } = useSWR<{ data: VendorMappingRow[] }>(mappingsUrl, fetcher, {
+    refreshInterval: 5000,
+  });
+  const { data: runsData, mutate: mutateRuns } = useSWR<{ data: SyncRunRow[]; active_job?: ActiveJobRow | null }>(
+    runsUrl,
+    fetcher,
+    {
+      refreshInterval: 5000,
+    },
+  );
 
   const runSync = async (body: { mapping_id?: number; sync_all?: boolean }) => {
-    await fetch(runsUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    await Promise.all([mutateMappings(), mutateRuns()]);
+    setIsSubmitting(true);
+    try {
+      await fetch(runsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      await Promise.all([mutateMappings(), mutateRuns()]);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const cancelActiveSync = async () => {
+    if (!runsData?.active_job) return;
+    setIsSubmitting(true);
+    try {
+      await fetch(runsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'cancel',
+          integration_job_id: runsData.active_job.integration_job_id,
+        }),
+      });
+      await Promise.all([mutateMappings(), mutateRuns()]);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const mappings = mappingsData?.data ?? [];
   const runs = runsData?.data ?? [];
+  const activeJob = runsData?.active_job ?? null;
+  const hasActiveSync = Boolean(
+    activeJob && ['PENDING', 'ENQUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(activeJob.status),
+  );
 
   return (
     <section style={panelStyle}>
       <h3 style={{ marginTop: 0 }}>Vendor ETL Sync</h3>
+      {activeJob ? (
+        <div
+          style={{
+            background: '#f8fafc',
+            border: '1px solid #dbe3ef',
+            borderRadius: '10px',
+            color: '#334155',
+            marginBottom: '16px',
+            padding: '12px 14px',
+          }}
+        >
+          Active job{' '}
+          <Link href={withContext(`/integration-jobs/${activeJob.integration_job_id}`)} style={tableLinkStyle}>
+            #{activeJob.integration_job_id}
+          </Link>{' '}
+          is <strong>{activeJob.status}</strong>.
+        </div>
+      ) : null}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-        <button type="button" style={primaryButtonStyle} onClick={() => runSync({ sync_all: true })}>
+        <button
+          type="button"
+          style={primaryButtonStyle}
+          onClick={() => runSync({ sync_all: true })}
+          disabled={Boolean(hasActiveSync) || isSubmitting}
+        >
           Run All Product ETLs
         </button>
+        {hasActiveSync ? (
+          <button
+            type="button"
+            style={subtleButtonStyle}
+            onClick={cancelActiveSync}
+            disabled={isSubmitting}
+          >
+            {activeJob?.status === 'CANCEL_REQUESTED' ? 'Cancellation Requested' : 'Cancel Active Sync'}
+          </button>
+        ) : null}
       </div>
 
       <div style={{ marginBottom: '20px' }}>
@@ -109,6 +190,7 @@ const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
                   type="button"
                   style={subtleButtonStyle}
                   onClick={() => runSync({ mapping_id: row.mapping_id })}
+                  disabled={Boolean(hasActiveSync) || isSubmitting}
                 >
                   Run Endpoint ETL
                 </button>
@@ -138,7 +220,7 @@ const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
                 <tr key={run.sync_run_id}>
                   <td style={tableCellStyle}>
                     <Link
-                      href={`/vendors/${vendorId}/sync-runs/${run.sync_run_id}`}
+                      href={withContext(`/vendors/${vendorId}/sync-runs/${run.sync_run_id}`)}
                       style={tableLinkStyle}
                     >
                       #{run.sync_run_id}
@@ -150,7 +232,7 @@ const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
                   <td style={tableCellStyle}>{run.records_written}</td>
                   <td style={tableCellStyle}>
                     <Link
-                      href={`/vendors/${vendorId}/sync-runs/${run.sync_run_id}`}
+                      href={withContext(`/vendors/${vendorId}/sync-runs/${run.sync_run_id}`)}
                       style={tableLinkStyle}
                     >
                       View diagnostics
@@ -175,6 +257,7 @@ const tableHeaderStyle: React.CSSProperties = {
 const tableCellStyle: React.CSSProperties = {
   borderBottom: '1px solid #e5e7eb',
   padding: '8px',
+  overflow: 'visible',
 };
 
 const tableLinkStyle: React.CSSProperties = {

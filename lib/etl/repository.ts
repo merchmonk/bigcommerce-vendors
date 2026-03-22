@@ -24,6 +24,22 @@ import type {
 } from '../../types';
 import { Prisma } from '@prisma/client';
 import prisma from '../prisma';
+import { seedPromoStandardsMappings } from './promostandardsSeed';
+
+let promoStandardsSeedPromise: Promise<void> | null = null;
+
+async function ensurePromoStandardsMappingsSeeded(): Promise<void> {
+  if (!promoStandardsSeedPromise) {
+    promoStandardsSeedPromise = seedPromoStandardsMappings()
+      .then(() => undefined)
+      .catch(error => {
+        promoStandardsSeedPromise = null;
+        throw error;
+      });
+  }
+
+  await promoStandardsSeedPromise;
+}
 
 export interface EndpointMappingUpsertInput {
   standard_type: MappingStandardType;
@@ -110,6 +126,13 @@ export interface SyncRunCompleteInput {
   records_read?: number;
   records_written?: number;
   error_message?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface SyncRunProgressInput {
+  sync_run_id: number;
+  records_read?: number;
+  records_written?: number;
   details?: Record<string, unknown>;
 }
 
@@ -533,6 +556,10 @@ export async function listEndpointMappings(filters?: {
   endpoint_version?: string;
   is_product_endpoint?: boolean;
 }): Promise<EndpointMapping[]> {
+  if (filters?.standard_type !== 'CUSTOM') {
+    await ensurePromoStandardsMappingsSeeded();
+  }
+
   const rows = await prisma.endpointMapping.findMany({
     where: {
       standard_type: filters?.standard_type,
@@ -616,6 +643,7 @@ export async function findMappingsByEndpointVersions(
   selections: Array<{ endpoint_name: string; endpoint_version: string }>,
 ): Promise<EndpointMapping[]> {
   if (selections.length === 0) return [];
+  await ensurePromoStandardsMappingsSeeded();
   const rows = await prisma.endpointMapping.findMany({
     where: {
       standard_type: 'PROMOSTANDARDS',
@@ -637,6 +665,7 @@ export async function findMappingsByEndpointOperations(
   selections: Array<{ endpoint_name: string; endpoint_version: string; operation_name: string }>,
 ): Promise<EndpointMapping[]> {
   if (selections.length === 0) return [];
+  await ensurePromoStandardsMappingsSeeded();
   const rows = await prisma.endpointMapping.findMany({
     where: {
       standard_type: 'PROMOSTANDARDS',
@@ -830,7 +859,23 @@ export async function findActiveIntegrationJobByDedupeKey(dedupeKey: string): Pr
     where: {
       dedupe_key: dedupeKey,
       status: {
-        in: ['PENDING', 'ENQUEUED', 'RUNNING'],
+        in: ['PENDING', 'ENQUEUED', 'RUNNING', 'CANCEL_REQUESTED'],
+      },
+    },
+    orderBy: {
+      submitted_at: 'desc',
+    },
+  });
+  return row ? serializeIntegrationJob(row) : null;
+}
+
+export async function findLatestActiveCatalogSyncJobForVendor(vendorId: number): Promise<IntegrationJob | null> {
+  const row = await prisma.integrationJob.findFirst({
+    where: {
+      vendor_id: vendorId,
+      job_kind: 'CATALOG_SYNC',
+      status: {
+        in: ['PENDING', 'ENQUEUED', 'RUNNING', 'CANCEL_REQUESTED'],
       },
     },
     orderBy: {
@@ -883,7 +928,7 @@ export async function markIntegrationJobRunning(
 
 export async function finalizeIntegrationJob(input: {
   integration_job_id: number;
-  status: Extract<IntegrationJobStatus, 'SUCCEEDED' | 'FAILED' | 'DEAD_LETTERED'>;
+  status: Extract<IntegrationJobStatus, 'SUCCEEDED' | 'FAILED' | 'DEAD_LETTERED' | 'CANCELLED'>;
   last_error?: string | null;
 }): Promise<IntegrationJob | null> {
   return updateIntegrationJob({
@@ -891,6 +936,33 @@ export async function finalizeIntegrationJob(input: {
     status: input.status,
     last_error: input.last_error ?? null,
     ended_at: new Date(),
+  });
+}
+
+export async function requestIntegrationJobCancellation(
+  integrationJobId: number,
+): Promise<IntegrationJob | null> {
+  const job = await getIntegrationJobById(integrationJobId);
+  if (!job) {
+    return null;
+  }
+
+  if (['SUCCEEDED', 'FAILED', 'DEAD_LETTERED', 'CANCELLED'].includes(job.status)) {
+    return job;
+  }
+
+  if (job.status === 'PENDING' || job.status === 'ENQUEUED') {
+    return finalizeIntegrationJob({
+      integration_job_id: integrationJobId,
+      status: 'CANCELLED',
+      last_error: 'Cancelled by operator.',
+    });
+  }
+
+  return updateIntegrationJob({
+    integration_job_id: integrationJobId,
+    status: 'CANCEL_REQUESTED',
+    last_error: 'Cancellation requested by operator.',
   });
 }
 
@@ -1188,6 +1260,19 @@ export async function markSyncRunRunning(syncRunId: number): Promise<EtlSyncRun 
     data: {
       status: 'RUNNING',
       started_at: new Date(),
+    },
+  }).catch(() => null);
+
+  return row ? serializeSyncRun(row) : null;
+}
+
+export async function updateSyncRunProgress(input: SyncRunProgressInput): Promise<EtlSyncRun | null> {
+  const row = await prisma.etlSyncRun.update({
+    where: { sync_run_id: BigInt(input.sync_run_id) },
+    data: {
+      records_read: input.records_read ?? undefined,
+      records_written: input.records_written ?? undefined,
+      details: input.details ? toJson(input.details) : undefined,
     },
   }).catch(() => null);
 

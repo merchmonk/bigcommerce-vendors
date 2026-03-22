@@ -65,7 +65,7 @@ function serializeSummary(
 }
 
 function getTerminalJobStatus(status: IntegrationJobStatus): IntegrationJobStatus | null {
-  if (status === 'FAILED' || status === 'DEAD_LETTERED' || status === 'SUCCEEDED') {
+  if (status === 'FAILED' || status === 'DEAD_LETTERED' || status === 'SUCCEEDED' || status === 'CANCELLED') {
     return status;
   }
 
@@ -121,7 +121,7 @@ export async function listOrderOperatorSummaries(vendorId?: number): Promise<Ord
   const latestJobStatusByOrder = new Map<number, IntegrationJobStatus>();
   for (const job of jobs) {
     const orderIntegrationStateId = Number(job.order_integration_state_id);
-    if (job.status === 'PENDING' || job.status === 'ENQUEUED' || job.status === 'RUNNING') {
+    if (job.status === 'PENDING' || job.status === 'ENQUEUED' || job.status === 'RUNNING' || job.status === 'CANCEL_REQUESTED') {
       activeJobsByOrder.add(orderIntegrationStateId);
       continue;
     }

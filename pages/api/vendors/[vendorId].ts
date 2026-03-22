@@ -102,6 +102,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           break;
         }
         case 'DELETE': {
+          await assertVendorCanDeactivate(vendorId);
           await deleteVendor(vendorId);
           logger.info('vendor deleted', { vendorId });
           res.status(204).end();

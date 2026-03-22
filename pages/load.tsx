@@ -1,6 +1,4 @@
 import { GetServerSideProps } from 'next';
-import { encodePayload, getBCVerify, setSession } from '../lib/auth';
-import { ensureBigCommerceOrderWebhooks } from '../lib/orders/bigcommerceOrderWebhooks';
 import type { SessionProps } from '../types';
 
 /**
@@ -20,6 +18,8 @@ function buildRedirectUrl(url: string | undefined, encodedContext: string): stri
  * We verify the signed_payload_jwt, persist the session, then redirect to the app UI.
  */
 export const getServerSideProps: GetServerSideProps = async (context) => {
+  const { encodePayload, getBCVerify, setSession } = await import('../lib/auth');
+  const { ensureBigCommerceOrderWebhooks } = await import('../lib/orders/bigcommerceOrderWebhooks');
   const { default: logger } = await import('../lib/logger');
   try {
     const { query } = context;

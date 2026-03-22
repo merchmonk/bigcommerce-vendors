@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getSession } from '../../../lib/auth';
 import { recordInternalFailure } from '../../../lib/apiTelemetry';
+import { cancelIntegrationJob } from '../../../lib/integrationJobs';
 import logger from '../../../lib/logger';
 import { buildApiRequestContext, runWithRequestContext } from '../../../lib/requestContext';
 import { getIntegrationJobDiagnostics } from '../../../lib/vendors/operatorDiagnostics';
@@ -23,8 +24,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ message: 'Invalid jobId' });
       }
 
+      if (req.method === 'DELETE') {
+        const payload = await cancelIntegrationJob(integrationJobId);
+        return res.status(202).json(payload);
+      }
+
       if (req.method !== 'GET') {
-        res.setHeader('Allow', ['GET']);
+        res.setHeader('Allow', ['GET', 'DELETE']);
         return res.status(405).json({ message: `Method ${req.method} not allowed` });
       }
 

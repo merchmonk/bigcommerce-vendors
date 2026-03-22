@@ -3,22 +3,27 @@ export {};
 const mockCreateIntegrationJob = jest.fn();
 const mockCreateIntegrationJobEvent = jest.fn();
 const mockFindActiveIntegrationJobByDedupeKey = jest.fn();
+const mockFindLatestActiveCatalogSyncJobForVendor = jest.fn();
 const mockFinalizeIntegrationJob = jest.fn();
 const mockGetIntegrationJobById = jest.fn();
 const mockListIntegrationJobEvents = jest.fn();
 const mockMarkIntegrationJobEnqueued = jest.fn();
+const mockRequestIntegrationJobCancellation = jest.fn();
 const mockSqsSend = jest.fn();
 const mockPublishPlatformEvent = jest.fn();
 const mockLoggerInfo = jest.fn();
+const mockLoggerWarn = jest.fn();
 
 jest.mock('@lib/etl/repository', () => ({
   createIntegrationJob: (...args: unknown[]) => mockCreateIntegrationJob(...args),
   createIntegrationJobEvent: (...args: unknown[]) => mockCreateIntegrationJobEvent(...args),
   finalizeIntegrationJob: (...args: unknown[]) => mockFinalizeIntegrationJob(...args),
   findActiveIntegrationJobByDedupeKey: (...args: unknown[]) => mockFindActiveIntegrationJobByDedupeKey(...args),
+  findLatestActiveCatalogSyncJobForVendor: (...args: unknown[]) => mockFindLatestActiveCatalogSyncJobForVendor(...args),
   getIntegrationJobById: (...args: unknown[]) => mockGetIntegrationJobById(...args),
   listIntegrationJobEvents: (...args: unknown[]) => mockListIntegrationJobEvents(...args),
   markIntegrationJobEnqueued: (...args: unknown[]) => mockMarkIntegrationJobEnqueued(...args),
+  requestIntegrationJobCancellation: (...args: unknown[]) => mockRequestIntegrationJobCancellation(...args),
 }));
 
 jest.mock('@lib/awsClients', () => ({
@@ -35,7 +40,7 @@ jest.mock('@lib/logger', () => ({
   __esModule: true,
   default: {
     info: (...args: unknown[]) => mockLoggerInfo(...args),
-    warn: jest.fn(),
+    warn: (...args: unknown[]) => mockLoggerWarn(...args),
     error: jest.fn(),
   },
 }));
@@ -44,6 +49,7 @@ describe('integration job dispatcher', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.INTEGRATION_JOB_QUEUE_URL = 'https://queue.example.com/jobs';
+    mockFindLatestActiveCatalogSyncJobForVendor.mockResolvedValue(null);
   });
 
   test('reuses an active integration job instead of creating a duplicate', async () => {
@@ -287,5 +293,47 @@ describe('integration job dispatcher', () => {
     );
     expect(result.job.status).toBe('ENQUEUED');
     expect(result.deduplicated).toBe(false);
+  });
+
+  test('updates cancellation state without publishing a platform event', async () => {
+    mockRequestIntegrationJobCancellation.mockResolvedValue({
+      integration_job_id: 222,
+      job_kind: 'CATALOG_SYNC',
+      vendor_id: 12,
+      mapping_id: null,
+      order_integration_state_id: null,
+      sync_scope: 'ALL',
+      source_action: 'manual_sync',
+      dedupe_key: 'catalog_sync:12:ALL:all:manual_sync',
+      correlation_id: 'corr-cancel-1',
+      request_payload: {},
+      status: 'CANCEL_REQUESTED',
+      attempt_count: 1,
+      queue_message_id: 'message-222',
+      last_error: 'Cancellation requested by operator.',
+      submitted_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      ended_at: null,
+    });
+    mockListIntegrationJobEvents.mockResolvedValue([]);
+
+    const { cancelIntegrationJob } = await import('@lib/integrationJobs');
+    const result = await cancelIntegrationJob(222);
+
+    expect(result.job.status).toBe('CANCEL_REQUESTED');
+    expect(mockCreateIntegrationJobEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 222,
+        event_name: 'job_cancel_requested',
+      }),
+    );
+    expect(mockPublishPlatformEvent).not.toHaveBeenCalled();
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      'integration job cancellation updated',
+      expect.objectContaining({
+        integrationJobId: 222,
+        status: 'CANCEL_REQUESTED',
+      }),
+    );
   });
 });

@@ -45,6 +45,7 @@ const defaultRemittancePayload = `{
 const OrderIntegrationDetailPage = () => {
   const router = useRouter();
   const { context } = useSession();
+  const withContext = (path: string) => (context ? `${path}?context=${encodeURIComponent(context)}` : path);
   const orderIntegrationStateId = Number(router.query.orderIntegrationStateId);
   const [toasts, setToasts] = useState<OperatorToast[]>([]);
   const [remittancePayloadText, setRemittancePayloadText] = useState(defaultRemittancePayload);
@@ -132,7 +133,7 @@ const OrderIntegrationDetailPage = () => {
               </p>
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button type="button" onClick={() => router.push('/orders')} style={secondaryButtonStyle}>
+              <button type="button" onClick={() => router.push(withContext('/orders'))} style={secondaryButtonStyle}>
                 Back to Orders
               </button>
               <button

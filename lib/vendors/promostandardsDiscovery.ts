@@ -4,6 +4,7 @@ import type {
   PromostandardsCapabilityMatrix,
   PromostandardsEndpointCapability,
 } from '../../types';
+import { resolveSoapEndpointUrl } from '../etl/soapClient';
 import { resolveEndpointAdapter } from '../etl/adapters/factory';
 import {
   findMappingsByEndpointOperations,
@@ -20,10 +21,27 @@ interface DiscoveryInput {
 interface ProbeClassification {
   available: boolean;
   message: string;
+  credentialsValid: boolean | null;
 }
 
 function normalizeProtocol(protocol: MappingProtocol | undefined): MappingProtocol {
   return protocol ?? 'SOAP';
+}
+
+function compareEndpointVersions(left: string, right: string): number {
+  const leftParts = left.split('.').map(part => Number.parseInt(part, 10));
+  const rightParts = right.split('.').map(part => Number.parseInt(part, 10));
+  const maxLength = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftPart = Number.isFinite(leftParts[index]) ? leftParts[index]! : 0;
+    const rightPart = Number.isFinite(rightParts[index]) ? rightParts[index]! : 0;
+    if (leftPart !== rightPart) {
+      return leftPart - rightPart;
+    }
+  }
+
+  return 0;
 }
 
 function extractSoapFaultMessage(parsedBody: Record<string, unknown> | null, rawPayload: string): string {
@@ -62,7 +80,7 @@ function classifyPromostandardsProbe(input: {
     'unsupported',
     'method not found',
     'dispatch method',
-    'not found',
+    'procedure',
   ];
   const validationPatterns = [
     'required',
@@ -71,6 +89,7 @@ function classifyPromostandardsProbe(input: {
     'must be provided',
     'cannot be empty',
     'validation',
+    'not found',
     'partid',
     'productid',
     'lineitem',
@@ -86,6 +105,7 @@ function classifyPromostandardsProbe(input: {
     return {
       available: true,
       message: faultMessage || 'Endpoint reachable.',
+      credentialsValid: true,
     };
   }
 
@@ -93,6 +113,7 @@ function classifyPromostandardsProbe(input: {
     return {
       available: false,
       message,
+      credentialsValid: null,
     };
   }
 
@@ -100,6 +121,7 @@ function classifyPromostandardsProbe(input: {
     return {
       available: true,
       message,
+      credentialsValid: true,
     };
   }
 
@@ -107,13 +129,87 @@ function classifyPromostandardsProbe(input: {
     return {
       available: false,
       message,
+      credentialsValid: false,
+    };
+  }
+
+  const authenticationPatterns = [
+    'invalid credentials',
+    'authentication',
+    'not authorized',
+    'unauthorized',
+    'access denied',
+    'invalid login',
+    'login failed',
+    'invalid password',
+  ];
+  if (authenticationPatterns.some(pattern => normalized.includes(pattern))) {
+    return {
+      available: false,
+      message,
+      credentialsValid: false,
     };
   }
 
   return {
     available: false,
     message,
+    credentialsValid: null,
   };
+}
+
+function parseWsdlOperations(rawXml: string): Set<string> {
+  const operations = new Set<string>();
+  const expression = /wsdl:operation name="([^"]+)"/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = expression.exec(rawXml)) !== null) {
+    if (match[1]) {
+      operations.add(match[1]);
+    }
+  }
+  return operations;
+}
+
+async function inspectSoapWsdl(input: {
+  endpointUrl: string;
+  endpointName: string;
+  endpointVersion: string;
+  operationName: string;
+}): Promise<{
+  available: boolean;
+  statusCode: number | null;
+  message: string;
+} | null> {
+  const wsdlUrl = `${resolveSoapEndpointUrl({
+    endpointUrl: input.endpointUrl,
+    endpointName: input.endpointName,
+    endpointVersion: input.endpointVersion,
+  })}?wsdl`;
+
+  try {
+    const response = await fetch(wsdlUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'text/xml, application/wsdl+xml, application/xml;q=0.9, */*;q=0.8',
+      },
+    });
+    const rawXml = await response.text();
+    if (!response.ok || !rawXml.includes('<wsdl:definitions')) {
+      return null;
+    }
+
+    const operations = parseWsdlOperations(rawXml);
+    return {
+      available: operations.has(input.operationName),
+      statusCode: response.status,
+      message: operations.has(input.operationName)
+        ? 'Operation listed in endpoint WSDL.'
+        : 'Operation not listed in endpoint WSDL.',
+    };
+  } catch {
+    return null;
+  }
 }
 
 function toCapabilityProbes(mappings: Awaited<ReturnType<typeof listEndpointMappings>>): Array<{
@@ -159,6 +255,7 @@ export async function discoverPromostandardsCapabilities(
   ok: boolean;
   message: string;
   available_endpoint_count: number;
+  credentials_valid: boolean | null;
   fingerprint: string;
   tested_at: string;
   endpoints: PromostandardsEndpointCapability[];
@@ -171,23 +268,11 @@ export async function discoverPromostandardsCapabilities(
   const probes = toCapabilityProbes(mappings);
   const adapter = resolveEndpointAdapter(protocol);
   const endpoints: PromostandardsEndpointCapability[] = [];
+  let credentialsValid: boolean | null = null;
 
   for (const probe of probes) {
     try {
-      const result = await adapter.invokeEndpoint({
-        endpointUrl: input.vendor_api_url ?? '',
-        operationName: probe.operation_name,
-        endpointVersion: probe.endpoint_version,
-        vendorAccountId: input.vendor_account_id ?? null,
-        vendorSecret: input.vendor_secret ?? null,
-        runtimeConfig: {},
-      });
-      const classified = classifyPromostandardsProbe({
-        status: result.status,
-        parsedBody: result.parsedBody,
-        rawPayload: result.rawPayload,
-      });
-      endpoints.push({
+      const baseCapability = {
         endpoint_name: probe.endpoint_name,
         endpoint_version: probe.endpoint_version,
         operation_name: probe.operation_name,
@@ -207,9 +292,56 @@ export async function discoverPromostandardsCapabilities(
           typeof probe.metadata.recommended_poll_minutes === 'number'
             ? probe.metadata.recommended_poll_minutes
             : null,
-        available: classified.available,
+      };
+
+      let wsdlInspection: {
+        available: boolean;
+        statusCode: number | null;
+        message: string;
+      } | null = null;
+
+      if (protocol === 'SOAP') {
+        wsdlInspection = await inspectSoapWsdl({
+          endpointUrl: input.vendor_api_url ?? '',
+          endpointName: probe.endpoint_name,
+          endpointVersion: probe.endpoint_version,
+          operationName: probe.operation_name,
+        });
+      }
+
+      const result = await adapter.invokeEndpoint({
+        endpointUrl: input.vendor_api_url ?? '',
+        endpointName: probe.endpoint_name,
+        operationName: probe.operation_name,
+        endpointVersion: probe.endpoint_version,
+        vendorAccountId: input.vendor_account_id ?? null,
+        vendorSecret: input.vendor_secret ?? null,
+        runtimeConfig: {},
+      });
+      const classified = classifyPromostandardsProbe({
+        status: result.status,
+        parsedBody: result.parsedBody,
+        rawPayload: result.rawPayload,
+      });
+      if (classified.credentialsValid === true) {
+        credentialsValid = true;
+      } else if (credentialsValid !== true && classified.credentialsValid === false) {
+        credentialsValid = false;
+      }
+      endpoints.push({
+        ...baseCapability,
+        available: wsdlInspection?.available ?? classified.available,
         status_code: result.status,
-        message: classified.message,
+        message: wsdlInspection
+          ? wsdlInspection.available
+            ? 'Operation listed in endpoint WSDL.'
+            : 'Operation not listed in endpoint WSDL.'
+          : classified.available
+            ? 'Endpoint reachable.'
+            : 'Endpoint probe did not confirm availability.',
+        wsdl_available: wsdlInspection?.available ?? null,
+        credentials_valid: classified.credentialsValid,
+        live_probe_message: classified.message,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Endpoint probe failed';
@@ -236,19 +368,28 @@ export async function discoverPromostandardsCapabilities(
         available: false,
         status_code: null,
         message,
+        wsdl_available: null,
+        credentials_valid: null,
+        live_probe_message: null,
       });
     }
   }
 
   const availableEndpointCount = endpoints.filter(endpoint => endpoint.available).length;
+  const ok = availableEndpointCount > 0 && credentialsValid !== false;
 
   return {
-    ok: availableEndpointCount > 0,
+    ok,
     message:
       availableEndpointCount > 0
-        ? `Discovered ${availableEndpointCount} available PromoStandards endpoint${availableEndpointCount === 1 ? '' : 's'}.`
+        ? credentialsValid === true
+          ? `Discovered ${availableEndpointCount} PromoStandards operation${availableEndpointCount === 1 ? '' : 's'} in WSDL and confirmed the credentials with a live probe.`
+          : credentialsValid === false
+            ? `Discovered ${availableEndpointCount} PromoStandards operation${availableEndpointCount === 1 ? '' : 's'} in WSDL, but the live probe rejected the credentials.`
+            : `Discovered ${availableEndpointCount} PromoStandards operation${availableEndpointCount === 1 ? '' : 's'} in WSDL. Live probes reached the service but still need endpoint-specific request fields.`
         : 'No supported PromoStandards endpoints were detected for this vendor.',
     available_endpoint_count: availableEndpointCount,
+    credentials_valid: credentialsValid,
     fingerprint: buildPromostandardsConnectionFingerprint(input),
     tested_at: new Date().toISOString(),
     endpoints,
@@ -258,22 +399,50 @@ export async function discoverPromostandardsCapabilities(
 export async function resolvePromostandardsCapabilityMappings(
   capabilities: Pick<PromostandardsCapabilityMatrix, 'endpoints'>,
 ): Promise<number[]> {
-  const selections = capabilities.endpoints
-    .filter(endpoint => endpoint.available)
-    .map(endpoint => ({
-      endpoint_name: endpoint.endpoint_name,
-      endpoint_version: endpoint.endpoint_version,
-      operation_name: endpoint.operation_name,
-    }));
+  const selectedByOperation = new Map<
+    string,
+    {
+      endpoint_name: string;
+      endpoint_version: string;
+      operation_name: string;
+    }
+  >();
 
-  const uniqueSelections = selections.filter((selection, index) => {
-    return (
-      selections.findIndex(item =>
-        item.endpoint_name === selection.endpoint_name &&
-        item.endpoint_version === selection.endpoint_version &&
-        item.operation_name === selection.operation_name,
-      ) === index
-    );
+  for (const endpoint of capabilities.endpoints) {
+    if (!endpoint.available) {
+      continue;
+    }
+
+    const selectionKey = `${endpoint.endpoint_name}|${endpoint.operation_name}`;
+    const existingSelection = selectedByOperation.get(selectionKey);
+    if (!existingSelection) {
+      selectedByOperation.set(selectionKey, {
+        endpoint_name: endpoint.endpoint_name,
+        endpoint_version: endpoint.endpoint_version,
+        operation_name: endpoint.operation_name,
+      });
+      continue;
+    }
+
+    if (compareEndpointVersions(endpoint.endpoint_version, existingSelection.endpoint_version) > 0) {
+      selectedByOperation.set(selectionKey, {
+        endpoint_name: endpoint.endpoint_name,
+        endpoint_version: endpoint.endpoint_version,
+        operation_name: endpoint.operation_name,
+      });
+    }
+  }
+
+  const uniqueSelections = Array.from(selectedByOperation.values()).sort((left, right) => {
+    if (left.endpoint_name !== right.endpoint_name) {
+      return left.endpoint_name.localeCompare(right.endpoint_name);
+    }
+
+    if (left.operation_name !== right.operation_name) {
+      return left.operation_name.localeCompare(right.operation_name);
+    }
+
+    return compareEndpointVersions(left.endpoint_version, right.endpoint_version);
   });
 
   if (uniqueSelections.length === 0) {

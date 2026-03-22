@@ -71,6 +71,15 @@ export const PROMOSTANDARDS_ORDER_CAPABILITIES: PromostandardsOrderCapabilityDef
     recommended_poll_minutes: null,
   },
   {
+    capability_key: 'shipment_v1_0',
+    endpoint_name: 'OrderShipmentNotification',
+    endpoint_version: '1.0.0',
+    operation_name: 'getOrderShipmentNotification',
+    lifecycle_role: 'polling',
+    optional_by_vendor: true,
+    recommended_poll_minutes: 30,
+  },
+  {
     capability_key: 'shipment_v2_1',
     endpoint_name: 'OrderShipmentNotification',
     endpoint_version: '2.1.0',
@@ -158,7 +167,7 @@ export function getRequiredCapabilityKeysForJobKind(
     case 'ORDER_STATUS_POLL':
       return ['order_status_v2', 'order_status_v1'];
     case 'ORDER_SHIPMENT_POLL':
-      return ['shipment_v2_1', 'shipment_v2_0'];
+      return ['shipment_v2_1', 'shipment_v2_0', 'shipment_v1_0'];
     case 'ORDER_INVOICE_POLL':
       return ['invoice_get', 'invoice_voided'];
     case 'ORDER_REMITTANCE_SUBMISSION':
@@ -177,7 +186,7 @@ export function getPrimaryCapabilityPreferenceKeysForJobKind(
     case 'ORDER_STATUS_POLL':
       return ['order_status_v2', 'order_status_v1'];
     case 'ORDER_SHIPMENT_POLL':
-      return ['shipment_v2_1', 'shipment_v2_0'];
+      return ['shipment_v2_1', 'shipment_v2_0', 'shipment_v1_0'];
     case 'ORDER_INVOICE_POLL':
       return ['invoice_get'];
     case 'ORDER_REMITTANCE_SUBMISSION':

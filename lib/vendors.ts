@@ -34,6 +34,79 @@ export interface VendorInput {
   is_active?: boolean;
 }
 
+function makeVendorError(message: string, statusCode = 400): Error & { statusCode?: number } {
+  const error = new Error(message) as Error & { statusCode?: number };
+  error.statusCode = statusCode;
+  return error;
+}
+
+function normalizeVendorApiUrl(vendorApiUrl: string | null | undefined): string | null {
+  const trimmed = vendorApiUrl?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    url.hash = '';
+    url.username = '';
+    url.password = '';
+
+    if ((url.protocol === 'https:' && url.port === '443') || (url.protocol === 'http:' && url.port === '80')) {
+      url.port = '';
+    }
+
+    const normalizedPath = url.pathname.replace(/\/+$/, '');
+    url.pathname = normalizedPath || '/';
+
+    const serialized = url.toString();
+    return serialized.endsWith('/') && url.pathname === '/' ? serialized.slice(0, -1) : serialized;
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
+}
+
+async function assertVendorApiUrlIsUnique(input: {
+  vendorApiUrl?: string | null;
+  excludeVendorId?: number;
+}): Promise<void> {
+  const normalizedVendorApiUrl = normalizeVendorApiUrl(input.vendorApiUrl);
+  if (!normalizedVendorApiUrl) {
+    return;
+  }
+
+  const existingVendors = await prisma.vendor.findMany({
+    where: {
+      vendor_api_url: {
+        not: null,
+      },
+      ...(typeof input.excludeVendorId === 'number'
+        ? {
+            vendor_id: {
+              not: input.excludeVendorId,
+            },
+          }
+        : {}),
+    },
+    select: {
+      vendor_id: true,
+      vendor_name: true,
+      vendor_api_url: true,
+    },
+  });
+
+  const duplicateVendor = existingVendors.find(
+    vendor => normalizeVendorApiUrl(vendor.vendor_api_url) === normalizedVendorApiUrl,
+  );
+
+  if (duplicateVendor) {
+    throw makeVendorError(
+      `A vendor already exists for ${normalizedVendorApiUrl}${duplicateVendor.vendor_name ? ` (${duplicateVendor.vendor_name})` : ''}.`,
+      409,
+    );
+  }
+}
+
 function serializeVendor(row: {
   vendor_id: number;
   vendor_name: string;
@@ -76,6 +149,10 @@ export async function getVendorById(vendorId: number): Promise<Vendor | null> {
 }
 
 export async function createVendor(input: VendorInput): Promise<Vendor> {
+  await assertVendorApiUrlIsUnique({
+    vendorApiUrl: input.vendor_api_url,
+  });
+
   const row = await prisma.vendor.create({
     data: {
       vendor_name: input.vendor_name,
@@ -100,6 +177,11 @@ export async function updateVendor(vendorId: number, input: Partial<VendorInput>
     where: { vendor_id: vendorId },
   });
   if (!existing) return null;
+
+  await assertVendorApiUrlIsUnique({
+    vendorApiUrl: input.vendor_api_url ?? existing.vendor_api_url,
+    excludeVendorId: vendorId,
+  });
 
   const row = await prisma.vendor.update({
     where: { vendor_id: vendorId },

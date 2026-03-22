@@ -36,12 +36,16 @@ export interface PromostandardsEndpointCapability {
   available: boolean;
   status_code: number | null;
   message: string;
+  wsdl_available?: boolean | null;
+  credentials_valid?: boolean | null;
+  live_probe_message?: string | null;
 }
 
 export interface PromostandardsCapabilityMatrix {
   fingerprint: string;
   tested_at: string;
   available_endpoint_count: number;
+  credentials_valid?: boolean | null;
   endpoints: PromostandardsEndpointCapability[];
 }
 
@@ -49,6 +53,8 @@ export interface VendorConnectionTestResult {
   ok: boolean;
   message?: string;
   available_endpoint_count?: number;
+  credentials_valid?: boolean | null;
+  endpoint_mapping_ids?: number[];
   fingerprint?: string;
   tested_at?: string;
   endpoints?: PromostandardsEndpointCapability[];

@@ -18,6 +18,7 @@ function formatDate(value: string | null): string {
 
 const DashboardPage = () => {
   const { context } = useSession();
+  const withContext = (path: string) => (context ? `${path}?context=${encodeURIComponent(context)}` : path);
   const { data, error } = useSWR<{ data: OperatorDashboardSummary }>(
     context ? `/api/dashboard/summary?context=${encodeURIComponent(context)}` : null,
     fetcher,
@@ -78,12 +79,12 @@ const DashboardPage = () => {
               {summary.recent_syncs.map(run => (
                 <tr key={run.sync_run_id}>
                   <td style={tableCellStyle}>
-                    <Link href={`/vendors/${run.vendor_id}`} style={tableLinkStyle}>
+                    <Link href={withContext(`/vendors/${run.vendor_id}`)} style={tableLinkStyle}>
                       {run.vendor_name}
                     </Link>
                   </td>
                   <td style={tableCellStyle}>
-                    <Link href={`/vendors/${run.vendor_id}/sync-runs/${run.sync_run_id}`} style={tableLinkStyle}>
+                    <Link href={withContext(`/vendors/${run.vendor_id}/sync-runs/${run.sync_run_id}`)} style={tableLinkStyle}>
                       #{run.sync_run_id}
                     </Link>
                   </td>
@@ -126,12 +127,12 @@ const DashboardPage = () => {
                 summary.recent_failures.map(job => (
                   <tr key={job.integration_job_id}>
                     <td style={tableCellStyle}>
-                      <Link href={`/vendors/${job.vendor_id}`} style={tableLinkStyle}>
+                      <Link href={withContext(`/vendors/${job.vendor_id}`)} style={tableLinkStyle}>
                         {job.vendor_name}
                       </Link>
                     </td>
                     <td style={tableCellStyle}>
-                      <Link href={`/integration-jobs/${job.integration_job_id}`} style={tableLinkStyle}>
+                      <Link href={withContext(`/integration-jobs/${job.integration_job_id}`)} style={tableLinkStyle}>
                         #{job.integration_job_id}
                       </Link>
                     </td>

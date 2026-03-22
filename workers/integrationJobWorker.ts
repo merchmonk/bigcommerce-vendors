@@ -33,6 +33,54 @@ function isTerminalReceiveAttempt(receiveCount: number): boolean {
   return receiveCount >= getMaxReceiveCount();
 }
 
+function isCancelledIntegrationJobError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'IntegrationJobCancelledError';
+}
+
+function isNonRetryableIntegrationJobError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (message.includes('No BigCommerce store connection is configured for background execution.')) {
+    return true;
+  }
+
+  const bigCommerceStatusMatch = message.match(/Failed to .*BigCommerce.*\((\d{3})\):/i);
+  if (bigCommerceStatusMatch) {
+    const statusCode = Number(bigCommerceStatusMatch[1]);
+    if (Number.isFinite(statusCode) && statusCode >= 400 && statusCode < 500 && statusCode !== 429) {
+      return true;
+    }
+  }
+
+  const normalized = message.toLowerCase();
+  if (!normalized.includes('productdata discovery failed')) {
+    return false;
+  }
+
+  const nonRetryableSoapPatterns = [
+    'required',
+    'missing',
+    'invalid',
+    'must be provided',
+    'cannot be empty',
+    'validation',
+    'not found',
+    'partid',
+    'productid',
+    'lineitem',
+    'quantity',
+    'purchaseordernumber',
+    'salesordernumber',
+    'querytype',
+    'invoice',
+    'remittance',
+    'soapaction',
+    'procedure',
+    'wsversion',
+  ];
+
+  return nonRetryableSoapPatterns.some(pattern => normalized.includes(pattern));
+}
+
 async function markJobRetryPending(integrationJobId: number, error: unknown, receiveCount: number): Promise<void> {
   await updateIntegrationJob({
     integration_job_id: integrationJobId,
@@ -67,6 +115,40 @@ async function markJobDeadLettered(integrationJobId: number, error: unknown, rec
   });
 }
 
+async function markJobFailed(integrationJobId: number, error: unknown, receiveCount: number): Promise<void> {
+  await finalizeIntegrationJob({
+    integration_job_id: integrationJobId,
+    status: 'FAILED',
+    last_error: JSON.stringify(serializeError(error)),
+  });
+  await createIntegrationJobEvent({
+    integration_job_id: integrationJobId,
+    event_name: 'job_failed',
+    level: 'error',
+    payload: {
+      receive_count: receiveCount,
+      error: serializeError(error),
+    },
+  });
+}
+
+async function markJobCancelled(integrationJobId: number, reason: string, receiveCount: number): Promise<void> {
+  await finalizeIntegrationJob({
+    integration_job_id: integrationJobId,
+    status: 'CANCELLED',
+    last_error: reason,
+  });
+  await createIntegrationJobEvent({
+    integration_job_id: integrationJobId,
+    event_name: 'job_cancelled',
+    level: 'warn',
+    payload: {
+      receive_count: receiveCount,
+      reason,
+    },
+  });
+}
+
 async function processRecord(record: QueueRecord): Promise<void> {
   const message = JSON.parse(record.body) as IntegrationJobMessage;
   const integrationJobId = Number(message.integrationJobId);
@@ -91,10 +173,19 @@ async function processRecord(record: QueueRecord): Promise<void> {
       source: 'worker',
     },
     async () => {
-      if (job.status === 'SUCCEEDED' || job.status === 'DEAD_LETTERED') {
+      if (job.status === 'SUCCEEDED' || job.status === 'DEAD_LETTERED' || job.status === 'CANCELLED') {
         logger.info('integration job already terminal, skipping worker record', {
           integrationJobId,
           status: job.status,
+        });
+        return;
+      }
+
+      if (job.status === 'CANCEL_REQUESTED') {
+        await markJobCancelled(job.integration_job_id, 'Cancelled by operator before execution started.', receiveCount);
+        logger.warn('integration job cancelled before execution started', {
+          integrationJobId: job.integration_job_id,
+          receiveCount,
         });
         return;
       }
@@ -153,8 +244,35 @@ async function processRecord(record: QueueRecord): Promise<void> {
           throw new Error(getLockUnavailableMessage(job));
         }
       } catch (error) {
-        const terminal = isTerminalReceiveAttempt(receiveCount);
-        if (terminal) {
+        if (isCancelledIntegrationJobError(error)) {
+          await markJobCancelled(job.integration_job_id, error.message, receiveCount);
+          await publishPlatformEvent({
+            detailType: job.job_kind === 'CATALOG_SYNC' ? 'product.sync.cancelled' : 'order.job.cancelled',
+            detail: {
+              integration_job_id: job.integration_job_id,
+              vendor_id: job.vendor_id,
+              mapping_id: job.mapping_id,
+              order_integration_state_id: job.order_integration_state_id,
+              job_kind: job.job_kind,
+              sync_scope: job.sync_scope,
+              receive_count: receiveCount,
+              reason: error.message,
+            },
+          });
+          logger.warn('integration job cancelled during execution', {
+            integrationJobId: job.integration_job_id,
+            jobKind: job.job_kind,
+            receiveCount,
+            reason: error.message,
+          });
+          return;
+        }
+
+        const nonRetryable = isNonRetryableIntegrationJobError(error);
+        const terminal = nonRetryable || isTerminalReceiveAttempt(receiveCount);
+        if (nonRetryable) {
+          await markJobFailed(job.integration_job_id, error, receiveCount);
+        } else if (terminal) {
           await markJobDeadLettered(job.integration_job_id, error, receiveCount);
         } else {
           await markJobRetryPending(job.integration_job_id, error, receiveCount);
@@ -167,6 +285,7 @@ async function processRecord(record: QueueRecord): Promise<void> {
           integrationJobId: job.integration_job_id,
           jobKind: job.job_kind,
           receiveCount,
+          nonRetryable,
           terminal,
           error: serializeError(error),
         });
@@ -239,6 +358,7 @@ async function executeIntegrationJob(job: NonNullable<Awaited<ReturnType<typeof 
       mappingId: job.mapping_id ?? undefined,
       syncAll: job.sync_scope === 'ALL',
       session,
+      integrationJobId: job.integration_job_id,
     });
 
     return {

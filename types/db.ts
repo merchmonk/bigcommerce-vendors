@@ -2,6 +2,7 @@ import { SessionProps } from './index';
 
 export interface StoreData {
     accessToken?: string;
+    markupPercent?: number;
     scope?: string;
     storeHash: string;
 }

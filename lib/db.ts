@@ -1,23 +1,11 @@
-import { execFile } from 'node:child_process';
-import path from 'node:path';
-import { promisify } from 'node:util';
 import { Db, SessionProps, StoreData } from '../types';
-import { seedPromoStandardsMappings } from './etl/promostandardsSeed';
 import prisma from './prisma';
 
-const execFileAsync = promisify(execFile);
-const PRISMA_SCHEMA_PATH = path.join(process.cwd(), 'prisma', 'schema.prisma');
-const PRISMA_CLI_PATH = path.join(process.cwd(), 'node_modules', 'prisma', 'build', 'index.js');
-
-function getLambdaSafeEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    HOME: process.env.HOME || '/tmp',
-    XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || '/tmp/.cache',
-    npm_config_cache: process.env.npm_config_cache || '/tmp/.npm',
-    PRISMA_HIDE_UPDATE_MESSAGE: 'true',
-    PRISMA_GENERATE_SKIP_AUTOINSTALL: 'true',
-  };
+interface StoreConnectionRow {
+  access_token: string | null;
+  markup_percent: number | null;
+  scope: string | null;
+  store_hash: string;
 }
 
 function parseStoreHash(session: SessionProps): string {
@@ -37,9 +25,9 @@ const db: Db = {
     if (!userId) return;
 
     await prisma.user.upsert({
-      where: { userId },
+      where: { user_id: userId },
       create: {
-        userId,
+        user_id: userId,
         email: user.email,
         username: user.username ?? null,
       },
@@ -51,23 +39,24 @@ const db: Db = {
   },
 
   async setStore(session: SessionProps) {
-    const { access_token: accessToken, scope } = session;
-    if (!accessToken || !scope) return;
+    const accessToken = session.access_token?.trim() || undefined;
+    const scope = session.scope?.trim() || undefined;
+    if (!accessToken && !scope) return;
 
     const storeHash = parseStoreHash(session);
     if (!storeHash) return;
 
     const storeData: StoreData = { accessToken, scope, storeHash };
     await prisma.store.upsert({
-      where: { storeHash: storeData.storeHash },
+      where: { store_hash: storeData.storeHash },
       create: {
-        storeHash: storeData.storeHash,
-        accessToken: storeData.accessToken ?? null,
+        store_hash: storeData.storeHash,
+        access_token: storeData.accessToken ?? null,
         scope: storeData.scope ?? null,
       },
       update: {
-        accessToken: storeData.accessToken ?? null,
-        scope: storeData.scope ?? null,
+        ...(storeData.accessToken ? { access_token: storeData.accessToken } : {}),
+        ...(storeData.scope ? { scope: storeData.scope } : {}),
       },
     });
   },
@@ -82,9 +71,9 @@ const db: Db = {
 
     const existing = await prisma.storeUser.findUnique({
       where: {
-        userId_storeHash: {
-          userId,
-          storeHash,
+        user_id_store_hash: {
+          user_id: userId,
+          store_hash: storeHash,
         },
       },
     });
@@ -93,21 +82,21 @@ const db: Db = {
       if (!existing) {
         await prisma.storeUser.create({
           data: {
-            userId,
-            storeHash,
-            isAdmin: true,
+            user_id: userId,
+            store_hash: storeHash,
+            is_admin: true,
           },
         });
-      } else if (!existing.isAdmin) {
+      } else if (!existing.is_admin) {
         await prisma.storeUser.update({
           where: {
-            userId_storeHash: {
-              userId,
-              storeHash,
+            user_id_store_hash: {
+              user_id: userId,
+              store_hash: storeHash,
             },
           },
           data: {
-            isAdmin: true,
+            is_admin: true,
           },
         });
       }
@@ -118,9 +107,9 @@ const db: Db = {
       const isAdmin = !!owner && parseUserId(owner.id) === userId;
       await prisma.storeUser.create({
         data: {
-          userId,
-          storeHash,
-          isAdmin,
+          user_id: userId,
+          store_hash: storeHash,
+          is_admin: isAdmin,
         },
       });
     }
@@ -135,8 +124,8 @@ const db: Db = {
 
     await prisma.storeUser.deleteMany({
       where: {
-        userId,
-        storeHash,
+        user_id: userId,
+        store_hash: storeHash,
       },
     });
   },
@@ -148,8 +137,8 @@ const db: Db = {
 
     const count = await prisma.storeUser.count({
       where: {
-        userId: parsedUserId,
-        storeHash,
+        user_id: parsedUserId,
+        store_hash: storeHash,
       },
     });
     return count > 0;
@@ -159,55 +148,66 @@ const db: Db = {
     if (!storeHash) return null;
 
     const store = await prisma.store.findUnique({
-      where: { storeHash },
+      where: { store_hash: storeHash },
       select: {
-        accessToken: true,
+        access_token: true,
       },
     });
 
-    return store?.accessToken ?? null;
+    return store?.access_token ?? null;
   },
 
   async deleteStore({ store_hash: storeHash }: SessionProps) {
     if (!storeHash) return;
     await prisma.store.deleteMany({
-      where: { storeHash },
+      where: { store_hash: storeHash },
     });
   },
 };
 
-export async function runMigrations(options?: { seed?: boolean }): Promise<void> {
-  await execFileAsync(process.execPath, [PRISMA_CLI_PATH, 'migrate', 'deploy', '--schema', PRISMA_SCHEMA_PATH], {
-    cwd: process.cwd(),
-    env: getLambdaSafeEnv(),
-  });
-
-  if (options?.seed) {
-    await seedPromoStandardsMappings();
-  }
-}
-
 export async function getPrimaryStoreConnection(): Promise<StoreData | null> {
-  const store = await prisma.store.findFirst({
+  const store = await (prisma.store.findFirst as unknown as (args: unknown) => Promise<StoreConnectionRow | null>)({
+    where: {
+      access_token: {
+        not: null,
+      },
+    },
     orderBy: {
       id: 'asc',
     },
-    select: {
-      storeHash: true,
-      accessToken: true,
-      scope: true,
-    },
+      select: {
+        store_hash: true,
+        access_token: true,
+        markup_percent: true,
+        scope: true,
+      },
   });
 
-  if (!store?.storeHash || !store.accessToken) {
+  if (!store?.store_hash || !store.access_token) {
     return null;
   }
 
   return {
-    storeHash: store.storeHash,
-    accessToken: store.accessToken,
+    storeHash: store.store_hash,
+    accessToken: store.access_token,
+    markupPercent: store.markup_percent ?? undefined,
     scope: store.scope ?? undefined,
   };
+}
+
+export async function getStoreMarkupPercent(storeHash: string): Promise<number | null> {
+  if (!storeHash) {
+    return null;
+  }
+
+  const store = await (prisma.store.findUnique as unknown as (args: unknown) => Promise<Pick<StoreConnectionRow, 'markup_percent'> | null>)({
+    where: { store_hash: storeHash },
+    select: {
+      markup_percent: true,
+    },
+  });
+
+  return typeof store?.markup_percent === 'number' ? store.markup_percent : null;
 }
 
 export default db;

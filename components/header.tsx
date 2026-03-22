@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
+import { useSession } from '../context/session';
 
 export const TabIds = {
     DASHBOARD: 'dashboard',
@@ -16,6 +17,7 @@ export const TabRoutes = {
 const Header = () => {
     const router = useRouter();
     const { pathname } = router;
+    const { context } = useSession();
     const activeTab = pathname.startsWith('/vendors')
         ? TabIds.VENDORS
         : pathname.startsWith('/orders')
@@ -24,11 +26,13 @@ const Header = () => {
             ? TabIds.DASHBOARD
             : '';
 
+    const withContext = (path: string) => (context ? `${path}?context=${encodeURIComponent(context)}` : path);
+
     useEffect(() => {
-        router.prefetch('/dashboard');
-        router.prefetch('/vendors');
-        router.prefetch('/orders');
-    }, [router]);
+        void router.prefetch(withContext('/dashboard'));
+        void router.prefetch(withContext('/vendors'));
+        void router.prefetch(withContext('/orders'));
+    }, [context, router]);
 
     const items = [
         { ariaControls: 'dashboard', id: TabIds.DASHBOARD, title: 'Dashboard' },
@@ -37,7 +41,7 @@ const Header = () => {
     ];
 
     const handleTabClick = (tabId: string) => {
-        return router.push(TabRoutes[tabId]);
+        return router.push(withContext(TabRoutes[tabId]));
     };
 
     return (

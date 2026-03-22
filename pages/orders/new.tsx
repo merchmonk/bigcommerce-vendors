@@ -24,6 +24,7 @@ const defaultPayload = `{
 const NewOrderIntegrationPage = () => {
   const router = useRouter();
   const { context } = useSession();
+  const withContext = (path: string) => (context ? `${path}?context=${encodeURIComponent(context)}` : path);
   const [vendorId, setVendorId] = useState('');
   const [externalOrderId, setExternalOrderId] = useState('');
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState('');
@@ -78,11 +79,11 @@ const NewOrderIntegrationPage = () => {
 
       const orderIntegrationStateId = payload?.data?.order_integration_state_id;
       if (orderIntegrationStateId) {
-        await router.push(`/orders/${orderIntegrationStateId}`);
+        await router.push(withContext(`/orders/${orderIntegrationStateId}`));
         return;
       }
 
-      await router.push('/orders');
+      await router.push(withContext('/orders'));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to create order integration.');
     } finally {
@@ -220,7 +221,7 @@ const NewOrderIntegrationPage = () => {
         </label>
 
         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-          <button type="button" style={secondaryButtonStyle} onClick={() => router.push('/orders')}>
+          <button type="button" style={secondaryButtonStyle} onClick={() => router.push(withContext('/orders'))}>
             Cancel
           </button>
           <button type="submit" style={primaryButtonStyle} disabled={submitting || availableVendors.length === 0}>

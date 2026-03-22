@@ -22,6 +22,16 @@ const EditVendorPage = () => {
   const { context } = useSession();
   const vendorId = Number(router.query.id);
 
+  const requireContext = () => {
+    if (!context) {
+      throw new Error('Session context is missing. Reload the app from BigCommerce and try again.');
+    }
+
+    return encodeURIComponent(context);
+  };
+
+  const withContext = (path: string) => `${path}?context=${requireContext()}`;
+
   const { data, error, mutate } = useSWR<VendorApiResponse>(
     Number.isFinite(vendorId) && context
       ? `/api/vendors/${vendorId}?context=${encodeURIComponent(context)}`
@@ -30,7 +40,7 @@ const EditVendorPage = () => {
   );
 
   const handleSubmit = async (formData: VendorFormData) => {
-    const response = await fetch(`/api/vendors/${vendorId}?context=${encodeURIComponent(context)}`, {
+    const response = await fetch(withContext(`/api/vendors/${vendorId}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(formData),
@@ -41,11 +51,11 @@ const EditVendorPage = () => {
     }
 
     await mutate();
-    router.push('/vendors');
+    router.push(withContext('/vendors'));
   };
 
   const handleCancel = () => {
-    router.push('/vendors');
+    router.push(withContext('/vendors'));
   };
 
   const handleTestConnection = async (connectionData: {
@@ -55,7 +65,7 @@ const EditVendorPage = () => {
     integration_family?: VendorFormData['integration_family'];
     api_protocol?: MappingProtocol;
   }): Promise<VendorConnectionTestResult> => {
-    const response = await fetch(`/api/vendors/test-connection?context=${encodeURIComponent(context)}`, {
+    const response = await fetch(withContext('/api/vendors/test-connection'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(connectionData),
@@ -65,6 +75,8 @@ const EditVendorPage = () => {
       ok: response.ok && !!payload?.ok,
       message: payload?.message,
       available_endpoint_count: payload?.available_endpoint_count,
+      credentials_valid: payload?.credentials_valid,
+      endpoint_mapping_ids: payload?.endpoint_mapping_ids,
       fingerprint: payload?.fingerprint,
       tested_at: payload?.tested_at,
       endpoints: payload?.endpoints,

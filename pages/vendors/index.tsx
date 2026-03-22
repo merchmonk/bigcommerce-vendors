@@ -86,8 +86,10 @@ const VendorsPage = () => {
   const [sortKey, setSortKey] = useState<SortKey>('vendor_name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [toasts, setToasts] = useState<OperatorToast[]>([]);
-  const [pendingDeactivateVendor, setPendingDeactivateVendor] = useState<VendorOperatorSummary | null>(null);
+  const [pendingStatusChangeVendor, setPendingStatusChangeVendor] = useState<VendorOperatorSummary | null>(null);
+  const [pendingDeleteVendor, setPendingDeleteVendor] = useState<VendorOperatorSummary | null>(null);
   const [pendingEditVendor, setPendingEditVendor] = useState<VendorOperatorSummary | null>(null);
+  const withContext = (path: string) => (context ? `${path}?context=${encodeURIComponent(context)}` : path);
 
   const { data, error, mutate } = useSWR<{ data: VendorOperatorSummary[] }>(
     context ? `/api/vendors?context=${encodeURIComponent(context)}&includeInactive=1&view=operator` : null,
@@ -133,7 +135,7 @@ const VendorsPage = () => {
       return;
     }
 
-    router.push(`/vendors/${vendor.vendor_id}`);
+    router.push(withContext(`/vendors/${vendor.vendor_id}`));
   };
 
   const handleSyncNow = async (vendor: VendorOperatorSummary) => {
@@ -157,38 +159,76 @@ const VendorsPage = () => {
     await mutate();
   };
 
-  const confirmDeactivate = async () => {
-    if (!pendingDeactivateVendor) return;
+  const confirmStatusChange = async () => {
+    if (!pendingStatusChangeVendor) return;
+
+    const nextIsActive = !pendingStatusChangeVendor.is_active;
+    const actionLabel = nextIsActive ? 'reactivate' : 'deactivate';
 
     try {
       const response = await fetch(
-        `/api/vendors/${pendingDeactivateVendor.vendor_id}?context=${encodeURIComponent(context)}`,
+        `/api/vendors/${pendingStatusChangeVendor.vendor_id}?context=${encodeURIComponent(context)}`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ is_active: false }),
+          body: JSON.stringify({ is_active: nextIsActive }),
         },
       );
       const payload = response.status === 204 ? null : await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(payload?.message ?? 'Failed to deactivate vendor');
+        throw new Error(payload?.message ?? `Failed to ${actionLabel} vendor`);
       }
 
       addToast({
         tone: 'success',
-        title: 'Vendor deactivated',
-        description: `${pendingDeactivateVendor.vendor_name} is now inactive.`,
+        title: nextIsActive ? 'Vendor reactivated' : 'Vendor deactivated',
+        description: nextIsActive
+          ? `${pendingStatusChangeVendor.vendor_name} is active again.`
+          : `${pendingStatusChangeVendor.vendor_name} is now inactive.`,
       });
-      setPendingDeactivateVendor(null);
+      setPendingStatusChangeVendor(null);
       await mutate();
     } catch (error) {
       addToast({
         tone: 'error',
-        title: 'Unable to deactivate vendor',
-        description: error instanceof Error ? error.message : 'Failed to deactivate vendor.',
+        title: nextIsActive ? 'Unable to reactivate vendor' : 'Unable to deactivate vendor',
+        description: error instanceof Error ? error.message : `Failed to ${actionLabel} vendor.`,
       });
-      setPendingDeactivateVendor(null);
+      setPendingStatusChangeVendor(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteVendor) return;
+
+    try {
+      const response = await fetch(
+        `/api/vendors/${pendingDeleteVendor.vendor_id}?context=${encodeURIComponent(context)}`,
+        {
+          method: 'DELETE',
+        },
+      );
+      const payload = response.status === 204 ? null : await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'Failed to delete vendor');
+      }
+
+      addToast({
+        tone: 'success',
+        title: 'Vendor deleted',
+        description: `${pendingDeleteVendor.vendor_name} was removed.`,
+      });
+      setPendingDeleteVendor(null);
+      await mutate();
+    } catch (error) {
+      addToast({
+        tone: 'error',
+        title: 'Unable to delete vendor',
+        description: error instanceof Error ? error.message : 'Failed to delete vendor.',
+      });
+      setPendingDeleteVendor(null);
     }
   };
 
@@ -210,20 +250,34 @@ const VendorsPage = () => {
         onCancel={() => setPendingEditVendor(null)}
         onConfirm={() => {
           if (pendingEditVendor) {
-            router.push(`/vendors/${pendingEditVendor.vendor_id}`);
+            router.push(withContext(`/vendors/${pendingEditVendor.vendor_id}`));
           }
           setPendingEditVendor(null);
         }}
       />
 
       <ConfirmDialog
-        open={Boolean(pendingDeactivateVendor)}
-        title="Deactivate vendor?"
-        description={`Deactivate ${pendingDeactivateVendor?.vendor_name ?? 'this vendor'} only if it no longer needs to sync. Vendors with active synced products cannot be deactivated.`}
-        confirmLabel="Deactivate vendor"
+        open={Boolean(pendingStatusChangeVendor)}
+        title={pendingStatusChangeVendor?.is_active ? 'Deactivate vendor?' : 'Reactivate vendor?'}
+        description={
+          pendingStatusChangeVendor?.is_active
+            ? `Deactivate ${pendingStatusChangeVendor?.vendor_name ?? 'this vendor'} only if it no longer needs to sync. Vendors with active synced products cannot be deactivated.`
+            : `Reactivate ${pendingStatusChangeVendor?.vendor_name ?? 'this vendor'} so it can sync and appear as active in the operator workflow again.`
+        }
+        confirmLabel={pendingStatusChangeVendor?.is_active ? 'Deactivate vendor' : 'Reactivate vendor'}
+        tone={pendingStatusChangeVendor?.is_active ? 'danger' : 'default'}
+        onCancel={() => setPendingStatusChangeVendor(null)}
+        onConfirm={confirmStatusChange}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingDeleteVendor)}
+        title="Delete vendor?"
+        description={`Delete ${pendingDeleteVendor?.vendor_name ?? 'this vendor'} permanently. This removes the vendor configuration and cannot be undone.`}
+        confirmLabel="Delete vendor"
         tone="danger"
-        onCancel={() => setPendingDeactivateVendor(null)}
-        onConfirm={confirmDeactivate}
+        onCancel={() => setPendingDeleteVendor(null)}
+        onConfirm={confirmDelete}
       />
 
       <section style={pageCardStyle}>
@@ -242,13 +296,13 @@ const VendorsPage = () => {
               Track onboarding, health, sync state, and safe vendor actions from one operator table.
             </p>
           </div>
-          <button type="button" onClick={() => router.push('/vendors/new')} style={primaryButtonStyle}>
+          <button type="button" onClick={() => router.push(withContext('/vendors/new'))} style={primaryButtonStyle}>
             Add New Vendor
           </button>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', overflow: 'visible' }}>
             <thead>
               <tr>
                 <SortableHeader label="ID" active={sortKey === 'vendor_id'} direction={sortDirection} onClick={() => updateSort('vendor_id')} />
@@ -308,11 +362,11 @@ const VendorsPage = () => {
                           onSelect: () => handleEditSelection(vendor),
                         },
                         {
-                          id: 'deactivate',
-                          label: 'Deactivate',
-                          tone: 'danger',
+                          id: vendor.is_active ? 'deactivate' : 'reactivate',
+                          label: vendor.is_active ? 'Deactivate' : 'Reactivate',
+                          tone: vendor.is_active ? 'danger' : 'default',
                           onSelect: () => {
-                            if (vendor.total_products_active > 0) {
+                            if (vendor.is_active && vendor.total_products_active > 0) {
                               addToast({
                                 tone: 'error',
                                 title: 'Vendor cannot be deactivated',
@@ -320,7 +374,23 @@ const VendorsPage = () => {
                               });
                               return;
                             }
-                            setPendingDeactivateVendor(vendor);
+                            setPendingStatusChangeVendor(vendor);
+                          },
+                        },
+                        {
+                          id: 'delete',
+                          label: 'Delete',
+                          tone: 'danger',
+                          onSelect: () => {
+                            if (vendor.total_products_active > 0) {
+                              addToast({
+                                tone: 'error',
+                                title: 'Vendor cannot be deleted',
+                                description: `${vendor.vendor_name} still has ${vendor.total_products_active} active products.`,
+                              });
+                              return;
+                            }
+                            setPendingDeleteVendor(vendor);
                           },
                         },
                       ]}
@@ -378,6 +448,7 @@ const tableCellStyle: React.CSSProperties = {
   color: '#334155',
   padding: '14px',
   verticalAlign: 'top',
+  overflow: 'visible',
 };
 
 const linkButtonStyle: React.CSSProperties = {

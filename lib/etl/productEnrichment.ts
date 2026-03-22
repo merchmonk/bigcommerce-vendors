@@ -8,6 +8,7 @@ import {
 import type {
   ModifierCharge,
   NormalizedBulkPricingRule,
+  NormalizedMediaAsset,
   NormalizedProduct,
   ProductModifierBlueprint,
 } from './productNormalizer';
@@ -48,6 +49,7 @@ export interface ProductAssemblyResult {
 
 const DEFAULT_LOCALIZATION_COUNTRY = 'US';
 const DEFAULT_LOCALIZATION_LANGUAGE = 'en';
+const PRODUCT_MEDIA_TYPES = ['Image'] as const; //removed 'Video' for the time being
 
 const INVENTORY_KEYS = ['quantityAvailable', 'inventory', 'Inventory', 'qty', 'Qty', 'quantity', 'Quantity'];
 const PRICE_KEYS = ['price', 'Price', 'netPrice', 'NetPrice', 'listPrice', 'ListPrice', 'partPrice', 'PartPrice'];
@@ -132,6 +134,26 @@ function dedupeUrls(urls: string[]): string[] {
   return output;
 }
 
+function dedupeMediaAssets(assets: NormalizedMediaAsset[]): NormalizedMediaAsset[] {
+  const seen = new Set<string>();
+  const output: NormalizedMediaAsset[] = [];
+
+  for (const asset of assets) {
+    const key = [
+      asset.media_type,
+      asset.url.trim(),
+      asset.part_id ?? '',
+      (asset.location_ids ?? []).join('|'),
+      (asset.decoration_ids ?? []).join('|'),
+    ].join('::');
+    if (!asset.url.trim() || seen.has(key)) continue;
+    seen.add(key);
+    output.push(asset);
+  }
+
+  return output;
+}
+
 function dedupeBulkRules(rules: NormalizedBulkPricingRule[]): NormalizedBulkPricingRule[] {
   return rules.filter(
     (rule, index) =>
@@ -212,6 +234,364 @@ function extractImages(payload: unknown): Array<{ image_url: string; is_thumbnai
     image_url: url,
     ...(index === 0 ? { is_thumbnail: true } : {}),
   }));
+}
+
+function toBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return undefined;
+}
+
+function extractSoapFaultMessage(parsedBody: Record<string, unknown> | null, rawPayload: string): string {
+  const fault = parsedBody?.Fault;
+  if (fault && typeof fault === 'object') {
+    const faultRecord = fault as Record<string, unknown>;
+    const faultString = faultRecord.faultstring;
+    if (typeof faultString === 'string' && faultString.trim()) {
+      return faultString.trim();
+    }
+  }
+
+  const match = rawPayload.match(/<faultstring>([\s\S]*?)<\/faultstring>/i);
+  return match?.[1]?.trim() ?? '';
+}
+
+function readResponseMessage(parsedBody: Record<string, unknown> | null, rawPayload: string): string | undefined {
+  const faultMessage = extractSoapFaultMessage(parsedBody, rawPayload);
+  if (faultMessage) return faultMessage;
+
+  const errorMessage = asRecord(parsedBody?.errorMessage);
+  const description = typeof errorMessage?.description === 'string' ? errorMessage.description.trim() : '';
+  if (description) return description;
+
+  return undefined;
+}
+
+function readMediaType(value: unknown): 'Image' | 'Video' | undefined {
+  if (value === 'Image' || value === 'Video') return value;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'image') return 'Image';
+  if (normalized === 'video') return 'Video';
+  return undefined;
+}
+
+function extractIdentifierList(
+  value: unknown,
+  nestedKey: string,
+  candidateKeys: string[],
+): string[] {
+  const values: string[] = [];
+
+  const collectFromValue = (target: unknown): void => {
+    if (target === null || target === undefined) return;
+
+    if (Array.isArray(target)) {
+      target.forEach(item => collectFromValue(item));
+      return;
+    }
+
+    const record = asRecord(target);
+    if (record) {
+      const direct = getFirstString(record, candidateKeys);
+      if (direct) {
+        values.push(direct);
+      }
+      Object.values(record).forEach(item => collectFromValue(item));
+      return;
+    }
+
+    if (typeof target === 'string' && target.trim()) {
+      values.push(target.trim());
+      return;
+    }
+
+    if (typeof target === 'number') {
+      values.push(String(target));
+    }
+  };
+
+  walkNodes(value, node => {
+    if (nestedKey && !Object.hasOwn(node, nestedKey)) {
+      return;
+    }
+
+    const target = nestedKey ? node[nestedKey] : node;
+    collectFromValue(target);
+  });
+
+  return dedupeUrls(values);
+}
+
+function extractClassTypes(value: unknown): string[] | undefined {
+  const classes = extractIdentifierList(value, 'ClassType', ['classType', 'value', 'name']);
+  return classes.length > 0 ? classes : undefined;
+}
+
+function extractLocationIds(value: unknown): string[] | undefined {
+  const ids = extractIdentifierList(value, 'Location', ['locationId', 'id', 'locationName', 'name']);
+  return ids.length > 0 ? ids : undefined;
+}
+
+function extractDecorationIds(value: unknown, fallbackDecorationId?: string): string[] | undefined {
+  const ids = extractIdentifierList(value, 'Decoration', ['decorationId', 'id', 'decorationName', 'name']);
+  if (fallbackDecorationId) {
+    ids.push(fallbackDecorationId);
+  }
+  const unique = dedupeUrls(ids);
+  return unique.length > 0 ? unique : undefined;
+}
+
+function extractMediaContentNodes(payload: unknown): AnyRecord[] {
+  const entries: AnyRecord[] = [];
+  walkNodes(payload, node => {
+    if (!Object.hasOwn(node, 'url')) return;
+    const url = typeof node.url === 'string' ? node.url.trim() : '';
+    if (!url) return;
+    entries.push(node);
+  });
+  return entries;
+}
+
+function extractMediaAssets(payload: unknown): NormalizedMediaAsset[] {
+  const assets: NormalizedMediaAsset[] = [];
+
+  for (const node of extractMediaContentNodes(payload)) {
+    const url = typeof node.url === 'string' ? node.url.trim() : '';
+    const mediaType = readMediaType(node.mediaType) ?? (/\.(mp4|mov|webm)(\?|$)/i.test(url) ? 'Video' : 'Image');
+    if (!url || !mediaType) continue;
+
+    const classTypes = extractClassTypes(node.ClassTypeArray);
+    const locationIds = extractLocationIds(node.LocationArray);
+    const decorationId = getFirstString(node, ['decorationId']);
+    const decorationIds = extractDecorationIds(node.DecorationArray, decorationId);
+    const partId = getFirstString(node, ['partId', 'PartID', 'partID']);
+    const description = getFirstString(node, ['description', 'Description']);
+    const color = getFirstString(node, ['color', 'Color']);
+    const singlePart = toBoolean(node.singlePart);
+    const changeTimestamp = getFirstString(node, ['changeTimeStamp', 'changeTimestamp']);
+    const width = getFirstNumber(node, ['width', 'Width']);
+    const height = getFirstNumber(node, ['height', 'Height']);
+    const dpi = getFirstNumber(node, ['dpi', 'DPI']);
+
+    assets.push({
+      url,
+      media_type: mediaType,
+      ...(partId ? { part_id: partId } : {}),
+      ...(locationIds ? { location_ids: locationIds } : {}),
+      ...(decorationIds ? { decoration_ids: decorationIds } : {}),
+      ...(description ? { description } : {}),
+      ...(classTypes ? { class_types: classTypes } : {}),
+      ...(color ? { color } : {}),
+      ...(singlePart !== undefined ? { single_part: singlePart } : {}),
+      ...(changeTimestamp ? { change_timestamp: changeTimestamp } : {}),
+      ...(width !== undefined ? { width } : {}),
+      ...(height !== undefined ? { height } : {}),
+      ...(dpi !== undefined ? { dpi } : {}),
+    });
+  }
+
+  return dedupeMediaAssets(assets);
+}
+
+function buildImageGalleryFromAssets(assets: NormalizedMediaAsset[]): Array<{ image_url: string; is_thumbnail?: boolean }> {
+  const imageUrls = dedupeUrls(
+    assets
+      .filter(asset => asset.media_type === 'Image')
+      .map(asset => asset.url),
+  );
+
+  return imageUrls.map((url, index) => ({
+    image_url: url,
+    ...(index === 0 ? { is_thumbnail: true } : {}),
+  }));
+}
+
+function collectKnownPartIds(product: NormalizedProduct): string[] {
+  const partIds = [
+    ...(product.variants ?? []).map(variant => variant.part_id ?? variant.source_sku),
+    product.source_sku,
+  ].filter((value): value is string => !!value?.trim());
+
+  return dedupeUrls(partIds);
+}
+
+function shouldRetryMediaByPartId(message: string | undefined): boolean {
+  if (!message) return false;
+  return /partid/i.test(message) && /required|missing|not found/i.test(message);
+}
+
+function shouldSkipMediaAsNoResults(message: string | undefined): boolean {
+  if (!message) return false;
+  return /no result found/i.test(message);
+}
+
+async function loadMediaAssetsForType(input: {
+  vendor: Vendor;
+  mapping: AssignedMapping;
+  product: NormalizedProduct;
+  mediaType: 'Image'; //| 'Video';
+  endpointResults: ProductEndpointResult[];
+}): Promise<{ assets: NormalizedMediaAsset[]; failed: boolean }> {
+  const knownPartIds = collectKnownPartIds(input.product);
+  const assets: NormalizedMediaAsset[] = [];
+  let failed = false;
+
+  const productLevelResult = await runProductOperation({
+    vendor: input.vendor,
+    mapping: input.mapping,
+    product: input.product,
+    requestFields: { mediaType: input.mediaType },
+  });
+
+  if (productLevelResult.status >= 400) {
+    if (shouldRetryMediaByPartId(productLevelResult.message) && knownPartIds.length > 0) {
+      addEndpointResult(
+        input.endpointResults,
+        input.mapping.mapping,
+        productLevelResult.status,
+        0,
+        productLevelResult.message,
+      );
+    } else {
+      addEndpointResult(
+        input.endpointResults,
+        input.mapping.mapping,
+        productLevelResult.status,
+        0,
+        productLevelResult.message ?? `${input.mediaType} media call failed`,
+      );
+      return { assets: [], failed: true };
+    }
+  } else if (productLevelResult.parsedBody) {
+    const productAssets = extractMediaAssets(productLevelResult.parsedBody).filter(
+      asset => asset.media_type === input.mediaType,
+    );
+    assets.push(...productAssets);
+    addEndpointResult(
+      input.endpointResults,
+      input.mapping.mapping,
+      productLevelResult.status,
+      productAssets.length,
+      shouldSkipMediaAsNoResults(productLevelResult.message) ? productLevelResult.message : undefined,
+    );
+
+    const seenPartIds = new Set(
+      productAssets
+        .map(asset => asset.part_id)
+        .filter((value): value is string => !!value),
+    );
+    const missingPartIds = knownPartIds.filter(partId => !seenPartIds.has(partId));
+    const shouldFanOut =
+      knownPartIds.length > 0 &&
+      missingPartIds.length > 0 &&
+      (shouldRetryMediaByPartId(productLevelResult.message) ||
+        (productAssets.length > 0 && (seenPartIds.size > 0 || missingPartIds.length === knownPartIds.length)));
+
+    if (!shouldFanOut) {
+      return { assets: dedupeMediaAssets(assets), failed: false };
+    }
+
+    for (const partId of missingPartIds) {
+      const partResult = await runProductOperation({
+        vendor: input.vendor,
+        mapping: input.mapping,
+        product: input.product,
+        requestFields: {
+          mediaType: input.mediaType,
+          partId,
+        },
+      });
+
+      if (partResult.status >= 400 || !partResult.parsedBody) {
+        if (shouldSkipMediaAsNoResults(partResult.message)) {
+          addEndpointResult(
+            input.endpointResults,
+            input.mapping.mapping,
+            partResult.status,
+            0,
+            partResult.message,
+          );
+          continue;
+        }
+
+        failed = true;
+        addEndpointResult(
+          input.endpointResults,
+          input.mapping.mapping,
+          partResult.status,
+          0,
+          partResult.message ?? `${input.mediaType} part media call failed`,
+        );
+        continue;
+      }
+
+      const partAssets = extractMediaAssets(partResult.parsedBody).filter(
+        asset => asset.media_type === input.mediaType,
+      );
+      assets.push(...partAssets);
+      addEndpointResult(
+        input.endpointResults,
+        input.mapping.mapping,
+        partResult.status,
+        partAssets.length,
+        shouldSkipMediaAsNoResults(partResult.message) ? partResult.message : undefined,
+      );
+    }
+
+    return { assets: dedupeMediaAssets(assets), failed };
+  }
+
+  for (const partId of knownPartIds) {
+    const partResult = await runProductOperation({
+      vendor: input.vendor,
+      mapping: input.mapping,
+      product: input.product,
+      requestFields: {
+        mediaType: input.mediaType,
+        partId,
+      },
+    });
+
+    if (partResult.status >= 400 || !partResult.parsedBody) {
+      if (shouldSkipMediaAsNoResults(partResult.message)) {
+        addEndpointResult(
+          input.endpointResults,
+          input.mapping.mapping,
+          partResult.status,
+          0,
+          partResult.message,
+        );
+        continue;
+      }
+
+      failed = true;
+      addEndpointResult(
+        input.endpointResults,
+        input.mapping.mapping,
+        partResult.status,
+        0,
+        partResult.message ?? `${input.mediaType} part media call failed`,
+      );
+      continue;
+    }
+
+    const partAssets = extractMediaAssets(partResult.parsedBody).filter(asset => asset.media_type === input.mediaType);
+    assets.push(...partAssets);
+    addEndpointResult(
+      input.endpointResults,
+      input.mapping.mapping,
+      partResult.status,
+      partAssets.length,
+      shouldSkipMediaAsNoResults(partResult.message) ? partResult.message : undefined,
+    );
+  }
+
+  return { assets: dedupeMediaAssets(assets), failed };
 }
 
 function extractBulkRules(payload: unknown): NormalizedBulkPricingRule[] {
@@ -322,7 +702,8 @@ async function runProductOperation(input: {
   vendor: Vendor;
   mapping: AssignedMapping;
   product: NormalizedProduct;
-}): Promise<{ status: number; parsedBody: Record<string, unknown> | null; message?: string }> {
+  requestFields?: Record<string, unknown>;
+}): Promise<{ status: number; parsedBody: Record<string, unknown> | null; message?: string; rawPayload: string }> {
   const mapping = input.mapping.mapping;
   const runtimeConfig = asRecord(input.mapping.runtime_config) ?? {};
   const endpointUrl = getEndpointUrl(input.vendor, runtimeConfig);
@@ -331,6 +712,7 @@ async function runProductOperation(input: {
       status: 400,
       parsedBody: null,
       message: 'Missing endpoint URL for product enrichment call.',
+      rawPayload: '',
     };
   }
 
@@ -342,6 +724,7 @@ async function runProductOperation(input: {
       status: 400,
       parsedBody: null,
       message: 'Missing operation name for product enrichment call.',
+      rawPayload: '',
     };
   }
 
@@ -351,12 +734,16 @@ async function runProductOperation(input: {
     (input.product.variants?.length ?? 0) > 0;
   const runtime = mergeRequestFields(
     runtimeConfig,
-    buildBaseRequestFields(input.product, {
-      includePartId: !shouldOmitPartId,
-    }),
+    {
+      ...buildBaseRequestFields(input.product, {
+        includePartId: !shouldOmitPartId,
+      }),
+      ...(input.requestFields ?? {}),
+    },
   );
   const result = await adapter.invokeEndpoint({
     endpointUrl,
+    endpointName: mapping.endpoint_name,
     operationName,
     endpointVersion: mapping.endpoint_version,
     vendorAccountId: input.vendor.vendor_account_id,
@@ -367,6 +754,8 @@ async function runProductOperation(input: {
   return {
     status: result.status,
     parsedBody: result.parsedBody,
+    rawPayload: result.rawPayload,
+    message: readResponseMessage(result.parsedBody, result.rawPayload),
   };
 }
 
@@ -388,6 +777,18 @@ function filterByEndpoint(
   endpointName: string,
 ): AssignedMapping[] {
   return mappings.filter(item => item.mapping.endpoint_name === endpointName);
+}
+
+function filterByEndpointOperation(
+  mappings: AssignedMapping[],
+  endpointName: string,
+  operationName: string,
+): AssignedMapping[] {
+  return mappings.filter(
+    item =>
+      item.mapping.endpoint_name === endpointName &&
+      (item.mapping.operation_name ?? '').trim() === operationName,
+  );
 }
 
 function addEndpointResult(
@@ -420,7 +821,7 @@ export async function buildProductAssembly(input: {
 
   const inventoryMappings = filterByEndpoint(input.assignedMappings, 'Inventory');
   const pricingMappings = filterByEndpoint(input.assignedMappings, 'PricingAndConfiguration');
-  const mediaMappings = filterByEndpoint(input.assignedMappings, 'ProductMedia');
+  const mediaMappings = filterByEndpointOperation(input.assignedMappings, 'ProductMedia', 'getMediaContent');
 
   for (const base of input.baseProducts) {
     const product: NormalizedProduct = {
@@ -430,7 +831,7 @@ export async function buildProductAssembly(input: {
 
     const gatingReasons: string[] = [];
     const pricingPayloads: unknown[] = [];
-    const mediaPayloads: unknown[] = [];
+    const mediaAssets: NormalizedMediaAsset[] = [];
 
     if (pricingMappings.length === 0) {
       product.enrichment_status!.pricing = 'MISSING';
@@ -517,22 +918,29 @@ export async function buildProductAssembly(input: {
     } else {
       let mediaFailed = false;
       for (const mapping of mediaMappings) {
-        try {
-          const result = await runProductOperation({
-            vendor: input.vendor,
-            mapping,
-            product,
-          });
-          if (result.status >= 400 || !result.parsedBody) {
+        for (const mediaType of PRODUCT_MEDIA_TYPES) {
+          try {
+            const result = await loadMediaAssetsForType({
+              vendor: input.vendor,
+              mapping,
+              product,
+              mediaType,
+              endpointResults,
+            });
+            mediaAssets.push(...result.assets);
+            if (result.failed) {
+              mediaFailed = true;
+            }
+          } catch (error: any) {
             mediaFailed = true;
-            addEndpointResult(endpointResults, mapping.mapping, result.status, 0, result.message ?? 'Media call failed');
-            continue;
+            addEndpointResult(
+              endpointResults,
+              mapping.mapping,
+              500,
+              0,
+              error?.message ?? `${mediaType} media call failed`,
+            );
           }
-          mediaPayloads.push(result.parsedBody);
-          addEndpointResult(endpointResults, mapping.mapping, result.status, 1);
-        } catch (error: any) {
-          mediaFailed = true;
-          addEndpointResult(endpointResults, mapping.mapping, 500, 0, error?.message ?? 'Media call failed');
         }
       }
 
@@ -573,14 +981,11 @@ export async function buildProductAssembly(input: {
       }
     }
 
-    if (mediaPayloads.length > 0) {
-      const images = mediaPayloads.flatMap(payload => extractImages(payload));
-      if (images.length > 0) {
-        const deduped = dedupeUrls(images.map(image => image.image_url)).map((url, index) => ({
-          image_url: url,
-          ...(index === 0 ? { is_thumbnail: true } : {}),
-        }));
-        product.images = deduped;
+    if (mediaAssets.length > 0) {
+      product.media_assets = dedupeMediaAssets(mediaAssets);
+      const structuredImages = buildImageGalleryFromAssets(product.media_assets);
+      if (structuredImages.length > 0) {
+        product.images = structuredImages;
       }
     }
 

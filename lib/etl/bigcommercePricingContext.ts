@@ -1,15 +1,4 @@
-import {
-  BigCommerceCatalogListResponse,
-  buildApiBase,
-  requestJson,
-} from './bigcommerceApi';
-
-interface BigCommerceStoreMetafield {
-  id: number;
-  namespace?: string;
-  key?: string;
-  value?: string;
-}
+import { getStoreMarkupPercent } from '../db';
 
 export interface BigCommercePricingContext {
   markup_percent: number;
@@ -31,7 +20,7 @@ function parseFiniteNumber(value: string | undefined, fallback: number): number 
 }
 
 export function resolveConfiguredMarkupValue(
-  metafields: Array<Pick<BigCommerceStoreMetafield, 'namespace' | 'key' | 'value'>>,
+  metafields: Array<Pick<{ namespace?: string; key?: string; value?: string }, 'namespace' | 'key' | 'value'>>,
   input?: {
     namespace?: string;
     key?: string;
@@ -58,19 +47,8 @@ export async function resolveBigCommercePricingContext(input: {
   const price_list_id = parseFiniteNumber(process.env.BIGCOMMERCE_B2B_PRICE_LIST_ID, 1);
   const currency = readEnv('BIGCOMMERCE_PRICE_LIST_CURRENCY', 'USD');
   const fallback_markup_percent = input.fallback_markup_percent ?? 30;
-
-  const response = await requestJson<BigCommerceCatalogListResponse<BigCommerceStoreMetafield>>(
-    input.accessToken,
-    `${buildApiBase(input.storeHash)}/settings/store/metafields?limit=250`,
-    { method: 'GET' },
-    'Failed to list BigCommerce store metafields',
-  );
-
-  const markup_percent = resolveConfiguredMarkupValue(response.data ?? [], {
-    namespace: markup_namespace,
-    key: markup_key,
-    fallback_markup_percent,
-  });
+  const configuredMarkupPercent = await getStoreMarkupPercent(input.storeHash);
+  const markup_percent = configuredMarkupPercent ?? fallback_markup_percent;
 
   return {
     markup_percent,

@@ -6,7 +6,7 @@ export type MappingPayloadFormat = 'JSON' | 'XML';
 
 export type SyncScope = 'MAPPING' | 'ALL';
 
-export type SyncRunStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+export type SyncRunStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 export type IntegrationJobKind =
   | 'CATALOG_SYNC'
   | 'ORDER_SUBMISSION'
@@ -18,9 +18,11 @@ export type IntegrationJobStatus =
   | 'PENDING'
   | 'ENQUEUED'
   | 'RUNNING'
+  | 'CANCEL_REQUESTED'
   | 'SUCCEEDED'
   | 'FAILED'
-  | 'DEAD_LETTERED';
+  | 'DEAD_LETTERED'
+  | 'CANCELLED';
 export type OperatorTraceCategory = 'VENDOR_API' | 'BIGCOMMERCE_API' | 'INTERNAL_FAILURE';
 export type PendingRelatedLinkStatus = 'PENDING' | 'RESOLVED' | 'FAILED';
 export type EnrichmentSource = 'PRICING' | 'INVENTORY' | 'MEDIA';

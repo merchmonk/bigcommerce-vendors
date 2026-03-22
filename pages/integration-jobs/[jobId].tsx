@@ -1,4 +1,5 @@
 import { useRouter } from 'next/router';
+import { useState } from 'react';
 import useSWR from 'swr';
 import ErrorMessage from '../../components/error';
 import Loading from '../../components/loading';
@@ -18,6 +19,7 @@ interface IntegrationJobDiagnosticsResponse {
 const IntegrationJobDiagnosticsPage = () => {
   const router = useRouter();
   const { context } = useSession();
+  const [isCancelling, setIsCancelling] = useState(false);
   const jobId = Number(router.query.jobId);
 
   const diagnosticsUrl =
@@ -25,13 +27,29 @@ const IntegrationJobDiagnosticsPage = () => {
       ? `/api/integration-jobs/${jobId}?context=${encodeURIComponent(context)}`
       : null;
 
-  const { data, error } = useSWR<IntegrationJobDiagnosticsResponse>(diagnosticsUrl, fetcher);
+  const { data, error, mutate } = useSWR<IntegrationJobDiagnosticsResponse>(diagnosticsUrl, fetcher, {
+    refreshInterval: 5000,
+  });
 
   if (!data && !error) return <Loading />;
   if (error) return <ErrorMessage error={error} />;
   if (!data) return null;
 
   const { job, events, traces } = data;
+  const isActiveJob = ['PENDING', 'ENQUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(job.status);
+
+  const cancelJob = async () => {
+    if (!diagnosticsUrl || !context) return;
+    setIsCancelling(true);
+    try {
+      await fetch(`/api/integration-jobs/${job.integration_job_id}?context=${encodeURIComponent(context)}`, {
+        method: 'DELETE',
+      });
+      await mutate();
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   return (
     <div style={{ display: 'grid', gap: '24px' }}>
@@ -55,6 +73,19 @@ const IntegrationJobDiagnosticsPage = () => {
             Back
           </button>
         </div>
+
+        {isActiveJob ? (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+            <button
+              type="button"
+              onClick={cancelJob}
+              style={secondaryButtonStyle}
+              disabled={isCancelling || job.status === 'CANCEL_REQUESTED'}
+            >
+              {job.status === 'CANCEL_REQUESTED' ? 'Cancellation Requested' : 'Cancel Job'}
+            </button>
+          </div>
+        ) : null}
 
         <div
           style={{

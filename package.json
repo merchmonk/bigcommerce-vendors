@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "next",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start -p $PORT",
     "postinstall": "prisma generate",
     "test": "jest --runInBand --watchman=false",
@@ -14,7 +14,8 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "db:migrate": "node scripts/migrations/001_init_auth_and_vendors.js --seed"
+    "db:migrate": "node scripts/migrations/001_init_auth_and_vendors.js --seed",
+    "store:markup:set": "tsx scripts/setStoreMarkupPercent.ts"
   },
   "keywords": [],
   "author": "",
@@ -31,7 +32,7 @@
     "@aws-sdk/client-s3": "^3.1012.0",
     "@aws-sdk/client-secrets-manager": "^3.1008.0",
     "@aws-sdk/client-sqs": "^3.1012.0",
-    "@prisma/client": "^6.15.0",
+    "@prisma/client": "^6.19.2",
     "aws-rum-web": "^2.0.0",
     "cdk-nextjs": "^0.5.0-beta.2",
     "dotenv": "^17.3.1",
@@ -63,7 +64,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "jest": "^30.3.0",
     "jest-environment-jsdom": "^30.3.0",
-    "prisma": "^6.15.0",
+    "prisma": "^6.19.2",
     "typescript": "^5.9.3"
   }
 }

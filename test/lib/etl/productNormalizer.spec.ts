@@ -100,6 +100,36 @@ describe('normalizeProductsFromEndpoint', () => {
     ]);
   });
 
+  test('prefers hierarchical merchandising categories over faceted vendor tags', () => {
+    const payload = {
+      getProductResponse: {
+        Product: {
+          productId: 'G8064',
+          productName: 'Preston eco keyring',
+          ProductCategoryArray: {
+            ProductCategory: [
+              { category: 'ECO' },
+              { category: 'Business accessories', subCategory: 'Key rings' },
+              { category: 'Travel Accessories' },
+              { category: 'MADE IN CHINA' },
+              { category: 'Products manufactured by social compliant factories' },
+            ],
+          },
+        },
+      },
+    };
+
+    const result = normalizeProductsFromEndpoint(
+      'ProductData',
+      '2.0.0',
+      'getProduct',
+      payload,
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].categories).toEqual(['Business accessories > Key rings']);
+  });
+
   test('extracts product references from ProductData discovery responses', () => {
     const payload = {
       getProductSellableResponse: {

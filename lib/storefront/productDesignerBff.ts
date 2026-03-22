@@ -1,5 +1,7 @@
 import type {
   BasePricing,
+  ContractMediaAsset,
+  ContractMediaGroups,
   ProductDesignerDefaultsContract,
   ProductDesignerPayload,
   SelectedBlankVariant,
@@ -81,16 +83,6 @@ function findVariantDesignerOverride(
   return parseMetafieldValue<VariantDesignerOverrideContract>(metafield?.value);
 }
 
-function resolvePrimaryImage(product: BigCommerceRuntimeProduct): { url: string; alt?: string } | undefined {
-  const thumbnail = product.images?.find(image => image.is_thumbnail) ?? product.images?.[0] ?? product.primary_image;
-  const url = thumbnail?.url_standard ?? thumbnail?.url_zoom;
-  if (!url) return undefined;
-  return {
-    url,
-    ...(thumbnail?.description ? { alt: thumbnail.description } : {}),
-  };
-}
-
 function resolveSelectedVariant(
   variant: BigCommerceRuntimeVariant,
   variantOverride: VariantDesignerOverrideContract | undefined,
@@ -158,31 +150,48 @@ function resolveInventorySnapshot(product: BigCommerceRuntimeProduct, variant: B
   };
 }
 
-function resolveMedia(product: BigCommerceRuntimeProduct, selectedVariant: BigCommerceRuntimeVariant) {
-  const gallery: Array<{
-    url: string;
-    alt?: string;
-    kind: 'product' | 'variant' | 'location' | 'method';
-  }> = (product.images ?? [])
-    .map(image => {
-      const url = image.url_standard ?? image.url_zoom;
-      if (!url) return null;
-      return {
-        url,
-        ...(image.description ? { alt: image.description } : {}),
-        kind: 'product' as const,
-      };
-    })
-    .filter((image): image is NonNullable<typeof image> => !!image);
+function dedupeMediaAssets(assets: ContractMediaAsset[]): ContractMediaAsset[] {
+  return assets.filter(
+    (asset, index) =>
+      assets.findIndex(
+        candidate =>
+          candidate.url === asset.url &&
+          candidate.kind === asset.kind &&
+          candidate.partId === asset.partId &&
+          JSON.stringify(candidate.locationIds ?? []) === JSON.stringify(asset.locationIds ?? []) &&
+          JSON.stringify(candidate.decorationIds ?? []) === JSON.stringify(asset.decorationIds ?? []) &&
+          candidate.locationId === asset.locationId,
+      ) === index,
+  );
+}
 
-  if (selectedVariant.image_url) {
-    gallery.unshift({
-      url: selectedVariant.image_url,
-      kind: 'variant' as const,
-    });
-  }
+function normalizeMediaGroups(groups: ContractMediaGroups | undefined) {
+  return {
+    gallery: dedupeMediaAssets(groups?.gallery ?? []),
+    variantAssets: Object.fromEntries(
+      Object.entries(groups?.variantAssets ?? {}).map(([key, assets]) => [key, dedupeMediaAssets(assets ?? [])]),
+    ),
+    locationAssets: Object.fromEntries(
+      Object.entries(groups?.locationAssets ?? {}).map(([key, assets]) => [key, dedupeMediaAssets(assets ?? [])]),
+    ),
+    methodAssets: Object.fromEntries(
+      Object.entries(groups?.methodAssets ?? {}).map(([key, assets]) => [key, dedupeMediaAssets(assets ?? [])]),
+    ),
+  };
+}
 
-  return { gallery };
+function resolveMedia(
+  productDesignerDefaults: ProductDesignerDefaultsContract,
+) {
+  const videoGroups = normalizeMediaGroups(productDesignerDefaults.media?.videos);
+
+  return {
+    gallery: [],
+    variantAssets: {},
+    locationAssets: {},
+    methodAssets: {},
+    videos: videoGroups,
+  };
 }
 
 function resolveProductSummary(
@@ -201,7 +210,6 @@ function resolveProductSummary(
     ...(bundle.product.description ? { description: bundle.product.description } : {}),
     categories: bundle.categories.map(category => category.name),
     searchKeywords: splitKeywords(bundle.product.search_keywords),
-    ...(resolvePrimaryImage(bundle.product) ? { primaryImage: resolvePrimaryImage(bundle.product) } : {}),
     source: {
       ...(resolvedVendorId !== undefined ? { vendorId: resolvedVendorId } : {}),
       ...(productDesignerDefaults.source?.vendorProductId
@@ -272,6 +280,7 @@ export async function getProductDesignerPayload(input: {
   }
 
   const resolvedDesigner = resolveDesignerContract(productDesignerDefaults, variantOverride);
+  const resolvedSelectedVariant = resolveSelectedVariant(selectedVariant, variantOverride, productDesignerDefaults);
   const basePricing = resolveBasePricingForBundle({
     quantity: input.quantity,
     bundle,
@@ -281,11 +290,11 @@ export async function getProductDesignerPayload(input: {
 
   return {
     product: resolveProductSummary(bundle, productDesignerDefaults),
-    selectedVariant: resolveSelectedVariant(selectedVariant, variantOverride, productDesignerDefaults),
+    selectedVariant: resolvedSelectedVariant,
     basePricing,
     inventory: resolveInventorySnapshot(bundle.product, selectedVariant),
     designer: resolvedDesigner,
-    media: resolveMedia(bundle.product, selectedVariant),
+    media: resolveMedia(productDesignerDefaults),
     relatedProducts: resolveRelatedProducts(bundle),
     pricingPreview: buildPricingPreview({
       quantity: input.quantity,

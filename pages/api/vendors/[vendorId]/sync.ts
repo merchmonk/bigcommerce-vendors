@@ -1,7 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getSession } from '../../../../lib/auth';
 import { recordInternalFailure } from '../../../../lib/apiTelemetry';
-import { getIntegrationJobStatus, submitCatalogSyncJob } from '../../../../lib/integrationJobs';
+import {
+  cancelIntegrationJob,
+  getActiveCatalogSyncJobForVendor,
+  getIntegrationJobStatus,
+  submitCatalogSyncJob,
+} from '../../../../lib/integrationJobs';
 import logger from '../../../../lib/logger';
 import { buildApiRequestContext, getRequestContext, runWithRequestContext } from '../../../../lib/requestContext';
 import { listSyncRunsForVendor } from '../../../../lib/etl/repository';
@@ -9,6 +14,8 @@ import { listSyncRunsForVendor } from '../../../../lib/etl/repository';
 interface RunSyncBody {
   mapping_id?: number;
   sync_all?: boolean;
+  integration_job_id?: number;
+  action?: 'cancel';
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -27,12 +34,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       if (req.method === 'GET') {
-        const runs = await listSyncRunsForVendor(vendorId);
-        return res.status(200).json({ data: runs });
+        const [runs, activeJob] = await Promise.all([
+          listSyncRunsForVendor(vendorId),
+          getActiveCatalogSyncJobForVendor(vendorId),
+        ]);
+        return res.status(200).json({ data: runs, active_job: activeJob });
       }
 
       if (req.method === 'POST') {
         const body = req.body as RunSyncBody;
+        if (body.action === 'cancel') {
+          const activeJob = body.integration_job_id
+            ? await getIntegrationJobStatus(body.integration_job_id).then(result => result.job)
+            : await getActiveCatalogSyncJobForVendor(vendorId);
+
+          if (!activeJob || activeJob.vendor_id !== vendorId) {
+            return res.status(404).json({ message: 'No active vendor sync job found to cancel.' });
+          }
+
+          const cancelled = await cancelIntegrationJob(activeJob.integration_job_id);
+          return res.status(202).json({
+            data: cancelled.job,
+            events: cancelled.events,
+          });
+        }
+
         const submittedJob = await submitCatalogSyncJob({
           vendorId,
           mappingId: body.mapping_id,
@@ -52,7 +78,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      res.setHeader('Allow', ['GET', 'POST']);
+      if (req.method === 'DELETE') {
+        const body = (req.body ?? {}) as RunSyncBody;
+        const activeJob = body.integration_job_id
+          ? await getIntegrationJobStatus(body.integration_job_id).then(result => result.job)
+          : await getActiveCatalogSyncJobForVendor(vendorId);
+
+        if (!activeJob || activeJob.vendor_id !== vendorId) {
+          return res.status(404).json({ message: 'No active vendor sync job found to cancel.' });
+        }
+
+        const cancelled = await cancelIntegrationJob(activeJob.integration_job_id);
+        return res.status(202).json({
+          data: cancelled.job,
+          events: cancelled.events,
+        });
+      }
+
+      res.setHeader('Allow', ['GET', 'POST', 'DELETE']);
       return res.status(405).json({ message: `Method ${req.method} not allowed` });
     } catch (error: any) {
       await recordInternalFailure({

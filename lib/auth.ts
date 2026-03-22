@@ -61,8 +61,26 @@ export async function setSession(session: SessionProps) {
   }
 
 export async function getSession({ query: { context = '' } }: NextApiRequest) {
-    if (typeof context !== 'string') return;
-    const { context: storeHash, user } = decodePayload(context) as SessionProps;
+    if (typeof context !== 'string' || context.trim().length === 0) {
+        const error = new Error('Session context is missing. Reload the app from BigCommerce and try again.') as Error & {
+            statusCode?: number;
+        };
+        error.statusCode = 401;
+        throw error;
+    }
+
+    let payload: SessionProps;
+    try {
+        payload = decodePayload(context) as SessionProps;
+    } catch (_error) {
+        const error = new Error('Session context is invalid or expired. Reload the app from BigCommerce and try again.') as Error & {
+            statusCode?: number;
+        };
+        error.statusCode = 401;
+        throw error;
+    }
+
+    const { context: storeHash, user } = payload;
     const hasUser = await db.hasStoreUser(storeHash, String(user?.id));
 
     // Before retrieving session/ hitting APIs, check user

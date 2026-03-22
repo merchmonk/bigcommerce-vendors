@@ -7,8 +7,18 @@ const NewVendorPage = () => {
   const router = useRouter();
   const { context } = useSession();
 
+  const requireContext = () => {
+    if (!context) {
+      throw new Error('Session context is missing. Reload the app from BigCommerce and try again.');
+    }
+
+    return encodeURIComponent(context);
+  };
+
+  const withContext = (path: string) => `${path}?context=${requireContext()}`;
+
   const handleSubmit = async (data: VendorFormData) => {
-    const response = await fetch(`/api/vendors?context=${encodeURIComponent(context)}`, {
+    const response = await fetch(withContext('/api/vendors'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -17,11 +27,11 @@ const NewVendorPage = () => {
       const payload = await response.json();
       throw new Error(payload?.message ?? 'Failed to create vendor');
     }
-    router.push('/vendors');
+    router.push(withContext('/vendors'));
   };
 
   const handleCancel = () => {
-    router.push('/vendors');
+    router.push(withContext('/vendors'));
   };
 
   const handleTestConnection = async (data: {
@@ -31,7 +41,7 @@ const NewVendorPage = () => {
     integration_family?: VendorFormData['integration_family'];
     api_protocol?: MappingProtocol;
   }): Promise<VendorConnectionTestResult> => {
-    const response = await fetch(`/api/vendors/test-connection?context=${encodeURIComponent(context)}`, {
+    const response = await fetch(withContext('/api/vendors/test-connection'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -41,6 +51,8 @@ const NewVendorPage = () => {
       ok: response.ok && !!payload?.ok,
       message: payload?.message,
       available_endpoint_count: payload?.available_endpoint_count,
+      credentials_valid: payload?.credentials_valid,
+      endpoint_mapping_ids: payload?.endpoint_mapping_ids,
       fingerprint: payload?.fingerprint,
       tested_at: payload?.tested_at,
       endpoints: payload?.endpoints,

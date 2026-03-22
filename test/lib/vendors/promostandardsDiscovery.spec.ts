@@ -146,6 +146,45 @@ describe('promostandardsDiscovery', () => {
     expect(mockInvokeEndpoint).toHaveBeenCalledTimes(4);
   });
 
+  test('treats request-field not found SOAP faults as live probe validation responses', async () => {
+    mockListEndpointMappings.mockResolvedValue([
+      {
+        mapping_id: 1,
+        endpoint_name: 'ProductData',
+        endpoint_version: '2.0.0',
+        operation_name: 'getProductSellable',
+        protocol: 'SOAP',
+      },
+    ]);
+
+    mockInvokeEndpoint.mockResolvedValueOnce({
+      status: 500,
+      rawPayload:
+        '<Envelope><Body><Fault><faultstring>WsVersion not found.</faultstring></Fault></Body></Envelope>',
+      parsedBody: { Fault: { faultstring: 'WsVersion not found.' } },
+    });
+
+    const result = await discoverPromostandardsCapabilities({
+      vendor_api_url: 'https://example.com/soap',
+      vendor_account_id: 'acct-1',
+      vendor_secret: 'secret',
+      api_protocol: 'SOAP',
+    });
+
+    expect(result.credentials_valid).toBe(true);
+    expect(result.endpoints).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductSellable',
+          credentials_valid: true,
+          live_probe_message: 'WsVersion not found.',
+        }),
+      ]),
+    );
+  });
+
   test('resolves mapping ids from available endpoint versions', async () => {
     mockFindMappingsByEndpointOperations.mockResolvedValue([
       { mapping_id: 11 },
@@ -182,5 +221,63 @@ describe('promostandardsDiscovery', () => {
       },
     ]);
     expect(mappingIds).toEqual([11, 12, 13]);
+  });
+
+  test('prefers the highest available endpoint version per endpoint operation', async () => {
+    mockFindMappingsByEndpointOperations.mockResolvedValue([
+      { mapping_id: 21 },
+      { mapping_id: 22 },
+    ]);
+
+    const mappingIds = await resolvePromostandardsCapabilityMappings({
+      endpoints: [
+        {
+          endpoint_name: 'ProductData',
+          endpoint_version: '1.0.0',
+          operation_name: 'getProduct',
+          available: true,
+          status_code: 200,
+          message: 'ok',
+        },
+        {
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProduct',
+          available: true,
+          status_code: 200,
+          message: 'ok',
+        },
+        {
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.1.0',
+          operation_name: 'getProductSellable',
+          available: true,
+          status_code: 200,
+          message: 'ok',
+        },
+        {
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductSellable',
+          available: true,
+          status_code: 200,
+          message: 'ok',
+        },
+      ],
+    });
+
+    expect(mockFindMappingsByEndpointOperations).toHaveBeenCalledWith([
+      {
+        endpoint_name: 'ProductData',
+        endpoint_version: '2.0.0',
+        operation_name: 'getProduct',
+      },
+      {
+        endpoint_name: 'ProductData',
+        endpoint_version: '2.1.0',
+        operation_name: 'getProductSellable',
+      },
+    ]);
+    expect(mappingIds).toEqual([21, 22]);
   });
 });

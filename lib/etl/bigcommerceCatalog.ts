@@ -4,7 +4,7 @@ import { upsertPriceListRecords } from './bigcommercePriceLists';
 import {
   projectBigCommerceProductContract,
 } from './productContractProjector';
-import type { NormalizedBulkPricingRule, NormalizedProduct } from './productNormalizer';
+import type { NormalizedBulkPricingRule, NormalizedMediaAsset, NormalizedProduct } from './productNormalizer';
 import { projectProductPricing } from './pricingProjector';
 import {
   reconcileProjectedPricingTargets,
@@ -65,6 +65,41 @@ interface BigCommerceModifier {
   id: number;
   display_name: string;
 }
+
+interface BigCommerceImage {
+  id: number;
+  description?: string;
+}
+
+interface BigCommerceVideo {
+  id: number;
+  description?: string;
+}
+
+interface VendorManagedMediaMetadata {
+  mediaType: 'Image' | 'Video';
+  url: string;
+  partId?: string;
+  locationIds?: string[];
+  decorationIds?: string[];
+}
+
+interface DesiredBigCommerceImage {
+  image_url: string;
+  description: string;
+  is_thumbnail?: boolean;
+}
+
+interface DesiredBigCommerceVideo {
+  title: string;
+  description: string;
+  type: 'youtube';
+  video_id: string;
+}
+
+const VENDOR_MEDIA_MARKER_PREFIX = 'mm_media:';
+const BIGCOMMERCE_CATEGORY_NAME_MAX_LENGTH = 50;
+const BIGCOMMERCE_BRAND_NAME_MAX_LENGTH = 100;
 
 export interface UpsertBigCommerceProductInput {
   accessToken: string;
@@ -246,7 +281,6 @@ function buildBigCommercePayload(
     }),
     ...(options.brandId ? { brand_id: options.brandId } : {}),
     ...(options.categoryIds && options.categoryIds.length > 0 ? { categories: options.categoryIds } : {}),
-    ...(product.images && product.images.length > 0 ? { images: product.images } : {}),
     ...(options.productFallback.bulk_pricing_rules && options.productFallback.bulk_pricing_rules.length > 0
       ? { bulk_pricing_rules: options.productFallback.bulk_pricing_rules }
       : {}),
@@ -259,8 +293,13 @@ async function ensureBrandId(
   storeHash: string,
   brandName: string | undefined,
 ): Promise<number | undefined> {
-  if (!brandName) return undefined;
-  const canonicalBrand = canonicalizeTaxonomyName(brandName);
+  const normalizedBrandName = brandName?.trim();
+  if (!normalizedBrandName) return undefined;
+  if (normalizedBrandName.length > BIGCOMMERCE_BRAND_NAME_MAX_LENGTH) {
+    console.warn(`Skipping invalid BigCommerce brand "${normalizedBrandName}" because it exceeds ${BIGCOMMERCE_BRAND_NAME_MAX_LENGTH} characters.`);
+    return undefined;
+  }
+  const canonicalBrand = canonicalizeTaxonomyName(normalizedBrandName);
 
   const brandsResponse = await requestJson<BigCommerceCatalogListResponse<BigCommerceBrand>>(
     accessToken,
@@ -278,18 +317,42 @@ async function ensureBrandId(
     `${buildApiBase(storeHash)}/catalog/brands`,
     {
       method: 'POST',
-      body: JSON.stringify({ name: brandName }),
+      body: JSON.stringify({ name: normalizedBrandName }),
     },
     'Failed to create BigCommerce brand',
-  );
-  return created.data.id;
+  ).catch(error => {
+    if (
+      error instanceof Error &&
+      /Failed to create BigCommerce brand \(422\)/.test(error.message) &&
+      /Invalid field\(s\): name|\"name\":/i.test(error.message)
+    ) {
+      console.warn(`Skipping invalid BigCommerce brand "${normalizedBrandName}".`);
+      return null;
+    }
+    throw error;
+  });
+  return created?.data?.id;
 }
 
 function parseCategoryPath(category: string): string[] {
-  return category
+  const parts = category
     .split('>')
     .map(value => value.trim())
     .filter(Boolean);
+
+  if (parts.some(part => part.length === 0 || part.length > BIGCOMMERCE_CATEGORY_NAME_MAX_LENGTH)) {
+    return [];
+  }
+
+  return parts;
+}
+
+function isInvalidCategoryNameError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /Failed to create BigCommerce category \(422\)/.test(error.message) &&
+    /Invalid field\(s\): name|\"name\":/i.test(error.message)
+  );
 }
 
 async function ensureCategoryPath(
@@ -316,19 +379,28 @@ async function ensureCategoryPath(
       continue;
     }
 
-    const created = await requestJson<BigCommerceCatalogResponse<BigCommerceCategory>>(
-      accessToken,
-      `${buildApiBase(storeHash)}/catalog/categories`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          name: part,
-          parent_id: parentId,
-          is_visible: true,
-        }),
-      },
-      'Failed to create BigCommerce category',
-    );
+    let created: BigCommerceCatalogResponse<BigCommerceCategory>;
+    try {
+      created = await requestJson<BigCommerceCatalogResponse<BigCommerceCategory>>(
+        accessToken,
+        `${buildApiBase(storeHash)}/catalog/categories`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            name: part,
+            parent_id: parentId,
+            is_visible: true,
+          }),
+        },
+        'Failed to create BigCommerce category',
+      );
+    } catch (error) {
+      if (isInvalidCategoryNameError(error)) {
+        console.warn(`Skipping invalid BigCommerce category path segment "${part}" from "${categoryPath}".`);
+        return undefined;
+      }
+      throw error;
+    }
     categoryCache.push(created.data);
     parentId = created.data.id;
     leafId = created.data.id;
@@ -739,6 +811,323 @@ function ensureBaseVariantMapping(
   return next;
 }
 
+function buildVendorManagedMediaMarker(asset: NormalizedMediaAsset): string {
+  const metadata: VendorManagedMediaMetadata = {
+    mediaType: asset.media_type,
+    url: asset.url,
+    ...(asset.part_id ? { partId: asset.part_id } : {}),
+    ...(asset.location_ids?.length ? { locationIds: asset.location_ids } : {}),
+    ...(asset.decoration_ids?.length ? { decorationIds: asset.decoration_ids } : {}),
+  };
+
+  return `${VENDOR_MEDIA_MARKER_PREFIX}${JSON.stringify(metadata)}`;
+}
+
+function buildVendorManagedDescription(asset: NormalizedMediaAsset): string {
+  const marker = buildVendorManagedMediaMarker(asset);
+  return asset.description ? `${asset.description} | ${marker}` : marker;
+}
+
+function parseVendorManagedMarker(description: string | undefined): VendorManagedMediaMetadata | null {
+  if (!description) return null;
+  const markerIndex = description.indexOf(VENDOR_MEDIA_MARKER_PREFIX);
+  if (markerIndex < 0) return null;
+  const payload = description.slice(markerIndex + VENDOR_MEDIA_MARKER_PREFIX.length).trim();
+  try {
+    return JSON.parse(payload) as VendorManagedMediaMetadata;
+  } catch {
+    return null;
+  }
+}
+
+function isVendorManagedDescription(description: string | undefined): boolean {
+  return !!parseVendorManagedMarker(description);
+}
+
+function rankMediaAsset(asset: NormalizedMediaAsset): number {
+  const classes = (asset.class_types ?? []).map(value => value.toLowerCase());
+  if (classes.includes('primary')) return 400;
+  if (classes.includes('blank') || classes.includes('hero')) return 300;
+  if (classes.includes('finished') || classes.includes('decorated')) return 200;
+  if (classes.includes('marketing') || classes.includes('lifestyle')) return 100;
+  return 0;
+}
+
+function dedupeMediaAssets(assets: NormalizedMediaAsset[]): NormalizedMediaAsset[] {
+  return assets.filter(
+    (asset, index) =>
+      assets.findIndex(
+        candidate =>
+          candidate.media_type === asset.media_type &&
+          candidate.url === asset.url &&
+          candidate.part_id === asset.part_id &&
+          JSON.stringify(candidate.location_ids ?? []) === JSON.stringify(asset.location_ids ?? []) &&
+          JSON.stringify(candidate.decoration_ids ?? []) === JSON.stringify(asset.decoration_ids ?? []),
+      ) === index,
+  );
+}
+
+function resolveVendorMediaAssets(product: NormalizedProduct): NormalizedMediaAsset[] {
+  const structured = dedupeMediaAssets(product.media_assets ?? []);
+  if (structured.length > 0) {
+    return structured.sort((left, right) => {
+      const productLevelDelta = Number(!right.part_id) - Number(!left.part_id);
+      if (productLevelDelta !== 0) return productLevelDelta;
+      const scoreDelta = rankMediaAsset(right) - rankMediaAsset(left);
+      if (scoreDelta !== 0) return scoreDelta;
+      return left.url.localeCompare(right.url);
+    });
+  }
+
+  return dedupeMediaAssets(
+    (product.images ?? []).map(image => ({
+      url: image.image_url,
+      media_type: 'Image' as const,
+    })),
+  );
+}
+
+function buildDesiredBigCommerceImages(product: NormalizedProduct): DesiredBigCommerceImage[] {
+  const imageAssets = resolveVendorMediaAssets(product).filter(asset => asset.media_type === 'Image');
+  return imageAssets.map((asset, index) => ({
+    image_url: asset.url,
+    description: buildVendorManagedDescription(asset),
+    ...(index === 0 ? { is_thumbnail: true } : {}),
+  }));
+}
+
+function extractYouTubeVideoId(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host.includes('youtube.com')) {
+      const videoId = parsed.searchParams.get('v')?.trim();
+      return videoId || undefined;
+    }
+    if (host === 'youtu.be') {
+      const videoId = parsed.pathname.replace(/^\/+/, '').trim();
+      return videoId || undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function buildDesiredBigCommerceVideos(product: NormalizedProduct): DesiredBigCommerceVideo[] {
+  const videoAssets = resolveVendorMediaAssets(product).filter(asset => asset.media_type === 'Video');
+  return videoAssets
+    .map(asset => {
+      const videoId = extractYouTubeVideoId(asset.url);
+      if (!videoId) return null;
+      return {
+        title: asset.description || product.name,
+        description: buildVendorManagedDescription(asset),
+        type: 'youtube' as const,
+        video_id: videoId,
+      };
+    })
+    .filter((video): video is DesiredBigCommerceVideo => !!video);
+}
+
+function isDuplicateOrValidationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /duplicate|already exists|validation/i.test(error.message);
+}
+
+async function listProductImages(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+): Promise<BigCommerceImage[]> {
+  const response = await requestJson<BigCommerceCatalogListResponse<BigCommerceImage>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/images?limit=250`,
+    { method: 'GET' },
+    'Failed to list BigCommerce product images',
+  );
+  return response.data ?? [];
+}
+
+async function createProductImage(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+  image: DesiredBigCommerceImage,
+): Promise<void> {
+  await requestJson<Record<string, unknown>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/images`,
+    {
+      method: 'POST',
+      body: JSON.stringify(image),
+    },
+    'Failed to create BigCommerce product image',
+  );
+}
+
+async function deleteProductImage(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+  imageId: number,
+): Promise<void> {
+  await requestJson<Record<string, unknown>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/images/${imageId}`,
+    { method: 'DELETE' },
+    'Failed to delete BigCommerce product image',
+  );
+}
+
+async function listProductVideos(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+): Promise<BigCommerceVideo[]> {
+  const response = await requestJson<BigCommerceCatalogListResponse<BigCommerceVideo>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/videos?limit=250`,
+    { method: 'GET' },
+    'Failed to list BigCommerce product videos',
+  );
+  return response.data ?? [];
+}
+
+async function createProductVideo(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+  video: DesiredBigCommerceVideo,
+): Promise<void> {
+  await requestJson<Record<string, unknown>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/videos`,
+    {
+      method: 'POST',
+      body: JSON.stringify(video),
+    },
+    'Failed to create BigCommerce product video',
+  );
+}
+
+async function deleteProductVideo(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+  videoId: number,
+): Promise<void> {
+  await requestJson<Record<string, unknown>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/videos/${videoId}`,
+    { method: 'DELETE' },
+    'Failed to delete BigCommerce product video',
+  );
+}
+
+async function replaceVendorManagedImages(input: {
+  accessToken: string;
+  storeHash: string;
+  productId: number;
+  desiredImages: DesiredBigCommerceImage[];
+}): Promise<void> {
+  const deleteExisting = async (): Promise<void> => {
+    const existingImages = await listProductImages(input.accessToken, input.storeHash, input.productId);
+    const vendorManaged = existingImages.filter(image => isVendorManagedDescription(image.description));
+    for (const image of vendorManaged) {
+      await deleteProductImage(input.accessToken, input.storeHash, input.productId, image.id);
+    }
+  };
+
+  if (input.desiredImages.length === 0) {
+    await deleteExisting();
+    return;
+  }
+
+  const existingImages = await listProductImages(input.accessToken, input.storeHash, input.productId);
+  const vendorManaged = existingImages.filter(image => isVendorManagedDescription(image.description));
+
+  try {
+    for (const image of input.desiredImages) {
+      await createProductImage(input.accessToken, input.storeHash, input.productId, image);
+    }
+    for (const image of vendorManaged) {
+      await deleteProductImage(input.accessToken, input.storeHash, input.productId, image.id);
+    }
+  } catch (error) {
+    if (!isDuplicateOrValidationError(error)) {
+      throw error;
+    }
+    await deleteExisting();
+    for (const image of input.desiredImages) {
+      await createProductImage(input.accessToken, input.storeHash, input.productId, image);
+    }
+  }
+}
+
+async function replaceVendorManagedVideos(input: {
+  accessToken: string;
+  storeHash: string;
+  productId: number;
+  desiredVideos: DesiredBigCommerceVideo[];
+}): Promise<void> {
+  const deleteExisting = async (): Promise<void> => {
+    const existingVideos = await listProductVideos(input.accessToken, input.storeHash, input.productId);
+    const vendorManaged = existingVideos.filter(video => isVendorManagedDescription(video.description));
+    for (const video of vendorManaged) {
+      await deleteProductVideo(input.accessToken, input.storeHash, input.productId, video.id);
+    }
+  };
+
+  if (input.desiredVideos.length === 0) {
+    await deleteExisting();
+    return;
+  }
+
+  const existingVideos = await listProductVideos(input.accessToken, input.storeHash, input.productId);
+  const vendorManaged = existingVideos.filter(video => isVendorManagedDescription(video.description));
+
+  try {
+    for (const video of input.desiredVideos) {
+      await createProductVideo(input.accessToken, input.storeHash, input.productId, video);
+    }
+    for (const video of vendorManaged) {
+      await deleteProductVideo(input.accessToken, input.storeHash, input.productId, video.id);
+    }
+  } catch (error) {
+    if (!isDuplicateOrValidationError(error)) {
+      throw error;
+    }
+    await deleteExisting();
+    for (const video of input.desiredVideos) {
+      await createProductVideo(input.accessToken, input.storeHash, input.productId, video);
+    }
+  }
+}
+
+async function syncVendorManagedProductMedia(input: {
+  accessToken: string;
+  storeHash: string;
+  productId: number;
+  product: NormalizedProduct;
+}): Promise<void> {
+  const desiredImages = buildDesiredBigCommerceImages(input.product);
+  const desiredVideos = buildDesiredBigCommerceVideos(input.product);
+
+  await replaceVendorManagedImages({
+    accessToken: input.accessToken,
+    storeHash: input.storeHash,
+    productId: input.productId,
+    desiredImages,
+  });
+  await replaceVendorManagedVideos({
+    accessToken: input.accessToken,
+    storeHash: input.storeHash,
+    productId: input.productId,
+    desiredVideos,
+  });
+}
+
 export async function upsertBigCommerceProduct(
   input: UpsertBigCommerceProductInput,
 ): Promise<UpsertBigCommerceProductResult> {
@@ -857,6 +1246,17 @@ export async function upsertBigCommerceProduct(
     variantDesignerOverrides: contractProjection.variant_designer_overrides,
     variantIdsBySku,
   });
+
+  try {
+    await syncVendorManagedProductMedia({
+      accessToken: input.accessToken,
+      storeHash: input.storeHash,
+      productId: productRecord.id,
+      product: input.product,
+    });
+  } catch (error) {
+    console.warn(`Failed to sync vendor-managed media for product ${productRecord.id}:`, error);
+  }
 
   const priceListRecords = pricingProjection.variants
     .map(variant => {

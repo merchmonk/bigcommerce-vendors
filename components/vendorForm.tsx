@@ -94,6 +94,22 @@ function getInitialValues(initialValues?: VendorFormData): VendorFormData {
   };
 }
 
+function compactPromoCapabilitiesForSubmission(
+  capabilities: PromostandardsCapabilityMatrix | null | undefined,
+): PromostandardsCapabilityMatrix | null {
+  if (!capabilities) {
+    return null;
+  }
+
+  return {
+    fingerprint: capabilities.fingerprint,
+    tested_at: capabilities.tested_at,
+    available_endpoint_count: capabilities.available_endpoint_count,
+    credentials_valid: capabilities.credentials_valid ?? null,
+    endpoints: [],
+  };
+}
+
 const VendorForm = ({
   initialValues,
   onSubmit,
@@ -192,8 +208,9 @@ const VendorForm = ({
 
       const capabilities: PromostandardsCapabilityMatrix | null =
         values.integration_family === 'PROMOSTANDARDS'
-          ? {
+            ? {
               available_endpoint_count: result.available_endpoint_count ?? 0,
+              credentials_valid: result.credentials_valid ?? null,
               endpoints: result.endpoints ?? [],
               fingerprint: result.fingerprint ?? '',
               tested_at: result.tested_at ?? new Date().toISOString(),
@@ -202,6 +219,7 @@ const VendorForm = ({
 
       setValues(prev => ({
         ...prev,
+        endpoint_mapping_ids: result.endpoint_mapping_ids ?? [],
         promostandards_capabilities: capabilities,
         connection_tested: result.ok,
       }));
@@ -239,8 +257,12 @@ const VendorForm = ({
             ? 'SOAP'
             : getProtocolForServiceType(values.custom_api_service_type),
         endpoint_mappings: [],
+        endpoint_mapping_ids:
+          values.integration_family === 'PROMOSTANDARDS' ? values.endpoint_mapping_ids ?? [] : values.endpoint_mapping_ids,
         promostandards_capabilities:
-          values.integration_family === 'PROMOSTANDARDS' ? values.promostandards_capabilities ?? null : null,
+          values.integration_family === 'PROMOSTANDARDS'
+            ? compactPromoCapabilitiesForSubmission(values.promostandards_capabilities)
+            : null,
         connection_tested:
           values.integration_family === 'PROMOSTANDARDS' ? isPromoDiscoveryCurrent : true,
       });
@@ -416,14 +438,15 @@ const VendorForm = ({
                 fontSize: '13px',
                 fontWeight: 700,
                 gap: '12px',
-                gridTemplateColumns: '1.1fr 0.8fr 1fr 0.8fr',
+                gridTemplateColumns: '1.1fr 0.8fr 1fr 0.8fr 0.9fr',
                 padding: '12px 16px',
               }}
             >
               <span>Endpoint</span>
               <span>Version</span>
               <span>Operation</span>
-              <span>Status</span>
+              <span>WSDL</span>
+              <span>Live Probe</span>
             </div>
             {promoEndpointRows.length === 0 ? (
               <div style={{ color: '#64748b', padding: '18px 16px' }}>
@@ -437,23 +460,43 @@ const VendorForm = ({
                     borderBottom: '1px solid #eef2f7',
                     display: 'grid',
                     gap: '12px',
-                    gridTemplateColumns: '1.1fr 0.8fr 1fr 0.8fr',
+                    gridTemplateColumns: '1.1fr 0.8fr 1fr 0.8fr 0.9fr',
                     padding: '14px 16px',
                   }}
                 >
                   <div>
                     <div style={{ color: '#0f172a', fontWeight: 700 }}>{endpoint.endpoint_name}</div>
-                    <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>{endpoint.message}</div>
+                    <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>
+                      {endpoint.message}
+                      {endpoint.live_probe_message ? ` ${endpoint.live_probe_message}` : ''}
+                    </div>
                   </div>
                   <div style={{ color: '#334155' }}>{endpoint.endpoint_version}</div>
                   <div style={{ color: '#334155' }}>{endpoint.operation_name}</div>
                   <div
                     style={{
-                      color: endpoint.available ? '#047857' : '#b91c1c',
+                      color: endpoint.wsdl_available ?? endpoint.available ? '#047857' : '#b91c1c',
                       fontWeight: 700,
                     }}
                   >
-                    {endpoint.available ? 'Available' : 'Unavailable'}
+                    {endpoint.wsdl_available ?? endpoint.available ? 'Listed' : 'Missing'}
+                  </div>
+                  <div
+                    style={{
+                      color:
+                        endpoint.credentials_valid === true
+                          ? '#047857'
+                          : endpoint.credentials_valid === false
+                            ? '#b91c1c'
+                            : '#b45309',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {endpoint.credentials_valid === true
+                      ? 'Accepted'
+                      : endpoint.credentials_valid === false
+                        ? 'Rejected'
+                        : 'Needs input'}
                   </div>
                 </div>
               ))

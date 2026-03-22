@@ -1,6 +1,23 @@
-import { resolveConfiguredMarkupValue } from '@lib/etl/bigcommercePricingContext';
+const mockGetStoreMarkupPercent = jest.fn();
+
+jest.mock('@lib/db', () => ({
+  getStoreMarkupPercent: (...args: unknown[]) => mockGetStoreMarkupPercent(...args),
+}));
+
+import {
+  resolveBigCommercePricingContext,
+  resolveConfiguredMarkupValue,
+} from '@lib/etl/bigcommercePricingContext';
 
 describe('resolveConfiguredMarkupValue', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.BIGCOMMERCE_MARKUP_METAFIELD_NAMESPACE;
+    delete process.env.BIGCOMMERCE_MARKUP_METAFIELD_KEY;
+    delete process.env.BIGCOMMERCE_B2B_PRICE_LIST_ID;
+    delete process.env.BIGCOMMERCE_PRICE_LIST_CURRENCY;
+  });
+
   test('uses namespace/key contract instead of relying on a fixed metafield id', () => {
     const markup = resolveConfiguredMarkupValue(
       [
@@ -23,5 +40,41 @@ describe('resolveConfiguredMarkupValue', () => {
     );
 
     expect(markup).toBe(35);
+  });
+
+  test('falls back to default pricing context when store metafields route is unavailable', async () => {
+    mockGetStoreMarkupPercent.mockResolvedValue(null);
+
+    const context = await resolveBigCommercePricingContext({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      fallback_markup_percent: 30,
+    });
+
+    expect(context).toEqual({
+      markup_percent: 30,
+      price_list_id: 1,
+      currency: 'USD',
+      markup_namespace: 'merchmonk',
+      markup_key: 'product_markup',
+    });
+  });
+
+  test('uses the persisted store markup percent when available', async () => {
+    mockGetStoreMarkupPercent.mockResolvedValue(42);
+
+    const context = await resolveBigCommercePricingContext({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      fallback_markup_percent: 30,
+    });
+
+    expect(context).toEqual({
+      markup_percent: 42,
+      price_list_id: 1,
+      currency: 'USD',
+      markup_namespace: 'merchmonk',
+      markup_key: 'product_markup',
+    });
   });
 });

@@ -201,6 +201,204 @@ describe('integration job worker', () => {
     );
   });
 
+  test('marks non-retryable catalog sync configuration failures as failed immediately', async () => {
+    mockWithVendorExecutionLock.mockImplementation(async (_vendorId, callback) => {
+      await callback();
+      return { acquired: true };
+    });
+    mockGetSystemSessionContext.mockRejectedValue(
+      new Error('No BigCommerce store connection is configured for background execution.'),
+    );
+
+    const { handler } = await import('../../workers/integrationJobWorker');
+
+    await expect(
+      handler({
+        Records: [
+          {
+            body: JSON.stringify({ integrationJobId: 90 }),
+            attributes: { ApproximateReceiveCount: '1' },
+          },
+        ],
+      }),
+    ).rejects.toThrow('No BigCommerce store connection is configured for background execution.');
+
+    expect(mockFinalizeIntegrationJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        status: 'FAILED',
+      }),
+    );
+    expect(mockUpdateIntegrationJob).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        status: 'ENQUEUED',
+      }),
+    );
+    expect(mockCreateIntegrationJobEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        event_name: 'job_failed',
+        level: 'error',
+      }),
+    );
+  });
+
+  test('marks deterministic ProductData SOAP faults as failed immediately instead of retrying', async () => {
+    mockWithVendorExecutionLock.mockImplementation(async (_vendorId, callback) => {
+      await callback();
+      return { acquired: true };
+    });
+    mockRunVendorSync.mockRejectedValue(
+      new Error('ProductData discovery failed before any product IDs were found. getProductSellable: WsVersion not found.'),
+    );
+
+    const { handler } = await import('../../workers/integrationJobWorker');
+
+    await expect(
+      handler({
+        Records: [
+          {
+            body: JSON.stringify({ integrationJobId: 90 }),
+            attributes: { ApproximateReceiveCount: '1' },
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      'ProductData discovery failed before any product IDs were found. getProductSellable: WsVersion not found.',
+    );
+
+    expect(mockFinalizeIntegrationJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        status: 'FAILED',
+      }),
+    );
+    expect(mockCreateIntegrationJobEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        event_name: 'job_failed',
+        level: 'error',
+      }),
+    );
+  });
+
+  test('marks BigCommerce 422 validation failures as failed immediately instead of retrying', async () => {
+    mockWithVendorExecutionLock.mockImplementation(async (_vendorId, callback) => {
+      await callback();
+      return { acquired: true };
+    });
+    mockRunVendorSync.mockRejectedValue(
+      new Error(
+        'Failed to create BigCommerce category (422): {"status":422,"errors":{"name":"name must have a length between 1 and 50"}}',
+      ),
+    );
+
+    const { handler } = await import('../../workers/integrationJobWorker');
+
+    await expect(
+      handler({
+        Records: [
+          {
+            body: JSON.stringify({ integrationJobId: 90 }),
+            attributes: { ApproximateReceiveCount: '1' },
+          },
+        ],
+      }),
+    ).rejects.toThrow('Failed to create BigCommerce category (422)');
+
+    expect(mockFinalizeIntegrationJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        status: 'FAILED',
+      }),
+    );
+    expect(mockUpdateIntegrationJob).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        status: 'ENQUEUED',
+      }),
+    );
+  });
+
+  test('marks a cancel-requested job as cancelled before execution starts', async () => {
+    mockGetIntegrationJobById.mockResolvedValue({
+      integration_job_id: 90,
+      job_kind: 'CATALOG_SYNC',
+      vendor_id: 14,
+      mapping_id: 33,
+      sync_scope: 'MAPPING',
+      source_action: 'manual_sync',
+      dedupe_key: 'catalog_sync:14:MAPPING:33:manual_sync',
+      correlation_id: 'corr-90',
+      request_payload: {},
+      status: 'CANCEL_REQUESTED',
+      attempt_count: 1,
+      queue_message_id: 'message-90',
+      last_error: 'Cancellation requested by operator.',
+      submitted_at: new Date().toISOString(),
+      started_at: null,
+      ended_at: null,
+    });
+
+    const { handler } = await import('../../workers/integrationJobWorker');
+    await handler({
+      Records: [
+        {
+          body: JSON.stringify({ integrationJobId: 90 }),
+          attributes: { ApproximateReceiveCount: '1' },
+        },
+      ],
+    });
+
+    expect(mockFinalizeIntegrationJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        status: 'CANCELLED',
+      }),
+    );
+    expect(mockCreateIntegrationJobEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        event_name: 'job_cancelled',
+      }),
+    );
+    expect(mockMarkIntegrationJobRunning).not.toHaveBeenCalled();
+  });
+
+  test('marks a running job as cancelled when the sync runner raises a cancellation error', async () => {
+    mockWithVendorExecutionLock.mockImplementation(async (_vendorId, callback) => {
+      await callback();
+      return { acquired: true };
+    });
+    const cancellationError = new Error('Integration job 90 was cancelled by operator.');
+    cancellationError.name = 'IntegrationJobCancelledError';
+    mockRunVendorSync.mockRejectedValue(cancellationError);
+
+    const { handler } = await import('../../workers/integrationJobWorker');
+    await handler({
+      Records: [
+        {
+          body: JSON.stringify({ integrationJobId: 90 }),
+          attributes: { ApproximateReceiveCount: '1' },
+        },
+      ],
+    });
+
+    expect(mockFinalizeIntegrationJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        status: 'CANCELLED',
+      }),
+    );
+    expect(mockCreateIntegrationJobEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration_job_id: 90,
+        event_name: 'job_cancelled',
+      }),
+    );
+  });
+
   test('executes order lifecycle jobs with the order lock and order events', async () => {
     mockGetIntegrationJobById.mockResolvedValue({
       integration_job_id: 144,

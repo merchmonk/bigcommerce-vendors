@@ -175,4 +175,5 @@ const tableCellStyle: React.CSSProperties = {
   color: '#334155',
   padding: '14px',
   verticalAlign: 'top',
+  overflow: 'visible',
 };

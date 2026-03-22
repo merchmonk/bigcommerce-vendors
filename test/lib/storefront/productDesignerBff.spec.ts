@@ -74,7 +74,7 @@ describe('getProductDesignerPayload', () => {
           namespace: 'merchmonk',
           key: 'product_designer_defaults',
           value: JSON.stringify({
-            contractVersion: '2026-03-18.1',
+            contractVersion: '2026-03-22.1',
             source: {
               vendorProductId: 'PC54',
             },
@@ -159,6 +159,20 @@ describe('getProductDesignerPayload', () => {
                 ],
               },
             ],
+            media: {
+              videos: {
+                variantAssets: {
+                  'PC54-BLK-XL': [
+                    {
+                      url: 'https://cdn.example.com/products/1457/demo.mp4',
+                      alt: 'Demo clip',
+                      kind: 'variant',
+                      partId: 'PC54-BLK-XL',
+                    },
+                  ],
+                },
+              },
+            },
           }),
         },
       ],
@@ -168,7 +182,7 @@ describe('getProductDesignerPayload', () => {
           namespace: 'merchmonk',
           key: 'variant_designer_override',
           value: JSON.stringify({
-            contractVersion: '2026-03-18.1',
+            contractVersion: '2026-03-22.1',
             partId: 'PC54-BLK-XL',
             size: 'XL',
             applicableLocationIds: ['FULL_FRONT'],
@@ -202,14 +216,10 @@ describe('getProductDesignerPayload', () => {
         description: 'Blank cotton tee',
         categories: ['Apparel', 'T-Shirts'],
         searchKeywords: ['tee', 'cotton', 'screen print'],
-        primaryImage: {
-          url: 'https://cdn.example.com/products/1457/main.jpg',
-          alt: 'Front view',
-        },
         source: {
           vendorId: 22,
           vendorProductId: 'PC54',
-          contractVersion: '2026-03-18.1',
+          contractVersion: '2026-03-22.1',
         },
       },
       selectedVariant: {
@@ -254,7 +264,7 @@ describe('getProductDesignerPayload', () => {
         status: 'in_stock',
       },
       designer: {
-        contractVersion: '2026-03-18.1',
+        contractVersion: '2026-03-22.1',
         locations: [
           {
             id: 'full_front',
@@ -303,13 +313,25 @@ describe('getProductDesignerPayload', () => {
         ],
       },
       media: {
-        gallery: [
-          {
-            url: 'https://cdn.example.com/products/1457/main.jpg',
-            alt: 'Front view',
-            kind: 'product',
+        gallery: [],
+        variantAssets: {},
+        locationAssets: {},
+        methodAssets: {},
+        videos: {
+          gallery: [],
+          variantAssets: {
+            'PC54-BLK-XL': [
+              {
+                url: 'https://cdn.example.com/products/1457/demo.mp4',
+                alt: 'Demo clip',
+                kind: 'variant',
+                partId: 'PC54-BLK-XL',
+              },
+            ],
           },
-        ],
+          locationAssets: {},
+          methodAssets: {},
+        },
       },
       relatedProducts: [
         {

@@ -3,6 +3,7 @@ import { recordApiExchange } from '../apiTelemetry';
 
 export interface SoapCallOptions {
   endpointUrl: string;
+  endpointName: string;
   operationName: string;
   endpointVersion: string;
   vendorAccountId?: string | null;
@@ -19,6 +20,11 @@ export interface SoapCallResult {
   parsedBody: Record<string, unknown> | null;
 }
 
+interface SoapOperationMetadata {
+  requestElementName: string;
+  targetNamespace: string;
+}
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -27,6 +33,36 @@ const parser = new XMLParser({
   parseAttributeValue: true,
   trimValues: true,
 });
+const wsdlMetadataCache = new Map<string, Promise<SoapOperationMetadata | null>>();
+
+function normalizeEndpointSegment(endpointName: string): string {
+  return endpointName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+}
+
+export function resolveSoapEndpointUrl(options: {
+  endpointUrl: string;
+  endpointName: string;
+  endpointVersion: string;
+}): string {
+  const url = new URL(options.endpointUrl);
+  const normalizedEndpoint = normalizeEndpointSegment(options.endpointName);
+  const trimmedPath = url.pathname.replace(/\/+$/, '');
+  const segments = trimmedPath.split('/').filter(Boolean);
+  const lastSegment = segments[segments.length - 1];
+  const secondLastSegment = segments[segments.length - 2];
+
+  if (lastSegment === options.endpointVersion && secondLastSegment === normalizedEndpoint) {
+    return url.toString();
+  }
+
+  if (lastSegment === normalizedEndpoint) {
+    url.pathname = `${trimmedPath}/${options.endpointVersion}`;
+    return url.toString();
+  }
+
+  url.pathname = `${trimmedPath}/${normalizedEndpoint}/${options.endpointVersion}`.replace(/\/+/g, '/');
+  return url.toString();
+}
 
 function escapeXml(value: string): string {
   return value
@@ -37,37 +73,109 @@ function escapeXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
-function serializeSoapField(name: string, value: unknown): string {
+function serializeSoapField(name: string, value: unknown, elementPrefix?: string): string {
+  const tagName = elementPrefix ? `${elementPrefix}:${name}` : name;
+
   if (value === undefined || value === null) return '';
 
   if (Array.isArray(value)) {
-    return value.map(item => serializeSoapField(name, item)).join('');
+    return value.map(item => serializeSoapField(name, item, elementPrefix)).join('');
   }
 
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
     const nested = Object.entries(record)
-      .map(([nestedName, nestedValue]) => serializeSoapField(nestedName, nestedValue))
+      .map(([nestedName, nestedValue]) => serializeSoapField(nestedName, nestedValue, elementPrefix))
       .join('');
-    return `<urn:${name}>${nested}</urn:${name}>`;
+    return `<${tagName}>${nested}</${tagName}>`;
   }
 
   if (typeof value === 'boolean') {
-    return `<urn:${name}>${value ? 'true' : 'false'}</urn:${name}>`;
+    return `<${tagName}>${value ? 'true' : 'false'}</${tagName}>`;
   }
 
-  return `<urn:${name}>${escapeXml(String(value))}</urn:${name}>`;
+  return `<${tagName}>${escapeXml(String(value))}</${tagName}>`;
 }
 
-function serializeRequestFields(fields: Record<string, unknown> | undefined): string {
+function serializeRequestFields(
+  fields: Record<string, unknown> | undefined,
+  options?: { elementPrefix?: string },
+): string {
   if (!fields) return '';
 
   return Object.entries(fields)
-    .map(([name, value]) => serializeSoapField(name, value))
+    .map(([name, value]) => serializeSoapField(name, value, options?.elementPrefix))
     .join('');
 }
 
-function buildSoapEnvelope(options: SoapCallOptions): string {
+function parseSoapOperationMetadata(rawWsdl: string, operationName: string): SoapOperationMetadata | null {
+  const targetNamespaceMatch = rawWsdl.match(/targetNamespace="([^"]+)"/);
+  const targetNamespace = targetNamespaceMatch?.[1];
+  if (!targetNamespace) {
+    return null;
+  }
+
+  const operationExpression = new RegExp(
+    `<wsdl:operation name="${operationName}">[\\s\\S]*?<wsdl:input message="tns:([^"]+)"`,
+  );
+  const operationMatch = rawWsdl.match(operationExpression);
+  const messageName = operationMatch?.[1];
+  if (!messageName) {
+    return null;
+  }
+
+  const messageExpression = new RegExp(
+    `<wsdl:message name="${messageName}">[\\s\\S]*?element="tns:([^"]+)"`,
+  );
+  const messageMatch = rawWsdl.match(messageExpression);
+  const requestElementName = messageMatch?.[1];
+  if (!requestElementName) {
+    return null;
+  }
+
+  return {
+    requestElementName,
+    targetNamespace,
+  };
+}
+
+async function loadSoapOperationMetadata(options: {
+  resolvedEndpointUrl: string;
+  operationName: string;
+}): Promise<SoapOperationMetadata | null> {
+  const cacheKey = `${options.resolvedEndpointUrl}|${options.operationName}`;
+  const cached = wsdlMetadataCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = (async () => {
+    const response = await fetch(`${options.resolvedEndpointUrl}?wsdl`, {
+      method: 'GET',
+      headers: {
+        Accept: 'text/xml, application/wsdl+xml, application/xml;q=0.9, */*;q=0.8',
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    const rawWsdl = await response.text();
+    if (!rawWsdl.includes('<wsdl:definitions')) {
+      return null;
+    }
+
+    return parseSoapOperationMetadata(rawWsdl, options.operationName);
+  })();
+
+  wsdlMetadataCache.set(cacheKey, pending);
+  return pending;
+}
+
+export function buildSoapEnvelope(
+  options: SoapCallOptions,
+  metadata?: SoapOperationMetadata | null,
+): string {
   if (options.requestTemplate) {
     const requestFieldsJson = JSON.stringify(options.requestFields ?? {});
     return options.requestTemplate
@@ -84,14 +192,21 @@ function buildSoapEnvelope(options: SoapCallOptions): string {
     password: options.vendorSecret ?? '',
     ...(options.requestFields ?? {}),
   };
+  const bodyElementName = metadata?.requestElementName ?? options.operationName;
+  const namespace = metadata?.targetNamespace ?? 'urn:PromoStandards';
+  const namespaceAttribute = namespace === 'urn:PromoStandards'
+    ? 'xmlns:urn="urn:PromoStandards"'
+    : `xmlns:tns="${namespace}"`;
+  const namespacePrefix = namespace === 'urn:PromoStandards' ? 'urn' : 'tns';
+  const childElementPrefix = namespace === 'urn:PromoStandards' ? 'urn' : undefined;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:PromoStandards">
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" ${namespaceAttribute}>
   <soapenv:Header/>
   <soapenv:Body>
-    <urn:${options.operationName}>
-      ${serializeRequestFields(mergedFields)}
-    </urn:${options.operationName}>
+    <${namespacePrefix}:${bodyElementName}>
+      ${serializeRequestFields(mergedFields, { elementPrefix: childElementPrefix })}
+    </${namespacePrefix}:${bodyElementName}>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
@@ -113,10 +228,17 @@ function extractSoapBody(parsed: Record<string, unknown>): Record<string, unknow
 export async function callSoapEndpoint(options: SoapCallOptions): Promise<SoapCallResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 45000);
-  const envelope = buildSoapEnvelope(options);
+  const resolvedEndpointUrl = resolveSoapEndpointUrl(options);
+  const operationMetadata = options.requestTemplate
+    ? null
+    : await loadSoapOperationMetadata({
+        resolvedEndpointUrl,
+        operationName: options.operationName,
+      }).catch(() => null);
+  const envelope = buildSoapEnvelope(options, operationMetadata);
 
   try {
-    const response = await fetch(options.endpointUrl, {
+    const response = await fetch(resolvedEndpointUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml; charset=utf-8',
@@ -137,7 +259,7 @@ export async function callSoapEndpoint(options: SoapCallOptions): Promise<SoapCa
 
     await recordApiExchange({
       category: 'vendor-api',
-      target: options.endpointUrl,
+      target: resolvedEndpointUrl,
       method: 'POST',
       action: `${options.operationName}:${options.endpointVersion}`,
       status: response.status,
@@ -162,7 +284,7 @@ export async function callSoapEndpoint(options: SoapCallOptions): Promise<SoapCa
   } catch (error) {
     await recordApiExchange({
       category: 'vendor-api',
-      target: options.endpointUrl,
+      target: resolvedEndpointUrl,
       method: 'POST',
       action: `${options.operationName}:${options.endpointVersion}`,
       request: {

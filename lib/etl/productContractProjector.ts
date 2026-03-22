@@ -1,4 +1,5 @@
 import type {
+  NormalizedMediaAsset,
   NormalizedPhysicalDimensions,
   NormalizedProduct,
   NormalizedVariantPhysical,
@@ -8,7 +9,7 @@ import type {
 } from './productNormalizer';
 import { deriveSellingPrice } from './syncSemantics';
 
-export const PRODUCT_CONTRACT_VERSION = '2026-03-18.1';
+export const PRODUCT_CONTRACT_VERSION = '2026-03-22.1';
 
 export interface ProductContractProjectionContext {
   price_list_id: number;
@@ -229,6 +230,139 @@ function projectVariantCatalog(product: NormalizedProduct, markupPercent: number
   });
 }
 
+function dedupeProjectedMediaAssets(assets: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return assets.filter(
+    (asset, index) =>
+      assets.findIndex(
+        candidate =>
+          candidate.url === asset.url &&
+          candidate.kind === asset.kind &&
+          candidate.partId === asset.partId &&
+          JSON.stringify(candidate.locationIds ?? []) === JSON.stringify(asset.locationIds ?? []) &&
+          JSON.stringify(candidate.decorationIds ?? []) === JSON.stringify(asset.decorationIds ?? []) &&
+          candidate.locationId === asset.locationId,
+      ) === index,
+  );
+}
+
+function rankMediaAsset(asset: NormalizedMediaAsset): number {
+  const classes = (asset.class_types ?? []).map(value => value.toLowerCase());
+  if (classes.includes('primary')) return 400;
+  if (classes.includes('blank') || classes.includes('hero')) return 300;
+  if (classes.includes('finished') || classes.includes('decorated')) return 200;
+  if (classes.includes('marketing') || classes.includes('lifestyle')) return 100;
+  return 0;
+}
+
+function projectMediaAsset(
+  asset: NormalizedMediaAsset,
+  kind: 'product' | 'variant' | 'location' | 'method',
+  extras?: {
+    locationId?: string;
+  },
+): Record<string, unknown> {
+  return {
+    url: asset.url,
+    ...(asset.description ? { alt: asset.description } : {}),
+    ...(asset.description ? { description: asset.description } : {}),
+    kind,
+    ...(asset.part_id ? { partId: asset.part_id } : {}),
+    ...(asset.location_ids?.length ? { locationIds: asset.location_ids } : {}),
+    ...(asset.decoration_ids?.length ? { decorationIds: asset.decoration_ids } : {}),
+    ...(asset.class_types?.length ? { classTypes: asset.class_types } : {}),
+    ...(asset.color ? { color: asset.color } : {}),
+    ...(asset.single_part !== undefined ? { singlePart: asset.single_part } : {}),
+    ...(asset.change_timestamp ? { changeTimestamp: asset.change_timestamp } : {}),
+    ...(asset.width !== undefined ? { width: asset.width } : {}),
+    ...(asset.height !== undefined ? { height: asset.height } : {}),
+    ...(asset.dpi !== undefined ? { dpi: asset.dpi } : {}),
+    ...(extras?.locationId ? { locationId: extras.locationId } : {}),
+  };
+}
+
+function sortMediaAssets(assets: NormalizedMediaAsset[]): NormalizedMediaAsset[] {
+  return [...assets].sort((left, right) => {
+    const scoreDelta = rankMediaAsset(right) - rankMediaAsset(left);
+    if (scoreDelta !== 0) return scoreDelta;
+    return left.url.localeCompare(right.url);
+  });
+}
+
+function projectStructuredMedia(product: NormalizedProduct): Record<string, unknown> | undefined {
+  const assets = sortMediaAssets(product.media_assets ?? []);
+  if (assets.length === 0) {
+    return undefined;
+  }
+
+  const createGroups = (filtered: NormalizedMediaAsset[]): Record<string, unknown> => {
+    const gallery = dedupeProjectedMediaAssets(
+      filtered
+        .filter(asset => !asset.part_id && !(asset.location_ids?.length) && !(asset.decoration_ids?.length))
+        .map(asset => projectMediaAsset(asset, 'product')),
+    );
+
+    const variantAssets = Object.fromEntries(
+      Array.from(
+        filtered.reduce((map, asset) => {
+          if (!asset.part_id) return map;
+          const list = map.get(asset.part_id) ?? [];
+          list.push(projectMediaAsset(asset, 'variant'));
+          map.set(asset.part_id, list);
+          return map;
+        }, new Map<string, Array<Record<string, unknown>>>()),
+      ).map(([partId, partAssets]) => [partId, dedupeProjectedMediaAssets(partAssets)]),
+    );
+
+    const locationAssets = Object.fromEntries(
+      Array.from(
+        filtered.reduce((map, asset) => {
+          for (const locationId of asset.location_ids ?? []) {
+            const list = map.get(locationId) ?? [];
+            list.push(projectMediaAsset(asset, 'location'));
+            map.set(locationId, list);
+          }
+          return map;
+        }, new Map<string, Array<Record<string, unknown>>>()),
+      ).map(([locationId, locationAssetList]) => [locationId, dedupeProjectedMediaAssets(locationAssetList)]),
+    );
+
+    const methodAssets = Object.fromEntries(
+      Array.from(
+        filtered.reduce((map, asset) => {
+          for (const decorationId of asset.decoration_ids ?? []) {
+            const list = map.get(decorationId) ?? [];
+            if (asset.location_ids?.length) {
+              asset.location_ids.forEach(locationId => {
+                list.push(projectMediaAsset(asset, 'method', { locationId }));
+              });
+            } else {
+              list.push(projectMediaAsset(asset, 'method'));
+            }
+            map.set(decorationId, list);
+          }
+          return map;
+        }, new Map<string, Array<Record<string, unknown>>>()),
+      ).map(([decorationId, methodAssetList]) => [decorationId, dedupeProjectedMediaAssets(methodAssetList)]),
+    );
+
+    return {
+      ...(gallery.length > 0 ? { gallery } : {}),
+      ...(Object.keys(variantAssets).length > 0 ? { variantAssets } : {}),
+      ...(Object.keys(locationAssets).length > 0 ? { locationAssets } : {}),
+      ...(Object.keys(methodAssets).length > 0 ? { methodAssets } : {}),
+    };
+  };
+
+  const videoGroups = createGroups(assets.filter(asset => asset.media_type === 'Video'));
+  if (Object.keys(videoGroups).length === 0) {
+    return undefined;
+  }
+
+  return {
+    videos: videoGroups,
+  };
+}
+
 export function projectBigCommerceProductContract(
   product: NormalizedProduct,
   context: ProductContractProjectionContext,
@@ -269,6 +403,7 @@ export function projectBigCommerceProductContract(
     ...(product.pricing_configuration?.available_locations
       ? { availableLocations: product.pricing_configuration.available_locations }
       : {}),
+    ...(projectStructuredMedia(product) ? { media: projectStructuredMedia(product) } : {}),
     ...(product.pricing_configuration?.fob_points
       ? {
           fobPoints: product.pricing_configuration.fob_points.map(point => ({

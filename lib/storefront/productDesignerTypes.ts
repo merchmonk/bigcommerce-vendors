@@ -74,6 +74,31 @@ export interface ContractDecorationLocation {
   methods?: ContractDecorationMethod[];
 }
 
+export interface ContractMediaAsset {
+  url: string;
+  alt?: string;
+  description?: string;
+  kind: 'product' | 'variant' | 'location' | 'method';
+  partId?: string;
+  locationIds?: string[];
+  decorationIds?: string[];
+  classTypes?: string[];
+  color?: string;
+  singlePart?: boolean;
+  changeTimestamp?: string;
+  width?: number;
+  height?: number;
+  dpi?: number;
+  locationId?: string;
+}
+
+export interface ContractMediaGroups {
+  gallery?: ContractMediaAsset[];
+  variantAssets?: Record<string, ContractMediaAsset[]>;
+  locationAssets?: Record<string, ContractMediaAsset[]>;
+  methodAssets?: Record<string, ContractMediaAsset[]>;
+}
+
 export interface ProductDesignerDefaultsContract {
   contractVersion?: string;
   source?: {
@@ -95,6 +120,9 @@ export interface ProductDesignerDefaultsContract {
   locations?: ContractDecorationLocation[];
   availableCharges?: Array<Record<string, unknown>>;
   availableLocations?: Array<Record<string, unknown>>;
+  media?: ContractMediaGroups & {
+    videos?: ContractMediaGroups;
+  };
   fobPoints?: Array<{
     id?: string;
     city?: string;
@@ -215,11 +243,16 @@ export interface PricingPreview {
 }
 
 export interface DesignerMedia {
-  gallery: Array<{
-    url: string;
-    alt?: string;
-    kind: 'product' | 'variant' | 'location' | 'method';
-  }>;
+  gallery: ContractMediaAsset[];
+  variantAssets: Record<string, ContractMediaAsset[]>;
+  locationAssets: Record<string, ContractMediaAsset[]>;
+  methodAssets: Record<string, ContractMediaAsset[]>;
+  videos: {
+    gallery: ContractMediaAsset[];
+    variantAssets: Record<string, ContractMediaAsset[]>;
+    locationAssets: Record<string, ContractMediaAsset[]>;
+    methodAssets: Record<string, ContractMediaAsset[]>;
+  };
 }
 
 export interface RelatedProductSummary {

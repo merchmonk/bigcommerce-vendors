@@ -21,6 +21,8 @@ ARG RELATIVE_PATH_TO_PACKAGE
 COPY --chown=nextjs:nodejs .next/standalone ./
 # Copy public directory for image optimization (Next.js needs source images)
 COPY --chown=nextjs:nodejs public ./$RELATIVE_PATH_TO_PACKAGE/public
+RUN find /app/node_modules/.prisma/client -type f \( -name 'libquery_engine-*' -o -name 'query_engine_bg*' \) ! -name 'libquery_engine-linux-musl-arm64-openssl-3.0.x.so.node' -delete
+RUN find /app/node_modules/@prisma/client/runtime -type f -name '*.map' -delete
 
 USER nextjs
 

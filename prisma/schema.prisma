@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["linux-musl-arm64-openssl-3.0.x", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -40,6 +41,7 @@ enum SyncRunStatus {
   RUNNING
   SUCCESS
   FAILED
+  CANCELLED
 }
 
 enum IntegrationJobKind {
@@ -55,9 +57,11 @@ enum IntegrationJobStatus {
   PENDING
   ENQUEUED
   RUNNING
+  CANCEL_REQUESTED
   SUCCEEDED
   FAILED
   DEAD_LETTERED
+  CANCELLED
 }
 
 enum OperatorTraceCategory {
@@ -100,7 +104,7 @@ enum EnrichmentRetryStatus {
 
 model User {
   id       Int     @id @default(autoincrement())
-  userId   Int     @unique
+  user_id  Int     @unique
   email    String
   username String?
 
@@ -108,22 +112,23 @@ model User {
 }
 
 model Store {
-  id          Int     @id @default(autoincrement())
-  storeHash   String  @unique @db.VarChar(10)
-  accessToken String?
-  scope       String?
+  id            Int     @id @default(autoincrement())
+  store_hash    String  @unique @db.VarChar(10)
+  access_token  String?
+  scope         String?
+  markup_percent Int?
 
   @@map("stores")
 }
 
 model StoreUser {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  storeHash String   @db.VarChar(10)
-  isAdmin   Boolean?
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  store_hash String   @db.VarChar(10)
+  is_admin   Boolean?
 
-  @@unique([userId, storeHash])
-  @@map("storeUsers")
+  @@unique([user_id, store_hash])
+  @@map("store_users")
 }
 
 model Vendor {

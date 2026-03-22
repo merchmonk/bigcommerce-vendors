@@ -328,6 +328,7 @@ async function invokeCapability(
   const adapter = resolveEndpointAdapter(capability.protocol);
   const result = await adapter.invokeEndpoint({
     endpointUrl: vendor.vendor_api_url,
+    endpointName: capability.endpoint_name,
     operationName: capability.operation_name,
     endpointVersion: capability.endpoint_version,
     vendorAccountId: vendor.vendor_account_id,

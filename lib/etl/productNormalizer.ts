@@ -5,6 +5,24 @@ export interface SharedOptionValues {
   product_cost_markup?: number;
 }
 
+export type NormalizedMediaType = 'Image' | 'Video';
+
+export interface NormalizedMediaAsset {
+  url: string;
+  media_type: NormalizedMediaType;
+  part_id?: string;
+  location_ids?: string[];
+  decoration_ids?: string[];
+  description?: string;
+  class_types?: string[];
+  color?: string;
+  single_part?: boolean;
+  change_timestamp?: string;
+  width?: number;
+  height?: number;
+  dpi?: number;
+}
+
 export type EnrichmentSourceStatus = 'SUCCESS' | 'FAILED' | 'MISSING' | 'SKIPPED';
 
 export interface ProductEnrichmentStatus {
@@ -174,6 +192,7 @@ export interface NormalizedProduct {
   variants?: NormalizedVariant[];
   bulk_pricing_rules?: NormalizedBulkPricingRule[];
   images?: Array<{ image_url: string; is_thumbnail?: boolean }>;
+  media_assets?: NormalizedMediaAsset[];
   custom_fields?: Array<{ name: string; value: string }>;
   search_keywords?: string;
   related_vendor_product_ids?: string[];
@@ -287,6 +306,26 @@ function dedupeStrings(values: Array<string | undefined | null>): string[] {
   return output;
 }
 
+function dedupeMediaAssets(assets: NormalizedMediaAsset[]): NormalizedMediaAsset[] {
+  const seen = new Set<string>();
+  const output: NormalizedMediaAsset[] = [];
+
+  for (const asset of assets) {
+    const key = [
+      asset.media_type,
+      asset.url,
+      asset.part_id ?? '',
+      (asset.location_ids ?? []).join(','),
+      (asset.decoration_ids ?? []).join(','),
+    ].join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(asset);
+  }
+
+  return output;
+}
+
 function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
   const bySku = new Map<string, NormalizedProduct>();
   for (const product of products) {
@@ -327,6 +366,8 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
     const uniqueImages = mergedImages.filter(
       (image, index) => mergedImages.findIndex(item => item.image_url === image.image_url) === index,
     );
+    const mergedMediaAssets = [...(existing.media_assets ?? []), ...(product.media_assets ?? [])];
+    const uniqueMediaAssets = dedupeMediaAssets(mergedMediaAssets);
 
     bySku.set(product.sku, {
       sku: product.sku,
@@ -342,6 +383,7 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
       variants: uniqueVariants.length > 0 ? uniqueVariants : undefined,
       bulk_pricing_rules: uniqueBulkRules.length > 0 ? uniqueBulkRules : undefined,
       images: uniqueImages.length > 0 ? uniqueImages : undefined,
+      media_assets: uniqueMediaAssets.length > 0 ? uniqueMediaAssets : undefined,
       custom_fields: uniqueCustomFields.length > 0 ? uniqueCustomFields : undefined,
       search_keywords: product.search_keywords ?? existing.search_keywords,
       related_vendor_product_ids: uniqueRelated.length > 0 ? uniqueRelated : undefined,
@@ -362,16 +404,28 @@ function extractProductCategories(node: AnyRecord): string[] {
   const categoryArray = asRecord(node.ProductCategoryArray);
   if (!categoryArray) return [];
 
-  return asArray(categoryArray.ProductCategory)
+  const categories = asArray(categoryArray.ProductCategory)
     .map(item => asRecord(item))
     .filter((item): item is AnyRecord => !!item)
     .map(item => {
       const category = getFirstString(item, ['category']);
       const subCategory = getFirstString(item, ['subCategory']);
-      if (!category) return undefined;
-      return subCategory ? `${category} > ${subCategory}` : category;
+      return {
+        category: category?.trim(),
+        subCategory: subCategory?.trim(),
+      };
     })
-    .filter((value): value is string => !!value);
+    .filter(value => !!value.category && value.category.length > 0 && value.category.length <= 50);
+
+  const hierarchical = categories
+    .filter(value => !!value.subCategory && value.subCategory.length > 0 && value.subCategory.length <= 50)
+    .map(value => `${value.category} > ${value.subCategory}`);
+
+  if (hierarchical.length > 0) {
+    return dedupeStrings(hierarchical);
+  }
+
+  return dedupeStrings(categories.map(value => value.category));
 }
 
 function extractProductKeywords(node: AnyRecord): string[] {

@@ -4,7 +4,10 @@ import { recordInternalFailure } from '../../../lib/apiTelemetry';
 import logger from '../../../lib/logger';
 import { buildApiRequestContext, runWithRequestContext } from '../../../lib/requestContext';
 import { testVendorConnectionConfig } from '../../../lib/etl/runner';
-import { discoverPromostandardsCapabilities } from '../../../lib/vendors/promostandardsDiscovery';
+import {
+  discoverPromostandardsCapabilities,
+  resolvePromostandardsCapabilityMappings,
+} from '../../../lib/vendors/promostandardsDiscovery';
 import type { IntegrationFamily, MappingProtocol } from '../../../types';
 
 interface TestConnectionBody {
@@ -41,7 +44,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           api_protocol: body.api_protocol ?? 'SOAP',
         });
 
-        return res.status(result.ok ? 200 : 400).json(result);
+        const endpointMappingIds =
+          result.ok && result.available_endpoint_count > 0
+            ? await resolvePromostandardsCapabilityMappings(result)
+            : [];
+
+        return res.status(result.ok ? 200 : 400).json({
+          ...result,
+          endpoint_mapping_ids: endpointMappingIds,
+        });
       }
 
       const result = await testVendorConnectionConfig({

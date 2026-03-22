@@ -8,6 +8,7 @@ describe('VendorForm', () => {
       ok: true,
       message: 'Found endpoints',
       available_endpoint_count: 1,
+      endpoint_mapping_ids: [101],
       fingerprint: 'abc123',
       tested_at: '2026-03-19T10:00:00.000Z',
       endpoints: [
@@ -54,6 +55,76 @@ describe('VendorForm', () => {
         vendor_name: 'Hit Promo',
         connection_tested: true,
         integration_family: 'PROMOSTANDARDS',
+        endpoint_mapping_ids: [101],
+        promostandards_capabilities: {
+          fingerprint: 'abc123',
+          tested_at: '2026-03-19T10:00:00.000Z',
+          available_endpoint_count: 1,
+          credentials_valid: null,
+          endpoints: [],
+        },
+      }),
+    );
+  });
+
+  test('strips verbose PromoStandards probe diagnostics before submit', async () => {
+    const handleSubmit = jest.fn();
+    const handleTestConnection = jest.fn().mockResolvedValue({
+      ok: true,
+      message: 'Found endpoints',
+      available_endpoint_count: 1,
+      credentials_valid: true,
+      endpoint_mapping_ids: [201],
+      fingerprint: 'compact-123',
+      tested_at: '2026-03-21T22:00:00.000Z',
+      endpoints: [
+        {
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductSellable',
+          available: true,
+          status_code: 500,
+          message: 'Operation listed in endpoint WSDL.',
+          wsdl_available: true,
+          credentials_valid: true,
+          live_probe_message: 'localizationCountry not found.',
+        },
+      ],
+    });
+
+    render(
+      <VendorForm
+        onSubmit={handleSubmit}
+        onCancel={jest.fn()}
+        onTestConnection={handleTestConnection}
+        requireConnectionTest
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Vendor Name'), {
+      target: { value: 'Compact Vendor' },
+    });
+    fireEvent.change(screen.getByLabelText('Vendor API'), {
+      target: { value: 'https://example.com/soap' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Test Vendor' }));
+    await waitFor(() => expect(handleTestConnection).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Vendor' }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+
+    expect(handleSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint_mapping_ids: [201],
+        promostandards_capabilities: {
+          fingerprint: 'compact-123',
+          tested_at: '2026-03-21T22:00:00.000Z',
+          available_endpoint_count: 1,
+          credentials_valid: true,
+          endpoints: [],
+        },
       }),
     );
   });
