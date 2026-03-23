@@ -15,6 +15,24 @@ interface RecordApiExchangeInput {
   error?: unknown;
 }
 
+function summarizeResponse(response: Record<string, unknown> | undefined): string | undefined {
+  if (!response) {
+    return undefined;
+  }
+
+  const rawBody = typeof response.body === 'string' ? response.body.trim() : '';
+  if (rawBody) {
+    return rawBody.slice(0, 2000);
+  }
+
+  try {
+    const serialized = JSON.stringify(response);
+    return serialized ? serialized.slice(0, 2000) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function recordApiExchange(
   input: RecordApiExchangeInput,
 ): Promise<SnapshotArchiveReference | null> {
@@ -71,6 +89,9 @@ export async function recordApiExchange(
     status: input.status,
     snapshot: snapshotReference,
     hasError: Boolean(input.error),
+    ...(input.status !== undefined && input.status >= 400 && summarizeResponse(input.response)
+      ? { response_summary: summarizeResponse(input.response) }
+      : {}),
   });
 
   return snapshotReference;

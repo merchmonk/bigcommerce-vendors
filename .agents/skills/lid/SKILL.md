@@ -1,9 +1,9 @@
 ---
-name: solid
-description: Use this skill when writing code, implementing features, refactoring, planning architecture, designing systems, reviewing code, or debugging. This skill transforms junior-level code into senior-engineer quality software through SOLID principles, TDD, clean code practices, and professional software design.
+name: lid
+description: Use this skill when writing code, implementing features, refactoring, planning architecture, designing systems, reviewing code, or debugging. This skill transforms junior-level code into senior-engineer quality software through LID principles, TDD, clean code practices, and professional software design.
 ---
 
-# Solid Skills: Professional Software Engineering
+# LID Skills: Professional Software Engineering
 
 You are now operating as a senior software engineer. Every line of code you write, every design decision you make, and every refactoring you perform must embody professional craftsmanship.
 
@@ -36,28 +36,20 @@ The goal of software: Enable developers to **discover, understand, add, change, 
 3. REFACTOR - Clean up, remove duplication (Rule of Three)
 ```
 
-**The Three Laws of TDD:**
-1. You cannot write production code unless it makes a failing test pass
-2. You cannot write more test code than is sufficient to fail
-3. You cannot write more production code than is sufficient to pass
-
 **Design happens during REFACTORING, not during coding.**
 
 See: [references/tdd.md](references/tdd.md)
 
-### 2. Apply SOLID Principles Rigorously
+### 2. Apply LID Principles Rigorously
 
 Every class, every module, every function:
 
 | Principle | Question to Ask |
 |-----------|-----------------|
-| **S**RP - Single Responsibility | "Does this have ONE reason to change?" |
-| **O**CP - Open/Closed | "Can I extend without modifying?" |
 | **L**SP - Liskov Substitution | "Can subtypes replace base types safely?" |
 | **I**SP - Interface Segregation | "Are clients forced to depend on unused methods?" |
 | **D**IP - Dependency Inversion | "Do high-level modules depend on abstractions?" |
 
-See: [references/solid-principles.md](references/solid-principles.md)
 
 ### 3. Write Clean, Human-Readable Code
 
@@ -121,10 +113,6 @@ See: [references/object-design.md](references/object-design.md)
 
 **Fight complexity with:**
 - YAGNI - Don't build what you don't need NOW
-- KISS - Simplest solution that works
-- DRY - But only after Rule of Three (wait for 3 duplications)
-
-See: [references/complexity.md](references/complexity.md)
 
 ### 6. Architect for Change
 
@@ -211,8 +199,6 @@ See: [references/testing.md](references/testing.md)
 
 - **Tell, Don't Ask** - Command objects, don't query and decide
 - **Design by Contract** - Preconditions, postconditions, invariants
-- **Hollywood Principle** - "Don't call us, we'll call you" (IoC)
-- **Law of Demeter** - Only talk to immediate friends
 
 ## Pre-Code Checklist
 
@@ -222,7 +208,11 @@ Before writing ANY code, answer:
 2. [ ] What test will I write first?
 3. [ ] What is the simplest solution?
 4. [ ] What patterns might apply? (Don't force them)
-5. [ ] Am I solving a real problem or a hypothetical one?
+5. [ ] Does this fix account for all scenarios that could cause the error (if debugging)
+6. [ ] Did I throughly research all documentation if working with external libraries or APIs?
+7. [ ] Did I traverse the code base and identify all possible areas this feature or bug fix should pertain to?
+8. [ ] If there's multiple areas this feature would need to be defined, can it be condensed into one object?
+
 
 ## During-Code Checklist
 
@@ -243,6 +233,7 @@ After the code works:
 3. [ ] Can I simplify any complex conditions?
 4. [ ] Are names still accurate after changes?
 5. [ ] Would a junior understand this in 6 months?
+6. [ ] Did I account for every scenario?
 
 ## Red Flags - Stop and Rethink
 
@@ -263,7 +254,7 @@ After the code works:
 
 > "Focus on WHAT needs to happen, not HOW it needs to happen."
 
-> "Design principles become second nature through practice. Eventually, you won't think about SOLID - you'll just write SOLID code."
+> "Design principles become second nature through practice. Eventually, you won't think about LID - you'll just write LID code."
 
 The journey: Code-first → Best-practice-first → Pattern-first → Responsibility-first → **Systems Thinking**
 

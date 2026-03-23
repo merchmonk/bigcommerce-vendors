@@ -91,6 +91,7 @@ const EARLY_SYNC_CANARY_PRODUCT_COUNT = 2;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_MIN_ATTEMPTS = 100;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO = 0.5;
 const DEFAULT_MAX_PRODUCT_REFERENCES_PER_RUN = 50;
+const INVENTORY_SYNC_FLUSH_TARGET_COUNT = 25;
 
 interface ProductAssemblyStatusSummary {
   blockedCount: number;
@@ -610,6 +611,51 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
   }> = [];
   let recordsRead = 0;
   let recordsWritten = 0;
+  const pendingInventorySyncTargets: BigCommerceInventorySyncTarget[] = [];
+
+  const flushPendingInventorySyncTargets = async (reason: string, force = false): Promise<void> => {
+    if (pendingInventorySyncTargets.length === 0) {
+      return;
+    }
+
+    if (!force && pendingInventorySyncTargets.length < INVENTORY_SYNC_FLUSH_TARGET_COUNT) {
+      return;
+    }
+
+    const targets = pendingInventorySyncTargets.splice(0, pendingInventorySyncTargets.length);
+    const productItemCount = targets.reduce(
+      (count, target) => count + target.items.filter(item => 'product_id' in item).length,
+      0,
+    );
+    const variantItemCount = targets.reduce(
+      (count, target) => count + target.items.filter(item => 'variant_id' in item).length,
+      0,
+    );
+
+    logger.info('vendor sync BigCommerce inventory batch started', {
+      syncRunId: syncRun.sync_run_id,
+      vendorId: input.vendorId,
+      reason,
+      targetCount: targets.length,
+      productItemCount,
+      variantItemCount,
+    });
+
+    await syncBigCommerceInventoryBatch({
+      accessToken: input.session.accessToken,
+      storeHash: input.session.storeHash,
+      targets,
+    });
+
+    logger.info('vendor sync BigCommerce inventory batch completed', {
+      syncRunId: syncRun.sync_run_id,
+      vendorId: input.vendorId,
+      reason,
+      targetCount: targets.length,
+      productItemCount,
+      variantItemCount,
+    });
+  };
 
   try {
     const priorSyncRuns = await listSyncRunsForVendor(input.vendorId);
@@ -655,7 +701,6 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     const seenReadProductKeys = new Set<string>();
     const processedProductKeys = new Set<string>();
     const writtenProductKeys = new Set<string>();
-    const inventorySyncTargets: BigCommerceInventorySyncTarget[] = [];
     let blockedProductCount = 0;
     let canaryEvaluatedProductCount = 0;
     let canarySuccessfulProductCount = 0;
@@ -895,7 +940,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
               }
 
               if (partialUpsert.inventory_sync_target) {
-                inventorySyncTargets.push(partialUpsert.inventory_sync_target);
+                pendingInventorySyncTargets.push(partialUpsert.inventory_sync_target);
               }
             }
 
@@ -948,7 +993,8 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
           }
 
           if (upsertResult.inventory_sync_target) {
-            inventorySyncTargets.push(upsertResult.inventory_sync_target);
+            pendingInventorySyncTargets.push(upsertResult.inventory_sync_target);
+            await flushPendingInventorySyncTargets('productdata_batch_progress');
           }
 
           logger.info('vendor sync BigCommerce product upsert completed', {
@@ -1229,7 +1275,8 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         }
 
         if (upsertResult.inventory_sync_target) {
-          inventorySyncTargets.push(upsertResult.inventory_sync_target);
+          pendingInventorySyncTargets.push(upsertResult.inventory_sync_target);
+          await flushPendingInventorySyncTargets('endpoint_batch_progress');
         }
 
         logger.info('vendor sync BigCommerce product upsert completed', {
@@ -1244,11 +1291,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       }
     }
 
-    await syncBigCommerceInventoryBatch({
-      accessToken: input.session.accessToken,
-      storeHash: input.session.storeHash,
-      targets: inventorySyncTargets,
-    });
+    await flushPendingInventorySyncTargets('finalize', true);
 
     await persistSyncProgress({
       syncRunId: syncRun.sync_run_id,
@@ -1315,6 +1358,21 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       continuation: continuationResult,
     };
   } catch (error: any) {
+    if (pendingInventorySyncTargets.length > 0) {
+      try {
+        await flushPendingInventorySyncTargets('failure', true);
+      } catch (inventoryError) {
+        logger.error('vendor sync inventory flush failed after sync error', {
+          syncRunId: syncRun.sync_run_id,
+          vendorId: input.vendorId,
+          pendingTargetCount: pendingInventorySyncTargets.length,
+          error: {
+            message: inventoryError instanceof Error ? inventoryError.message : 'Inventory flush failed',
+          },
+        });
+      }
+    }
+
     if (error?.name === 'IntegrationJobCancelledError') {
       await persistSyncProgress({
         syncRunId: syncRun.sync_run_id,

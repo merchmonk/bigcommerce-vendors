@@ -12,7 +12,11 @@ import {
   updateVendor,
 } from '../../../lib/vendors';
 import { assertVendorCanDeactivate } from '../../../lib/vendors/operatorInsights';
-import { getVendorConnectionSections } from '../../../lib/vendors/vendorConfig';
+import {
+  applyPromostandardsEndpointRuntimeOverrides,
+  buildVendorConnectionConfig,
+  getVendorConnectionSections,
+} from '../../../lib/vendors/vendorConfig';
 import { prepareVendorSubmission, type VendorSubmissionInput } from '../../../lib/vendors/vendorSubmission';
 
 interface UpdateVendorBody extends VendorSubmissionInput {}
@@ -37,9 +41,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return;
           }
           const assignedMappings = await listEnabledVendorEndpointMappings(vendorId);
+          const sections = getVendorConnectionSections(vendor.connection_config);
+          const promostandardsCapabilities = applyPromostandardsEndpointRuntimeOverrides({
+            capabilities: sections.promostandards_capabilities,
+            endpointMappings: assignedMappings.map(item => ({
+              endpoint_name: item.mapping.endpoint_name,
+              endpoint_version: item.mapping.endpoint_version,
+              operation_name: item.mapping.operation_name,
+              runtime_config: item.runtime_config,
+            })),
+          });
+          const connectionConfig = buildVendorConnectionConfig({
+            existingConfig: vendor.connection_config,
+            integrationFamily: vendor.integration_family,
+            customApiServiceType: sections.custom_api?.service_type,
+            customApiFormatData: sections.custom_api?.format_data,
+            promostandardsCapabilities: promostandardsCapabilities ?? null,
+          });
           res.status(200).json({
             ...vendor,
-            ...getVendorConnectionSections(vendor.connection_config),
+            connection_config: connectionConfig,
+            ...sections,
+            promostandards_capabilities: promostandardsCapabilities,
             endpoint_mappings: assignedMappings.map(item => ({
               mapping_id: item.mapping_id,
               enabled: item.is_enabled,

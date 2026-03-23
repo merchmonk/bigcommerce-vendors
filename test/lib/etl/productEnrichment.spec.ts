@@ -26,7 +26,7 @@ const vendor = {
 
 describe('buildProductAssembly', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockInvokeEndpoint.mockReset();
   });
 
   test('blocks product when mapped pricing call fails', async () => {
@@ -902,6 +902,145 @@ describe('buildProductAssembly', () => {
     ]);
   });
 
+  test('extracts nested PromoStandards quantity values for variant inventory', async () => {
+    mockInvokeEndpoint
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          pricing: {
+            price: 9.5,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          GetInventoryLevelsResponse: {
+            Inventory: {
+              productId: 'P-1',
+              PartInventoryArray: {
+                PartInventory: [
+                  {
+                    partId: 'SKU-1-BLK',
+                    quantityAvailable: {
+                      Quantity: {
+                        uom: 'EA',
+                        value: 10820,
+                      },
+                    },
+                  },
+                  {
+                    partId: 'SKU-1-BLU',
+                    quantityAvailable: {
+                      Quantity: {
+                        uom: 'EA',
+                        value: 2877,
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+
+    const result = await buildProductAssembly({
+      vendor: vendor as any,
+      assignedMappings: [
+        {
+          vendor_endpoint_mapping_id: 1,
+          vendor_id: 22,
+          mapping_id: 111,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 111,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'PricingAndConfiguration',
+            endpoint_version: '1.0.0',
+            operation_name: 'getConfigurationAndPricing',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          vendor_endpoint_mapping_id: 2,
+          vendor_id: 22,
+          mapping_id: 112,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 112,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'Inventory',
+            endpoint_version: '2.0.0',
+            operation_name: 'getInventoryLevels',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+      ] as any,
+      baseProducts: [
+        {
+          sku: 'SKU-1',
+          vendor_product_id: 'P-1',
+          name: 'Product',
+          variants: [
+            {
+              sku: 'SKU-1-BLK',
+              source_sku: 'SKU-1-BLK',
+              part_id: 'SKU-1-BLK',
+              option_values: [{ option_display_name: 'Color', label: 'Black' }],
+            },
+            {
+              sku: 'SKU-1-BLU',
+              source_sku: 'SKU-1-BLU',
+              part_id: 'SKU-1-BLU',
+              option_values: [{ option_display_name: 'Color', label: 'Blue' }],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.products[0].inventory_level).toBe(13697);
+    expect(result.products[0].variants).toEqual([
+      expect.objectContaining({
+        sku: 'SKU-1-BLK',
+        inventory_level: 10820,
+      }),
+      expect.objectContaining({
+        sku: 'SKU-1-BLU',
+        inventory_level: 2877,
+      }),
+    ]);
+  });
+
   test('calls getMediaContent for image media type', async () => {
     mockInvokeEndpoint
       .mockResolvedValueOnce({
@@ -1453,6 +1592,159 @@ describe('buildProductAssembly', () => {
         expect.objectContaining({ url: 'https://cdn.example.com/part-black.jpg', part_id: 'PART-BLK' }),
         expect.objectContaining({ url: 'https://cdn.example.com/part-red.jpg', part_id: 'PART-RED' }),
       ]),
+    );
+  });
+
+  test('does not fan out to part-scoped media calls when product-level media already includes part coverage', async () => {
+    mockInvokeEndpoint
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          pricing: {
+            price: 9.5,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          inventoryResponse: {
+            quantityAvailable: 12,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          MediaContentArray: {
+            MediaContent: [
+              {
+                url: 'https://cdn.example.com/part-black.jpg',
+                mediaType: 'Image',
+                singlePart: true,
+                partId: 'PART-BLK',
+              },
+            ],
+          },
+        },
+      });
+
+    await buildProductAssembly({
+      vendor: vendor as any,
+      assignedMappings: [
+        {
+          vendor_endpoint_mapping_id: 1,
+          vendor_id: 22,
+          mapping_id: 111,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 111,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'PricingAndConfiguration',
+            endpoint_version: '1.0.0',
+            operation_name: 'getConfigurationAndPricing',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          vendor_endpoint_mapping_id: 2,
+          vendor_id: 22,
+          mapping_id: 112,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 112,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'Inventory',
+            endpoint_version: '1.2.1',
+            operation_name: 'getInventoryLevels',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          vendor_endpoint_mapping_id: 3,
+          vendor_id: 22,
+          mapping_id: 113,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 113,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'ProductMedia',
+            endpoint_version: '1.1.0',
+            operation_name: 'getMediaContent',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+      ] as any,
+      baseProducts: [
+        {
+          sku: 'SKU-1',
+          source_sku: 'SKU-1',
+          vendor_product_id: 'P-1',
+          name: 'Product',
+          cost_price: 10,
+          variants: [
+            {
+              sku: 'SKU-1-BLK',
+              part_id: 'PART-BLK',
+              option_values: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(mockInvokeEndpoint).toHaveBeenCalledTimes(3);
+    expect(mockInvokeEndpoint).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationName: 'getMediaContent',
+        runtimeConfig: expect.objectContaining({
+          request_fields: expect.objectContaining({
+            partId: 'SKU-1',
+          }),
+        }),
+      }),
     );
   });
 });

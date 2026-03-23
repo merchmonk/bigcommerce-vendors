@@ -18,6 +18,15 @@ export function createHeaders(accessToken: string): HeadersInit {
   };
 }
 
+function toTelemetryAction(errorMessage: string): string {
+  const trimmed = errorMessage.trim();
+  if (!trimmed) {
+    return 'BigCommerce API request';
+  }
+
+  return trimmed.replace(/^Failed to\s+/i, '');
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!text) return {} as T;
@@ -30,6 +39,7 @@ export async function requestJson<T>(
   options: RequestInit,
   errorMessage: string,
 ): Promise<T> {
+  const telemetryAction = toTelemetryAction(errorMessage);
   const headers = {
     ...createHeaders(accessToken),
     ...(options.headers ?? {}),
@@ -51,7 +61,7 @@ export async function requestJson<T>(
         category: 'bigcommerce-api',
         target: url,
         method: options.method ?? 'GET',
-        action: errorMessage,
+        action: telemetryAction,
         status: response.status,
         request: {
           headers,
@@ -69,7 +79,7 @@ export async function requestJson<T>(
         category: 'bigcommerce-api',
         target: url,
         method: options.method ?? 'GET',
-        action: errorMessage,
+        action: telemetryAction,
         status: response.status,
         request: {
           headers,
@@ -85,7 +95,7 @@ export async function requestJson<T>(
       category: 'bigcommerce-api',
       target: url,
       method: options.method ?? 'GET',
-      action: errorMessage,
+      action: telemetryAction,
       status: response.status,
       request: {
         headers,
@@ -103,7 +113,7 @@ export async function requestJson<T>(
       category: 'bigcommerce-api',
       target: url,
       method: options.method ?? 'GET',
-      action: errorMessage,
+      action: telemetryAction,
       request: {
         headers,
         body: typeof options.body === 'string' ? options.body : undefined,

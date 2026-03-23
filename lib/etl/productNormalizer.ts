@@ -185,6 +185,7 @@ export interface NormalizedProduct {
   source_sku?: string;
   name: string;
   description?: string;
+  gtin?: string;
   price?: number;
   cost_price?: number;
   weight?: number;
@@ -210,6 +211,7 @@ export interface NormalizedVariant {
   sku: string;
   source_sku?: string;
   part_id?: string;
+  gtin?: string;
   price?: number;
   cost_price?: number;
   weight?: number;
@@ -271,6 +273,41 @@ function getFirstNumber(node: AnyRecord, keys: string[]): number | undefined {
       if (Number.isFinite(parsed)) return parsed;
     }
   }
+  return undefined;
+}
+
+function getNestedQuantityValue(value: unknown): number | undefined {
+  const direct = toNumber(value);
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const nestedQuantity = asRecord(record.Quantity) ?? asRecord(record.quantity);
+  return (
+    toNumber(nestedQuantity?.value) ??
+    toNumber(nestedQuantity?.Value) ??
+    toNumber(record.value) ??
+    toNumber(record.Value)
+  );
+}
+
+function getFirstInventoryNumber(node: AnyRecord, keys: string[]): number | undefined {
+  for (const key of keys) {
+    if (!Object.hasOwn(node, key)) {
+      continue;
+    }
+
+    const value = getNestedQuantityValue(node[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
   return undefined;
 }
 
@@ -609,6 +646,49 @@ function extractPartSize(part: AnyRecord): string | undefined {
   return getFirstString(apparelSize, ['labelSize', 'labelSizeEnum']);
 }
 
+function extractGtin(node: AnyRecord): string | undefined {
+  const direct = getFirstString(node, [
+    'gtin',
+    'GTIN',
+    'upc',
+    'UPC',
+    'ean',
+    'EAN',
+    'barcode',
+    'Barcode',
+  ]);
+  if (direct) {
+    return direct;
+  }
+
+  const identifierArray = asRecord(node.ProductIdentifierArray ?? node.PartIdentifierArray ?? node.IdentifierArray);
+  if (!identifierArray) {
+    return undefined;
+  }
+
+  const identifiers = asArray(
+    identifierArray.ProductIdentifier ??
+      identifierArray.PartIdentifier ??
+      identifierArray.Identifier,
+  )
+    .map(item => asRecord(item))
+    .filter((item): item is AnyRecord => !!item);
+
+  for (const identifier of identifiers) {
+    const type = getFirstString(identifier, ['type', 'identifierType', 'IdentifierType'])?.trim().toLowerCase();
+    if (type && !['gtin', 'upc', 'ean', 'barcode'].includes(type)) {
+      continue;
+    }
+
+    const value = getFirstString(identifier, ['value', 'identifier', 'identifierValue', 'IdentifierValue']);
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 function extractPartPhysical(part: AnyRecord): NormalizedVariantPhysical | undefined {
   const dimension = asRecord(part.Dimension);
   const physical: NormalizedVariantPhysical = {
@@ -647,7 +727,13 @@ function extractPartPhysical(part: AnyRecord): NormalizedVariantPhysical | undef
 function extractVariantsFromProduct(
   node: AnyRecord,
   fallbackPrice?: number,
-): { variants: NormalizedVariant[]; preferredBaseSku?: string; discoveredSizes: string[]; preferredWeight?: number } {
+): {
+  variants: NormalizedVariant[];
+  preferredBaseSku?: string;
+  discoveredSizes: string[];
+  preferredWeight?: number;
+  preferredBaseGtin?: string;
+} {
   const partArray = asRecord(node.ProductPartArray);
   if (!partArray) return { variants: [], discoveredSizes: [] };
 
@@ -659,12 +745,17 @@ function extractVariantsFromProduct(
   const variants: NormalizedVariant[] = [];
   const discoveredSizes: string[] = [];
   let preferredWeight: number | undefined;
+  let preferredBaseGtin: string | undefined;
   for (const part of parts) {
     const partSku = getFirstString(part, ['partId', 'partID', 'sku', 'SKU']);
     if (!partSku) continue;
     const partWeight = extractWeightInPounds(part);
+    const partGtin = extractGtin(part);
     if (preferredWeight === undefined && partWeight !== undefined) {
       preferredWeight = partWeight;
+    }
+    if (preferredBaseGtin === undefined && partGtin) {
+      preferredBaseGtin = partGtin;
     }
 
     const optionValues: NormalizedVariant['option_values'] = [];
@@ -697,6 +788,7 @@ function extractVariantsFromProduct(
         sku: partSku,
         source_sku: partSku,
         part_id: partSku,
+        gtin: partGtin,
         price: fallbackPrice,
         cost_price: fallbackPrice,
         weight: partWeight,
@@ -715,6 +807,7 @@ function extractVariantsFromProduct(
     preferredBaseSku: firstPartSku,
     discoveredSizes: dedupeStrings(discoveredSizes),
     preferredWeight,
+    preferredBaseGtin,
   };
 }
 
@@ -795,7 +888,13 @@ function normalizeProductDataGetProduct(
   const description = descriptions.length > 0 ? descriptions.join('\n') : undefined;
 
   const { basePrice, bulkPricingRules } = extractProductPriceData(productNode);
-  const { variants, preferredBaseSku, discoveredSizes, preferredWeight } = extractVariantsFromProduct(productNode, basePrice);
+  const {
+    variants,
+    preferredBaseSku,
+    discoveredSizes,
+    preferredWeight,
+    preferredBaseGtin,
+  } = extractVariantsFromProduct(productNode, basePrice);
   const categories = extractProductCategories(productNode);
   const brandName = getFirstString(productNode, ['productBrand']);
   const primaryImageUrl = getFirstString(productNode, ['primaryImageUrl']);
@@ -812,6 +911,7 @@ function normalizeProductDataGetProduct(
         ? isCloseout
         : undefined;
   const productWeight = extractWeightInPounds(productNode) ?? preferredWeight;
+  const productGtin = extractGtin(productNode) ?? preferredBaseGtin;
 
   const mappedCustomFields = Array.isArray(transformSchema?.custom_fields)
     ? (transformSchema?.custom_fields as Array<{ name?: string; value?: string }>)
@@ -842,6 +942,7 @@ function normalizeProductDataGetProduct(
       vendor_product_id: productId,
       name: productName,
       description,
+      gtin: productGtin,
       cost_price: basePrice,
       price: basePrice,
       weight: productWeight,
@@ -916,7 +1017,7 @@ export function normalizeProductsFromEndpoint(
     const name = getFirstString(node, NAME_KEYS) ?? `Vendor product ${sku}`;
     const description = getFirstString(node, DESCRIPTION_KEYS);
     const price = getFirstNumber(node, PRICE_KEYS);
-    const inventoryLevel = getFirstNumber(node, INVENTORY_KEYS);
+    const inventoryLevel = getFirstInventoryNumber(node, INVENTORY_KEYS);
 
     discovered.push({
       sku,

@@ -133,6 +133,42 @@ function getFirstNumber(node: AnyRecord, keys: string[]): number | undefined {
   return undefined;
 }
 
+function getNestedQuantityValue(value: unknown): number | undefined {
+  const direct = toNumber(value);
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const nestedQuantity = asRecord(record.Quantity) ?? asRecord(record.quantity);
+  const nestedValue =
+    toNumber(nestedQuantity?.value) ??
+    toNumber(nestedQuantity?.Value) ??
+    toNumber(record.value) ??
+    toNumber(record.Value);
+
+  return nestedValue;
+}
+
+function getFirstInventoryNumber(node: AnyRecord, keys: string[]): number | undefined {
+  for (const key of keys) {
+    if (!Object.hasOwn(node, key)) {
+      continue;
+    }
+
+    const value = getNestedQuantityValue(node[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 function dedupeUrls(urls: string[]): string[] {
   const output: string[] = [];
   const seen = new Set<string>();
@@ -356,7 +392,7 @@ function extractInventorySnapshot(payload: unknown): {
   const quantities: number[] = [];
   const byPartId = new Map<string, number>();
   walkNodes(payload, node => {
-    const number = getFirstNumber(node, INVENTORY_KEYS);
+    const number = getFirstInventoryNumber(node, INVENTORY_KEYS);
     if (number === undefined) {
       return;
     }
@@ -642,10 +678,11 @@ function buildImageGalleryFromAssets(assets: NormalizedMediaAsset[]): Array<{ im
 }
 
 function collectKnownPartIds(product: NormalizedProduct): string[] {
-  const partIds = [
-    ...(product.variants ?? []).map(variant => variant.part_id ?? variant.source_sku),
-    product.source_sku,
-  ].filter((value): value is string => !!value?.trim());
+  const variantPartIds = (product.variants ?? [])
+    .map(variant => variant.part_id ?? variant.source_sku)
+    .filter((value): value is string => !!value?.trim());
+
+  const partIds = variantPartIds.length > 0 ? variantPartIds : [product.source_sku].filter((value): value is string => !!value?.trim());
 
   return dedupeUrls(partIds);
 }
@@ -716,17 +753,16 @@ async function loadMediaAssetsForType(input: {
         .map(asset => asset.part_id)
         .filter((value): value is string => !!value),
     );
-    const missingPartIds = knownPartIds.filter(partId => !seenPartIds.has(partId));
     const shouldFanOut =
       knownPartIds.length > 0 &&
-      missingPartIds.length > 0 &&
       (shouldRetryMediaByPartId(productLevelResult.message) ||
-        (productAssets.length > 0 && (seenPartIds.size > 0 || missingPartIds.length === knownPartIds.length)));
+        seenPartIds.size === 0);
 
     if (!shouldFanOut) {
       return { assets: dedupeMediaAssets(assets), failed: false };
     }
 
+    const missingPartIds = knownPartIds.filter(partId => !seenPartIds.has(partId));
     for (const partId of missingPartIds) {
       const partResult = await runProductOperation({
         vendor: input.vendor,

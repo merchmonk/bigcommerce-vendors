@@ -321,7 +321,7 @@ class StripeProcessor implements PaymentProcessor {
 2. **Practice TDD** - Tests reveal design problems early
 3. **Review in pairs** - Fresh eyes catch smells
 4. **Refactor continuously** - Don't let smells accumulate
-5. **Apply SOLID** - Prevents structural smells
+5. **Apply LID** - Prevents structural smells
 6. **Use static analysis** - Tools catch common issues
 
 ---

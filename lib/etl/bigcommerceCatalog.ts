@@ -26,6 +26,7 @@ interface BigCommerceCatalogProduct {
   id: number;
   sku: string;
   name: string;
+  upc?: string;
   base_variant_id?: number;
   custom_fields?: Array<{ name: string; value: string }>;
 }
@@ -410,6 +411,7 @@ function buildBigCommercePayload(
     };
     variants: Array<{
       sku: string;
+      gtin?: string;
       cost_price: number;
       price: number;
       option_values: Array<{ option_display_name: string; label: string }>;
@@ -421,6 +423,7 @@ function buildBigCommercePayload(
     .map(variant => {
       return {
         sku: variant.sku,
+        ...(variant.gtin ? { upc: variant.gtin } : {}),
         cost_price: variant.cost_price,
         price: variant.price,
         option_values: variant.option_values,
@@ -433,6 +436,7 @@ function buildBigCommercePayload(
     name: product.name,
     type: 'physical',
     sku: options.sku,
+    ...(product.gtin ? { upc: product.gtin } : {}),
     description: product.description ?? '',
     weight: product.weight ?? 0,
     ...(options.productFallback.cost_price !== undefined ? { cost_price: options.productFallback.cost_price } : {}),
@@ -834,6 +838,7 @@ async function syncVariants(
     const projected = pricingProjection.variants.find(item => item.sku === variant.sku);
     const payload = {
       sku: variant.sku,
+      ...(variant.gtin ? { upc: variant.gtin } : {}),
       cost_price: projected?.cost_price ?? variant.cost_price ?? variant.price ?? product.cost_price ?? product.price ?? 0,
       price: projected?.price ?? variant.price ?? product.price ?? 0,
       option_values: toBigCommerceVariantOptionValues(variant.option_values, variantOptionLookup),
@@ -1386,11 +1391,40 @@ function resolveVendorMediaAssets(product: NormalizedProduct): NormalizedMediaAs
 
 function buildDesiredBigCommerceImages(product: NormalizedProduct): DesiredBigCommerceImage[] {
   const imageAssets = resolveVendorMediaAssets(product).filter(asset => asset.media_type === 'Image');
-  return imageAssets.map((asset, index) => ({
-    image_url: asset.url,
-    description: buildVendorManagedDescription(product, asset),
-    ...(index === 0 ? { is_thumbnail: true } : {}),
-  }));
+  return imageAssets
+    .map(asset => {
+      const normalizedUrl = normalizeBigCommerceImageUrl(asset.url);
+      if (!normalizedUrl) {
+        return null;
+      }
+
+      return {
+        image_url: normalizedUrl,
+        description: buildVendorManagedDescription(product, asset),
+      };
+    })
+    .filter((image): image is Omit<DesiredBigCommerceImage, 'is_thumbnail'> => !!image)
+    .map((image, index) => ({
+      ...image,
+      ...(index === 0 ? { is_thumbnail: true } : {}),
+    }));
+}
+
+function normalizeBigCommerceImageUrl(url: string): string | undefined {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return undefined;
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function extractYouTubeVideoId(url: string): string | undefined {
@@ -1460,6 +1494,26 @@ async function createProductImage(
       body: JSON.stringify(image),
     },
     'Failed to create BigCommerce product image',
+  );
+}
+
+async function createProductVariantImage(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+  variantId: number,
+  imageUrl: string,
+): Promise<void> {
+  await requestJson<Record<string, unknown>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/variants/${variantId}/image`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        image_url: imageUrl,
+      }),
+    },
+    'Failed to create BigCommerce product variant image',
   );
 }
 
@@ -1607,6 +1661,7 @@ async function syncVendorManagedProductMedia(input: {
   storeHash: string;
   productId: number;
   product: NormalizedProduct;
+  variantIdsBySku?: Map<string, number>;
 }): Promise<void> {
   const desiredImages = buildDesiredBigCommerceImages(input.product);
 
@@ -1616,6 +1671,75 @@ async function syncVendorManagedProductMedia(input: {
     productId: input.productId,
     desiredImages,
   });
+
+  await syncVariantImages({
+    accessToken: input.accessToken,
+    storeHash: input.storeHash,
+    productId: input.productId,
+    product: input.product,
+    variantIdsBySku: input.variantIdsBySku,
+  });
+}
+
+function findPreferredVariantImageUrl(
+  product: NormalizedProduct,
+  variant: NonNullable<NormalizedProduct['variants']>[number],
+): string | undefined {
+  const candidatePartIds = [variant.part_id, variant.source_sku, variant.sku]
+    .map(value => value?.trim())
+    .filter((value): value is string => !!value);
+
+  if (candidatePartIds.length === 0) {
+    return undefined;
+  }
+
+  const partAssets = resolveVendorMediaAssets(product)
+    .filter(asset => asset.media_type === 'Image' && !!asset.part_id && candidatePartIds.includes(asset.part_id))
+    .sort((left, right) => {
+      const scoreDelta = rankMediaAsset(right) - rankMediaAsset(left);
+      if (scoreDelta !== 0) return scoreDelta;
+      return left.url.localeCompare(right.url);
+    });
+
+  return normalizeBigCommerceImageUrl(partAssets[0]?.url ?? '');
+}
+
+async function syncVariantImages(input: {
+  accessToken: string;
+  storeHash: string;
+  productId: number;
+  product: NormalizedProduct;
+  variantIdsBySku?: Map<string, number>;
+}): Promise<void> {
+  if (!input.variantIdsBySku || input.variantIdsBySku.size === 0) {
+    return;
+  }
+
+  for (const variant of input.product.variants ?? []) {
+    if ((variant.option_values ?? []).length === 0) {
+      continue;
+    }
+
+    const variantId =
+      input.variantIdsBySku.get(variant.sku) ??
+      (variant.source_sku ? input.variantIdsBySku.get(variant.source_sku) : undefined);
+    if (!variantId) {
+      continue;
+    }
+
+    const imageUrl = findPreferredVariantImageUrl(input.product, variant);
+    if (!imageUrl) {
+      continue;
+    }
+
+    await createProductVariantImage(
+      input.accessToken,
+      input.storeHash,
+      input.productId,
+      variantId,
+      imageUrl,
+    );
+  }
 }
 
 export async function upsertBigCommerceProduct(
@@ -1640,19 +1764,8 @@ export async function upsertBigCommerceProduct(
   });
 
   if (INVENTORY_ONLY_FOR_EXISTING_PRODUCTS && decision.action === 'update' && decision.target_product_id) {
-    const variantIdsBySku = await syncInventoryOnlyForExistingProduct({
-      accessToken: input.accessToken,
-      storeHash: input.storeHash,
-      productId: decision.target_product_id,
-      product: input.product,
-    });
-    const pricingReconciliation = reconcileProjectedPricingTargets({
-      pricingProjection,
-      variantIdsBySku,
-    });
     const existingProduct = candidates.find(candidate => candidate.id === decision.target_product_id);
-
-    return {
+    let partialResult: PartialBigCommerceUpsertResult = {
       product: {
         id: decision.target_product_id,
         sku: existingProduct?.sku ?? decision.resolved_sku,
@@ -1662,13 +1775,44 @@ export async function upsertBigCommerceProduct(
       action: 'update',
       resolvedSku: existingProduct?.sku ?? decision.resolved_sku,
       markupPercent,
-      pricingReconciliation,
-      inventory_sync_target: buildInventorySyncTarget({
+    };
+
+    try {
+      const variantIdsBySku = await syncInventoryOnlyForExistingProduct({
+        accessToken: input.accessToken,
+        storeHash: input.storeHash,
+        productId: decision.target_product_id,
+        product: input.product,
+      });
+      await syncVendorManagedProductMedia({
+        accessToken: input.accessToken,
+        storeHash: input.storeHash,
         productId: decision.target_product_id,
         product: input.product,
         variantIdsBySku,
-      }),
-    };
+      });
+      const pricingReconciliation = reconcileProjectedPricingTargets({
+        pricingProjection,
+        variantIdsBySku,
+      });
+      partialResult = {
+        ...partialResult,
+        pricingReconciliation,
+        inventory_sync_target: buildInventorySyncTarget({
+          productId: decision.target_product_id,
+          product: input.product,
+          variantIdsBySku,
+        }),
+      };
+
+      return {
+        ...partialResult,
+        pricingReconciliation,
+        inventory_sync_target: partialResult.inventory_sync_target,
+      } satisfies UpsertBigCommerceProductResult;
+    } catch (error) {
+      throw buildPartialUpsertError(error, partialResult);
+    }
   }
 
   const resolvedSku = await resolveAvailableSku(
@@ -1800,16 +1944,13 @@ export async function upsertBigCommerceProduct(
       variantIdsBySku,
     });
 
-    try {
-      await syncVendorManagedProductMedia({
-        accessToken: input.accessToken,
-        storeHash: input.storeHash,
-        productId: productRecord.id,
-        product: input.product,
-      });
-    } catch (error) {
-      console.warn(`Failed to sync vendor-managed media for product ${productRecord.id}:`, error);
-    }
+    await syncVendorManagedProductMedia({
+      accessToken: input.accessToken,
+      storeHash: input.storeHash,
+      productId: productRecord.id,
+      product: input.product,
+      variantIdsBySku,
+    });
 
     const variantPriceListRecords = pricingProjection.variants
       .map(variant => {

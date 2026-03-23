@@ -117,7 +117,7 @@ describe('upsertBigCommerceProduct media sync', () => {
             class_types: ['Primary'],
           },
           {
-            url: 'https://cdn.example.com/products/part-black.jpg',
+            url: 'https://cdn.example.com/products/part black.jpg',
             media_type: 'Image',
             description: 'Black part image',
             part_id: 'PART-BLK',
@@ -168,7 +168,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         is_thumbnail: true,
       }),
       expect.objectContaining({
-        image_url: 'https://cdn.example.com/products/part-black.jpg',
+        image_url: 'https://cdn.example.com/products/part%20black.jpg',
       }),
     ]);
     expect(imageBodies[0].description).toContain('mm_media:');
@@ -739,6 +739,8 @@ describe('upsertBigCommerceProduct media sync', () => {
 
   test('updates only variant inventory for existing products', async () => {
     const inventoryAdjustmentBodies: Array<Record<string, unknown>> = [];
+    const imageBodies: Array<Record<string, unknown>> = [];
+    const variantImageBodies: Array<Record<string, unknown>> = [];
     let productPutBody: Record<string, unknown> | undefined;
 
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
@@ -810,6 +812,20 @@ describe('upsertBigCommerceProduct media sync', () => {
         return { data: { items: [] } };
       }
 
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/images') && method === 'POST') {
+        imageBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 3301 } };
+      }
+
+      if (url.endsWith('/variants/2301/image') && method === 'POST') {
+        variantImageBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 4301 } };
+      }
+
       throw new Error(`Unexpected request: ${method} ${url}`);
     });
 
@@ -824,6 +840,20 @@ describe('upsertBigCommerceProduct media sync', () => {
         vendor_product_id: 'P-INV-ONLY',
         name: 'Inventory Only Product',
         inventory_level: 19,
+        media_assets: [
+          {
+            url: 'https://cdn.example.com/products/inventory only hero.jpg',
+            media_type: 'Image',
+            description: 'Hero image',
+          },
+          {
+            url: 'https://cdn.example.com/products/inventory only black.jpg',
+            media_type: 'Image',
+            description: 'Black variant image',
+            part_id: 'SKU-INV-ONLY-BLK',
+            class_types: ['Primary'],
+          },
+        ],
         variants: [
           {
             sku: 'SKU-INV-ONLY-BLK',
@@ -847,6 +877,19 @@ describe('upsertBigCommerceProduct media sync', () => {
     expect(productPutBody).toEqual({
       inventory_tracking: 'variant',
     });
+    expect(imageBodies).toEqual([
+      expect.objectContaining({
+        image_url: 'https://cdn.example.com/products/inventory%20only%20hero.jpg',
+      }),
+      expect.objectContaining({
+        image_url: 'https://cdn.example.com/products/inventory%20only%20black.jpg',
+      }),
+    ]);
+    expect(variantImageBodies).toEqual([
+      {
+        image_url: 'https://cdn.example.com/products/inventory%20only%20black.jpg',
+      },
+    ]);
     expect(result.inventory_sync_target).toEqual({
       tracking: 'variant',
       items: [
@@ -871,6 +914,92 @@ describe('upsertBigCommerceProduct media sync', () => {
         ],
       },
     ]);
+  });
+
+  test('throws a partial upsert error when BigCommerce image sync fails', async () => {
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-IMG-FAIL')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=Image%20Failure%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        return {
+          data: {
+            id: 1701,
+            sku: 'SKU-IMG-FAIL',
+            name: 'Image Failure Product',
+            base_variant_id: 1702,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/images') && method === 'POST') {
+        throw new Error('Failed to create BigCommerce product image (422)');
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await expect(
+      upsertBigCommerceProduct({
+        accessToken: 'token',
+        storeHash: 'abc123',
+        vendorId: 22,
+        defaultMarkupPercent: 30,
+        product: {
+          sku: 'SKU-IMG-FAIL',
+          source_sku: 'SKU-IMG-FAIL',
+          vendor_product_id: 'P-IMG-FAIL',
+          name: 'Image Failure Product',
+          description: 'Image failure test',
+          price: 10,
+          cost_price: 8,
+          weight: 0.25,
+          media_assets: [
+            {
+              url: 'https://cdn.example.com/products/failure image.jpg',
+              media_type: 'Image',
+              description: 'Failure image',
+            },
+          ],
+        },
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: 'Failed to create BigCommerce product image (422)',
+        partial_upsert_result: expect.objectContaining({
+          product: expect.objectContaining({
+            id: 1701,
+          }),
+        }),
+      }),
+    );
   });
 
   test('creates inventory sync targets instead of sending quantity through the catalog product payload', async () => {
@@ -932,6 +1061,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         source_sku: 'SKU-INV-CREATE',
         vendor_product_id: 'P-INV-CREATE',
         name: 'Inventory Create Product',
+        gtin: '00011122233344',
         inventory_level: 9,
       },
     });
@@ -939,6 +1069,7 @@ describe('upsertBigCommerceProduct media sync', () => {
     expect(productPayload).toEqual(
       expect.objectContaining({
         inventory_tracking: 'product',
+        upc: '00011122233344',
       }),
     );
     expect(productPayload).not.toEqual(
@@ -960,16 +1091,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       const method = options.method ?? 'GET';
 
       if (url.includes('/catalog/products?sku=SKU-VARIANT-IDS')) {
-        return {
-          data: [
-            {
-              id: 1310,
-              sku: 'SKU-VARIANT-IDS',
-              name: 'Variant Id Product',
-              custom_fields: [{ name: 'vendor_id', value: '22' }],
-            },
-          ],
-        };
+        return { data: [] };
       }
 
       if (url.includes('/catalog/products?name=Variant%20Id%20Product')) {
@@ -980,7 +1102,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         return { data: [] };
       }
 
-      if (url.endsWith('/catalog/products/1310') && method === 'PUT') {
+      if (url.endsWith('/catalog/products') && method === 'POST') {
         return {
           data: {
             id: 1310,
@@ -1077,12 +1199,14 @@ describe('upsertBigCommerceProduct media sync', () => {
             sku: 'SKU-VARIANT-IDS-BLK',
             source_sku: 'SKU-VARIANT-IDS-BLK',
             part_id: 'SKU-VARIANT-IDS-BLK',
+            gtin: '00011122233344',
             option_values: [{ option_display_name: 'Color', label: 'Black' }],
           },
           {
             sku: 'SKU-VARIANT-IDS-BLU',
             source_sku: 'SKU-VARIANT-IDS-BLU',
             part_id: 'SKU-VARIANT-IDS-BLU',
+            gtin: '00011122233351',
             option_values: [{ option_display_name: 'Color', label: 'Blue' }],
           },
         ],
@@ -1093,10 +1217,12 @@ describe('upsertBigCommerceProduct media sync', () => {
     expect(createdVariantBodies).toEqual([
       expect.objectContaining({
         sku: 'SKU-VARIANT-IDS-BLK',
+        upc: '00011122233344',
         option_values: [{ option_id: 500, id: 501 }],
       }),
       expect.objectContaining({
         sku: 'SKU-VARIANT-IDS-BLU',
+        upc: '00011122233351',
         option_values: [{ option_id: 500, id: 502 }],
       }),
     ]);

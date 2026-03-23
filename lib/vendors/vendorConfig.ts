@@ -1,5 +1,6 @@
 import type {
   CustomApiServiceType,
+  EndpointMappingDraft,
   IntegrationFamily,
   PromostandardsCapabilityMatrix,
 } from '../../types';
@@ -18,6 +19,17 @@ function asRecord(value: unknown): Record<string, unknown> {
   }
 
   return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+interface PromostandardsEndpointRuntimeOverride {
+  endpoint_name?: string;
+  endpoint_version?: string;
+  operation_name?: string;
+  runtime_config?: EndpointMappingDraft['runtime_config'];
 }
 
 export function getVendorConnectionSections(connectionConfig: unknown): VendorConnectionSections {
@@ -65,6 +77,53 @@ export function buildVendorConnectionConfig(input: {
   }
 
   return nextConfig;
+}
+
+export function applyPromostandardsEndpointRuntimeOverrides(input: {
+  capabilities?: PromostandardsCapabilityMatrix | null;
+  endpointMappings?: PromostandardsEndpointRuntimeOverride[];
+}): PromostandardsCapabilityMatrix | undefined {
+  const capabilities = input.capabilities ?? undefined;
+  if (!capabilities || !Array.isArray(input.endpointMappings) || input.endpointMappings.length === 0) {
+    return capabilities ?? undefined;
+  }
+
+  const overrideBySelection = new Map(
+    input.endpointMappings.map(mapping => [
+      `${mapping.endpoint_name ?? ''}|${mapping.endpoint_version ?? ''}|${mapping.operation_name ?? ''}`,
+      asRecord(mapping.runtime_config),
+    ]),
+  );
+
+  return {
+    ...capabilities,
+    endpoints: capabilities.endpoints.map(endpoint => {
+      const runtimeConfig = overrideBySelection.get(
+        `${endpoint.endpoint_name}|${endpoint.endpoint_version}|${endpoint.operation_name}`,
+      );
+      if (!runtimeConfig) {
+        return endpoint;
+      }
+
+      const customEndpointUrl =
+        readString(runtimeConfig.endpoint_path) ||
+        readString(runtimeConfig.endpointPath) ||
+        readString(runtimeConfig.custom_endpoint_path);
+      const resolvedEndpointUrl =
+        readString(runtimeConfig.endpoint_url) ||
+        readString(runtimeConfig.endpointUrl);
+
+      if (!customEndpointUrl && !resolvedEndpointUrl) {
+        return endpoint;
+      }
+
+      return {
+        ...endpoint,
+        custom_endpoint_url: customEndpointUrl ?? endpoint.custom_endpoint_url ?? null,
+        resolved_endpoint_url: resolvedEndpointUrl ?? endpoint.resolved_endpoint_url ?? null,
+      };
+    }),
+  };
 }
 
 export function getCustomApiServiceTypeLabel(serviceType: CustomApiServiceType | undefined): string {

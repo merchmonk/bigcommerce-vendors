@@ -34,6 +34,37 @@ describe('normalizeProductsFromEndpoint', () => {
     );
   });
 
+  test('extracts nested quantityAvailable values when normalizing generic endpoint payloads', () => {
+    const payload = {
+      Envelope: {
+        Body: {
+          items: [
+            {
+              SKU: 'A-1',
+              Name: 'Alpha',
+              quantityAvailable: {
+                Quantity: {
+                  uom: 'EA',
+                  value: '12',
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = normalizeProductsFromEndpoint(
+      'Inventory',
+      '2.0.0',
+      'getInventoryLevels',
+      payload,
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].inventory_level).toBe(12);
+  });
+
   test('normalizes ProductData getProduct response with variants, brand, categories, and bulk pricing', () => {
     const payload = {
       getProductResponse: {
@@ -63,6 +94,7 @@ describe('normalizeProductsFromEndpoint', () => {
             ProductPart: [
               {
                 partId: 'P-100-BLK-M',
+                gtin: '00011122233344',
                 primaryColor: { Color: { colorName: 'Black' } },
                 ApparelSize: { labelSize: 'M' },
                 Dimension: {
@@ -72,6 +104,7 @@ describe('normalizeProductsFromEndpoint', () => {
               },
               {
                 partId: 'P-100-BLU-L',
+                gtin: '00011122233351',
                 primaryColor: { Color: { colorName: 'Blue' } },
                 ApparelSize: { labelSize: 'L' },
                 Dimension: {
@@ -98,7 +131,10 @@ describe('normalizeProductsFromEndpoint', () => {
     expect(result[0].brand_name).toBe('Acme Brand');
     expect(result[0].categories).toEqual(['Apparel > Polos']);
     expect(result[0].weight).toBeCloseTo(0.75);
+    expect(result[0].gtin).toBe('00011122233344');
     expect(result[0].variants).toHaveLength(2);
+    expect(result[0].variants?.[0].gtin).toBe('00011122233344');
+    expect(result[0].variants?.[1].gtin).toBe('00011122233351');
     expect(result[0].variants?.[0].weight).toBeCloseTo(0.75);
     expect(result[0].variants?.[1].weight).toBeCloseTo(0.75);
     expect(result[0].bulk_pricing_rules).toEqual([

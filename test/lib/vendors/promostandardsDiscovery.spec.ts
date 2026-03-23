@@ -343,4 +343,41 @@ describe('promostandardsDiscovery', () => {
     ]);
     expect(mappingIds).toEqual([21, 22]);
   });
+
+  test('prefers the manually overridden endpoint version over a newer discovered version', async () => {
+    mockFindMappingsByEndpointOperations.mockResolvedValue([
+      { mapping_id: 31 },
+    ]);
+
+    const mappingIds = await resolvePromostandardsCapabilityMappings({
+      endpoints: [
+        {
+          endpoint_name: 'OrderShipmentNotification',
+          endpoint_version: '1.0.0',
+          operation_name: 'getOrderShipmentNotification',
+          available: true,
+          status_code: 200,
+          message: 'ok',
+          custom_endpoint_url: '/custom/order-shipment/1.0.0',
+        },
+        {
+          endpoint_name: 'OrderShipmentNotification',
+          endpoint_version: '2.1.0',
+          operation_name: 'getOrderShipmentNotification',
+          available: true,
+          status_code: 200,
+          message: 'ok',
+        },
+      ],
+    });
+
+    expect(mockFindMappingsByEndpointOperations).toHaveBeenCalledWith([
+      {
+        endpoint_name: 'OrderShipmentNotification',
+        endpoint_version: '1.0.0',
+        operation_name: 'getOrderShipmentNotification',
+      },
+    ]);
+    expect(mappingIds).toEqual([31]);
+  });
 });

@@ -633,12 +633,16 @@ export async function discoverPromostandardsCapabilities(
 export async function resolvePromostandardsCapabilityMappings(
   capabilities: Pick<PromostandardsCapabilityMatrix, 'endpoints'>,
 ): Promise<number[]> {
+  const hasManualEndpointOverride = (endpoint: Pick<PromostandardsCapabilityMatrix['endpoints'][number], 'custom_endpoint_url'>) =>
+    typeof endpoint.custom_endpoint_url === 'string' && endpoint.custom_endpoint_url.trim().length > 0;
+
   const selectedByOperation = new Map<
     string,
     {
       endpoint_name: string;
       endpoint_version: string;
       operation_name: string;
+      custom_endpoint_url?: string | null;
     }
   >();
 
@@ -654,15 +658,23 @@ export async function resolvePromostandardsCapabilityMappings(
         endpoint_name: endpoint.endpoint_name,
         endpoint_version: endpoint.endpoint_version,
         operation_name: endpoint.operation_name,
+        custom_endpoint_url: endpoint.custom_endpoint_url ?? null,
       });
       continue;
     }
 
-    if (compareEndpointVersions(endpoint.endpoint_version, existingSelection.endpoint_version) > 0) {
+    const nextHasManualOverride = hasManualEndpointOverride(endpoint);
+    const existingHasManualOverride = hasManualEndpointOverride(existingSelection);
+    if (
+      (nextHasManualOverride && !existingHasManualOverride) ||
+      (nextHasManualOverride === existingHasManualOverride &&
+        compareEndpointVersions(endpoint.endpoint_version, existingSelection.endpoint_version) > 0)
+    ) {
       selectedByOperation.set(selectionKey, {
         endpoint_name: endpoint.endpoint_name,
         endpoint_version: endpoint.endpoint_version,
         operation_name: endpoint.operation_name,
+        custom_endpoint_url: endpoint.custom_endpoint_url ?? null,
       });
     }
   }
@@ -683,7 +695,13 @@ export async function resolvePromostandardsCapabilityMappings(
     return [];
   }
 
-  const mappings = await findMappingsByEndpointOperations(uniqueSelections);
+  const mappings = await findMappingsByEndpointOperations(
+    uniqueSelections.map(selection => ({
+      endpoint_name: selection.endpoint_name,
+      endpoint_version: selection.endpoint_version,
+      operation_name: selection.operation_name,
+    })),
+  );
   return mappings.map(mapping => mapping.mapping_id);
 }
 
