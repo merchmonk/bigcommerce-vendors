@@ -204,21 +204,6 @@ describe('projectBigCommerceProductContract', () => {
             charge_type: 'run',
           },
         ],
-        media: {
-          /*videos: {
-            variantAssets: {
-              'PC54-BLK-XL': [
-                {
-                  url: 'https://www.youtube.com/watch?v=abc123xyz89',
-                  alt: 'Promo video',
-                  description: 'Promo video',
-                  kind: 'variant',
-                  partId: 'PC54-BLK-XL',
-                },
-              ],
-            },
-          },*/
-        },
       }),
     );
     expect((contract.product_designer_defaults.locations as Array<Record<string, unknown>>)[0]).toEqual(
@@ -260,5 +245,6 @@ describe('projectBigCommerceProductContract', () => {
         }),
       },
     ]);
+    expect(contract.product_designer_defaults).not.toHaveProperty('availableLocations');
   });
 });

@@ -1,11 +1,14 @@
 import type { MappingProtocol, SessionContextProps } from '../../types';
 import logger from '../logger';
 import { getVendorById } from '../vendors';
-import { mergeRequestContext } from '../requestContext';
+import { getRequestContext, mergeRequestContext } from '../requestContext';
+import { submitCatalogSyncJob, type CatalogSyncJobRequest } from '../integrationJobs';
 import {
   resolveBigCommercePricingContext,
 } from './bigcommercePricingContext';
 import {
+  type BigCommerceInventorySyncTarget,
+  syncBigCommerceInventoryBatch,
   upsertBigCommerceProduct,
   upsertRelatedProducts,
 } from './bigcommerceCatalog';
@@ -40,6 +43,13 @@ export interface RunVendorSyncInput {
   mappingId?: number;
   syncAll?: boolean;
   integrationJobId?: number;
+  sourceAction?: string;
+  correlationId?: string;
+  continuation?: {
+    start_reference_index?: number;
+    max_references_per_run?: number;
+    initial_last_successful_sync_at?: string | null;
+  };
 }
 
 export interface TestConnectionInput {
@@ -70,11 +80,17 @@ export interface SyncRunResult {
     products_found: number;
     message?: string;
   }>;
+  continuation?: {
+    enqueued: boolean;
+    nextStartReferenceIndex: number;
+    totalReferences: number;
+  };
 }
 
 const EARLY_SYNC_CANARY_PRODUCT_COUNT = 2;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_MIN_ATTEMPTS = 100;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO = 0.5;
+const DEFAULT_MAX_PRODUCT_REFERENCES_PER_RUN = 50;
 
 interface ProductAssemblyStatusSummary {
   blockedCount: number;
@@ -82,6 +98,11 @@ interface ProductAssemblyStatusSummary {
     reason: string;
     count: number;
   }>;
+}
+
+interface ProductDataReference {
+  productId: string;
+  partId?: string | null;
 }
 
 function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
@@ -129,11 +150,13 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
       (asset, index) =>
         mergedMediaAssets.findIndex(
           item =>
-            item.media_type === asset.media_type &&
-            item.url === asset.url &&
-            item.part_id === asset.part_id &&
-            JSON.stringify(item.location_ids ?? []) === JSON.stringify(asset.location_ids ?? []) &&
-            JSON.stringify(item.decoration_ids ?? []) === JSON.stringify(asset.decoration_ids ?? []),
+          item.media_type === asset.media_type &&
+          item.url === asset.url &&
+          item.part_id === asset.part_id &&
+          JSON.stringify(item.location_ids ?? []) === JSON.stringify(asset.location_ids ?? []) &&
+          JSON.stringify(item.location_names ?? []) === JSON.stringify(asset.location_names ?? []) &&
+          JSON.stringify(item.decoration_ids ?? []) === JSON.stringify(asset.decoration_ids ?? []) &&
+          JSON.stringify(item.decoration_names ?? []) === JSON.stringify(asset.decoration_names ?? []),
         ) === index,
     );
 
@@ -289,6 +312,62 @@ function shouldFailSyncBecauseBlockedRateTooHigh(input: {
   );
 }
 
+function getMaxProductReferencesPerRun(override?: number): number {
+  if (typeof override === 'number' && Number.isFinite(override) && override > 0) {
+    return Math.floor(override);
+  }
+
+  const configured = Number(process.env.CATALOG_SYNC_MAX_PRODUCT_REFERENCES_PER_RUN ?? '');
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.floor(configured);
+  }
+
+  return DEFAULT_MAX_PRODUCT_REFERENCES_PER_RUN;
+}
+
+function normalizeContinuationStartIndex(startReferenceIndex?: number): number {
+  if (typeof startReferenceIndex !== 'number' || !Number.isFinite(startReferenceIndex) || startReferenceIndex < 0) {
+    return 0;
+  }
+
+  return Math.floor(startReferenceIndex);
+}
+
+function sortProductDataReferences(references: ProductDataReference[]): ProductDataReference[] {
+  return [...references].sort((left, right) => {
+    const productIdComparison = left.productId.localeCompare(right.productId);
+    if (productIdComparison !== 0) {
+      return productIdComparison;
+    }
+
+    return (left.partId ?? '').localeCompare(right.partId ?? '');
+  });
+}
+
+function buildUniqueProductDataReferences(references: ProductDataReference[]): ProductDataReference[] {
+  const uniqueReferences: ProductDataReference[] = [];
+  const seenProductIds = new Set<string>();
+
+  for (const reference of sortProductDataReferences(references)) {
+    if (seenProductIds.has(reference.productId)) {
+      continue;
+    }
+
+    seenProductIds.add(reference.productId);
+    uniqueReferences.push(reference);
+  }
+
+  return uniqueReferences;
+}
+
+function isCatalogSyncSourceAction(sourceAction?: string): sourceAction is CatalogSyncJobRequest['sourceAction'] {
+  return (
+    sourceAction === 'manual_sync' ||
+    sourceAction === 'manual_inventory_sync' ||
+    sourceAction === 'vendor_create_auto_sync'
+  );
+}
+
 function readPartialBigCommerceUpsertResult(error: unknown): {
   product: { id: number };
   duplicate: boolean;
@@ -296,6 +375,7 @@ function readPartialBigCommerceUpsertResult(error: unknown): {
   resolvedSku: string;
   markupPercent: number;
   pricingReconciliation?: Record<string, unknown>;
+  inventory_sync_target?: BigCommerceInventorySyncTarget;
 } | null {
   if (!error || typeof error !== 'object' || !('partial_upsert_result' in error)) {
     return null;
@@ -313,6 +393,7 @@ function readPartialBigCommerceUpsertResult(error: unknown): {
     resolvedSku?: unknown;
     markupPercent?: unknown;
     pricingReconciliation?: unknown;
+    inventory_sync_target?: unknown;
   };
 
   if (
@@ -334,6 +415,10 @@ function readPartialBigCommerceUpsertResult(error: unknown): {
     pricingReconciliation:
       record.pricingReconciliation && typeof record.pricingReconciliation === 'object'
         ? (record.pricingReconciliation as Record<string, unknown>)
+        : undefined,
+    inventory_sync_target:
+      record.inventory_sync_target && typeof record.inventory_sync_target === 'object'
+        ? (record.inventory_sync_target as BigCommerceInventorySyncTarget)
         : undefined,
   };
 }
@@ -527,10 +612,15 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
   let recordsWritten = 0;
 
   try {
-    const lastSuccessfulSync = (await listSyncRunsForVendor(input.vendorId)).find(
+    const priorSyncRuns = await listSyncRunsForVendor(input.vendorId);
+    const lastSuccessfulSync = priorSyncRuns.find(
       run => run.sync_run_id !== syncRun.sync_run_id && run.status === 'SUCCESS',
     );
-    const lastSuccessfulSyncAt = lastSuccessfulSync?.ended_at ?? lastSuccessfulSync?.started_at ?? null;
+    const lastSuccessfulSyncAt =
+      input.continuation?.initial_last_successful_sync_at ??
+      lastSuccessfulSync?.ended_at ??
+      lastSuccessfulSync?.started_at ??
+      null;
 
     const assignedMappings = await listEnabledVendorEndpointMappings(input.vendorId);
     const selectedMappings = assignedMappings.filter(item =>
@@ -563,12 +653,14 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     endpointResults = [];
     const baseProducts: NormalizedProduct[] = [];
     const seenReadProductKeys = new Set<string>();
-    const processedReferenceProductIds = new Set<string>();
     const processedProductKeys = new Set<string>();
     const writtenProductKeys = new Set<string>();
+    const inventorySyncTargets: BigCommerceInventorySyncTarget[] = [];
     let blockedProductCount = 0;
     let canaryEvaluatedProductCount = 0;
     let canarySuccessfulProductCount = 0;
+    let continuationResult: SyncRunResult['continuation'] | undefined;
+    let pendingContinuationRequest: CatalogSyncJobRequest | null = null;
 
     const selectedKeys = new Set(selectedMappings.map(item => mappingKey(item.mapping)));
     const productDataMappings = assignedMappings.filter(item => item.mapping.endpoint_name === 'ProductData');
@@ -611,10 +703,22 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         discoveryEndpointCount: discovery.endpointResults.length,
       });
 
+      const uniqueReferences = buildUniqueProductDataReferences(discovery.references);
+      const totalReferences = uniqueReferences.length;
+      const startReferenceIndex = normalizeContinuationStartIndex(input.continuation?.start_reference_index);
+      const batchingEnabled = isCatalogSyncSourceAction(input.sourceAction);
+      const maxReferencesPerRun = batchingEnabled
+        ? getMaxProductReferencesPerRun(input.continuation?.max_references_per_run)
+        : totalReferences || getMaxProductReferencesPerRun(input.continuation?.max_references_per_run);
+      const remainingReferences = uniqueReferences.slice(startReferenceIndex);
+      const batchReferences = remainingReferences.slice(0, maxReferencesPerRun);
+      const nextStartReferenceIndex = startReferenceIndex + batchReferences.length;
+      const hasMoreReferences = batchingEnabled && nextStartReferenceIndex < totalReferences;
+
       await persistSyncProgress({
         syncRunId: syncRun.sync_run_id,
         phase: 'DISCOVERY',
-        totalReferences: discovery.references.length,
+        totalReferences,
         processedReferences: 0,
         recordsRead,
         recordsWritten,
@@ -628,27 +732,15 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         logger.info('vendor sync BigCommerce upsert phase started', {
           syncRunId: syncRun.sync_run_id,
           vendorId: input.vendorId,
-          productCount: discovery.references.length,
+          productCount: batchReferences.length,
           markupPercent: pricingContext.markup_percent,
           priceListId: pricingContext.price_list_id,
         });
       }
 
       let getProductCallCount = 0;
-      for (const reference of discovery.references) {
+      for (const reference of batchReferences) {
         await throwIfSyncCancelled(input.integrationJobId);
-
-        if (processedReferenceProductIds.has(reference.productId)) {
-          logger.info('vendor sync skipped duplicate ProductData reference before fetch', {
-            syncRunId: syncRun.sync_run_id,
-            vendorId: input.vendorId,
-            productId: reference.productId,
-            partId: reference.partId ?? null,
-          });
-          continue;
-        }
-
-        processedReferenceProductIds.add(reference.productId);
         getProductCallCount += 1;
 
         const fetchResult = await fetchProductDataReference({
@@ -801,6 +893,10 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
                 writtenProductKeys.add(partialUpsert.resolvedSku);
                 recordsWritten += 1;
               }
+
+              if (partialUpsert.inventory_sync_target) {
+                inventorySyncTargets.push(partialUpsert.inventory_sync_target);
+              }
             }
 
             throw error;
@@ -851,6 +947,10 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
             recordsWritten += 1;
           }
 
+          if (upsertResult.inventory_sync_target) {
+            inventorySyncTargets.push(upsertResult.inventory_sync_target);
+          }
+
           logger.info('vendor sync BigCommerce product upsert completed', {
             syncRunId: syncRun.sync_run_id,
             vendorId: input.vendorId,
@@ -866,8 +966,8 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
           await persistSyncProgress({
             syncRunId: syncRun.sync_run_id,
             phase: 'UPSERT',
-            totalReferences: discovery.references.length,
-            processedReferences: getProductCallCount,
+            totalReferences,
+            processedReferences: startReferenceIndex + getProductCallCount,
             recordsRead,
             recordsWritten,
             blockedProductCount,
@@ -887,8 +987,38 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         operation_name: discovery.getProductConfig.mapping.operation_name,
         status: 200,
         products_found: recordsRead,
-        message: `getProduct completed for ${discovery.references.length} product references.`,
+        message: hasMoreReferences
+          ? `getProduct completed for ${batchReferences.length} of ${totalReferences} product references in this batch.`
+          : `getProduct completed for ${totalReferences} product references.`,
       });
+
+      if (hasMoreReferences && isCatalogSyncSourceAction(input.sourceAction)) {
+        continuationResult = {
+          enqueued: false,
+          nextStartReferenceIndex,
+          totalReferences,
+        };
+
+        const correlationId = input.correlationId ?? getRequestContext()?.correlationId;
+        if (!correlationId) {
+          throw new Error('Catalog sync continuation requires a correlation ID.');
+        }
+
+        pendingContinuationRequest = {
+          vendorId: input.vendorId,
+          mappingId: input.mappingId,
+          syncAll: input.syncAll,
+          sourceAction: input.sourceAction,
+          correlationId,
+          requestPayload: {
+            continuation: {
+              start_reference_index: nextStartReferenceIndex,
+              max_references_per_run: maxReferencesPerRun,
+              initial_last_successful_sync_at: lastSuccessfulSyncAt,
+            },
+          },
+        };
+      }
     }
 
     for (const assigned of selectedMappings) {
@@ -1098,6 +1228,10 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
           recordsWritten += 1;
         }
 
+        if (upsertResult.inventory_sync_target) {
+          inventorySyncTargets.push(upsertResult.inventory_sync_target);
+        }
+
         logger.info('vendor sync BigCommerce product upsert completed', {
           syncRunId: syncRun.sync_run_id,
           vendorId: input.vendorId,
@@ -1109,6 +1243,12 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         });
       }
     }
+
+    await syncBigCommerceInventoryBatch({
+      accessToken: input.session.accessToken,
+      storeHash: input.session.storeHash,
+      targets: inventorySyncTargets,
+    });
 
     await persistSyncProgress({
       syncRunId: syncRun.sync_run_id,
@@ -1138,6 +1278,16 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       );
     }
 
+    if (pendingContinuationRequest) {
+      await submitCatalogSyncJob(pendingContinuationRequest);
+      continuationResult = continuationResult
+        ? {
+            ...continuationResult,
+            enqueued: true,
+          }
+        : continuationResult;
+    }
+
     await completeSyncRun({
       sync_run_id: syncRun.sync_run_id,
       status: 'SUCCESS',
@@ -1147,6 +1297,13 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         endpointResults,
         productStatuses: assemblyStatuses,
         mediaRetries,
+        continuation: continuationResult
+          ? {
+              enqueued: continuationResult.enqueued,
+              next_start_reference_index: continuationResult.nextStartReferenceIndex,
+              total_references: continuationResult.totalReferences,
+            }
+          : null,
       },
     });
 
@@ -1155,6 +1312,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       recordsRead,
       recordsWritten,
       endpointResults,
+      continuation: continuationResult,
     };
   } catch (error: any) {
     if (error?.name === 'IntegrationJobCancelledError') {

@@ -174,6 +174,31 @@ describe('integration job dispatcher', () => {
     expect(result.job.status).toBe('ENQUEUED');
   });
 
+  test('includes the continuation offset in the catalog sync dedupe key', async () => {
+    const { buildCatalogSyncDedupeKey } = await import('@lib/integrationJobs');
+
+    expect(
+      buildCatalogSyncDedupeKey({
+        vendorId: 9,
+        syncAll: true,
+        sourceAction: 'manual_sync',
+      }),
+    ).toBe('catalog_sync:9:ALL:all:manual_sync');
+
+    expect(
+      buildCatalogSyncDedupeKey({
+        vendorId: 9,
+        syncAll: true,
+        sourceAction: 'manual_sync',
+        requestPayload: {
+          continuation: {
+            start_reference_index: 50,
+          },
+        },
+      }),
+    ).toBe('catalog_sync:9:ALL:all:manual_sync:50');
+  });
+
   test('finalizes the job as failed when queue submission throws', async () => {
     mockFindActiveIntegrationJobByDedupeKey.mockResolvedValue(null);
     mockCreateIntegrationJob.mockResolvedValue({

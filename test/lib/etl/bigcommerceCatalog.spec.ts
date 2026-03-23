@@ -27,7 +27,7 @@ jest.mock('@lib/etl/productContractProjector', () => ({
   })),
 }));
 
-import { upsertBigCommerceProduct } from '@lib/etl/bigcommerceCatalog';
+import { syncBigCommerceInventoryBatch, upsertBigCommerceProduct } from '@lib/etl/bigcommerceCatalog';
 
 describe('upsertBigCommerceProduct media sync', () => {
   beforeEach(() => {
@@ -47,23 +47,14 @@ describe('upsertBigCommerceProduct media sync', () => {
       const method = options.method ?? 'GET';
 
       if (url.includes('/catalog/products?sku=SKU-1')) {
-        return {
-          data: [
-            {
-              id: 900,
-              sku: 'SKU-1',
-              name: 'Product',
-              custom_fields: [{ name: 'vendor_id', value: '22' }],
-            },
-          ],
-        };
+        return { data: [] };
       }
 
       if (url.includes('/catalog/products?name=Product')) {
         return { data: [] };
       }
 
-      if (url.endsWith('/catalog/products/900') && method === 'PUT') {
+      if (url.endsWith('/catalog/products') && method === 'POST') {
         productPayload = JSON.parse(String(options.body));
         return {
           data: {
@@ -88,18 +79,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       }
 
       if (url.endsWith('/images?limit=250') && method === 'GET') {
-        return {
-          data: [
-            {
-              id: 11,
-              description: 'Old vendor image | mm_media:{"mediaType":"Image","url":"https://cdn.example.com/old.jpg"}',
-            },
-            {
-              id: 12,
-              description: 'Merchant-managed image',
-            },
-          ],
-        };
+        return { data: [] };
       }
 
       if (url.endsWith('/images') && method === 'POST') {
@@ -141,6 +121,8 @@ describe('upsertBigCommerceProduct media sync', () => {
             media_type: 'Image',
             description: 'Black part image',
             part_id: 'PART-BLK',
+            location_ids: ['LOC-FRONT'],
+            decoration_ids: ['DEC-SCREEN'],
           },
         /*  {
             url: 'https://www.youtube.com/watch?v=abc123xyz89',
@@ -154,16 +136,32 @@ describe('upsertBigCommerceProduct media sync', () => {
             description: 'MP4 clip',
           },*/
         ],
+        pricing_configuration: {
+          locations: [
+            {
+              location_id: 'LOC-FRONT',
+              location_name: 'Front Pocket',
+              decorations: [
+                {
+                  decoration_id: 'DEC-SCREEN',
+                  decoration_name: 'Screen Print',
+                  charges: [],
+                },
+              ],
+            },
+          ],
+          parts: [],
+          fob_points: [],
+        },
       },
     });
 
-    expect(result.action).toBe('update');
+    expect(result.action).toBe('create');
     expect(productPayload).toEqual(
       expect.not.objectContaining({
         images: expect.anything(),
       }),
     );
-    expect(productPayload?.weight).toBe(0.25);
     expect(imageBodies).toEqual([
       expect.objectContaining({
         image_url: 'https://cdn.example.com/products/hero.jpg',
@@ -175,7 +173,11 @@ describe('upsertBigCommerceProduct media sync', () => {
     ]);
     expect(imageBodies[0].description).toContain('mm_media:');
     expect(imageBodies[1].description).toContain('"partId":"PART-BLK"');
-    expect(deletedImageIds).toEqual([11]);
+    expect(imageBodies[1].description).toContain('"locationIds":["LOC-FRONT"]');
+    expect(imageBodies[1].description).toContain('"locationNames":["Front Pocket"]');
+    expect(imageBodies[1].description).toContain('"decorationIds":["DEC-SCREEN"]');
+    expect(imageBodies[1].description).toContain('"decorationNames":["Screen Print"]');
+    expect(deletedImageIds).toEqual([]);
     expect(mockSyncProjectedProductContract).toHaveBeenCalled();
     expect(mockUpsertPriceListRecords).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -733,6 +735,221 @@ describe('upsertBigCommerceProduct media sync', () => {
         ]),
       }),
     );
+  });
+
+  test('updates only variant inventory for existing products', async () => {
+    const inventoryAdjustmentBodies: Array<Record<string, unknown>> = [];
+    let productPutBody: Record<string, unknown> | undefined;
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-INV-ONLY')) {
+        return {
+          data: [
+            {
+              id: 1305,
+              sku: 'SKU-INV-ONLY',
+              name: 'Inventory Only Product',
+              custom_fields: [{ name: 'vendor_id', value: '22' }],
+            },
+          ],
+        };
+      }
+
+      if (url.includes('/catalog/products?name=Inventory%20Only%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products/1305') && method === 'PUT') {
+        productPutBody = JSON.parse(String(options.body));
+        return {
+          data: {
+            id: 1305,
+            sku: 'SKU-INV-ONLY',
+            name: 'Inventory Only Product',
+            base_variant_id: 1306,
+          },
+        };
+      }
+
+      if (url.endsWith('/variants?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 2301,
+              sku: 'SKU-INV-ONLY-BLK-ALT',
+              option_values: [{ option_display_name: 'Part', label: 'SKU-INV-ONLY-BLK' }],
+            },
+            {
+              id: 2302,
+              sku: 'SKU-INV-ONLY-BLU',
+              option_values: [],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/inventory/locations') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 2,
+              enabled: true,
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/inventory/adjustments/absolute') && method === 'PUT') {
+        inventoryAdjustmentBodies.push(JSON.parse(String(options.body)));
+        return { data: { items: [] } };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-INV-ONLY',
+        source_sku: 'SKU-INV-ONLY',
+        vendor_product_id: 'P-INV-ONLY',
+        name: 'Inventory Only Product',
+        inventory_level: 19,
+        variants: [
+          {
+            sku: 'SKU-INV-ONLY-BLK',
+            source_sku: 'SKU-INV-ONLY-BLK',
+            part_id: 'SKU-INV-ONLY-BLK',
+            inventory_level: 12,
+            option_values: [{ option_display_name: 'Color', label: 'Black' }],
+          },
+          {
+            sku: 'SKU-INV-ONLY-BLU',
+            source_sku: 'SKU-INV-ONLY-BLU',
+            part_id: 'SKU-INV-ONLY-BLU',
+            inventory_level: 7,
+            option_values: [{ option_display_name: 'Color', label: 'Blue' }],
+          },
+        ],
+      },
+    });
+
+    expect(result.action).toBe('update');
+    expect(productPutBody).toEqual({
+      inventory_tracking: 'variant',
+    });
+    expect(result.inventory_sync_target).toEqual({
+      tracking: 'variant',
+      items: [
+        { variant_id: 2301, quantity: 12 },
+        { variant_id: 2302, quantity: 7 },
+      ],
+    });
+    expect(mockUpsertPriceListRecords).not.toHaveBeenCalled();
+    expect(mockSyncProjectedProductContract).not.toHaveBeenCalled();
+
+    await syncBigCommerceInventoryBatch({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      targets: [result.inventory_sync_target!],
+    });
+
+    expect(inventoryAdjustmentBodies).toEqual([
+      {
+        items: [
+          { location_id: 2, variant_id: 2301, quantity: 12 },
+          { location_id: 2, variant_id: 2302, quantity: 7 },
+        ],
+      },
+    ]);
+  });
+
+  test('creates inventory sync targets instead of sending quantity through the catalog product payload', async () => {
+    let productPayload: Record<string, unknown> | undefined;
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-INV-CREATE')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=Inventory%20Create%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        productPayload = JSON.parse(String(options.body));
+        return {
+          data: {
+            id: 1401,
+            sku: 'SKU-INV-CREATE',
+            name: 'Inventory Create Product',
+            base_variant_id: 1402,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-INV-CREATE',
+        source_sku: 'SKU-INV-CREATE',
+        vendor_product_id: 'P-INV-CREATE',
+        name: 'Inventory Create Product',
+        inventory_level: 9,
+      },
+    });
+
+    expect(productPayload).toEqual(
+      expect.objectContaining({
+        inventory_tracking: 'product',
+      }),
+    );
+    expect(productPayload).not.toEqual(
+      expect.objectContaining({
+        inventory_level: expect.anything(),
+      }),
+    );
+    expect(result.inventory_sync_target).toEqual({
+      tracking: 'product',
+      items: [{ product_id: 1401, quantity: 9 }],
+    });
   });
 
   test('creates variants using BigCommerce option and option value ids after ensuring options exist', async () => {

@@ -401,9 +401,6 @@ export function projectBigCommerceProductContract(
     ...(product.pricing_configuration?.available_charges
       ? { availableCharges: product.pricing_configuration.available_charges }
       : {}),
-    ...(product.pricing_configuration?.available_locations
-      ? { availableLocations: product.pricing_configuration.available_locations }
-      : {}),
     ...(projectStructuredMedia(product) ? { media: projectStructuredMedia(product) } : {}),
     ...(product.pricing_configuration?.fob_points
       ? {

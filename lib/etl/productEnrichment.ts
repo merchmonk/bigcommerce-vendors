@@ -155,7 +155,9 @@ function dedupeMediaAssets(assets: NormalizedMediaAsset[]): NormalizedMediaAsset
       asset.url.trim(),
       asset.part_id ?? '',
       (asset.location_ids ?? []).join('|'),
+      (asset.location_names ?? []).join('|'),
       (asset.decoration_ids ?? []).join('|'),
+      (asset.decoration_names ?? []).join('|'),
     ].join('::');
     if (!asset.url.trim() || seen.has(key)) continue;
     seen.add(key);
@@ -163,6 +165,11 @@ function dedupeMediaAssets(assets: NormalizedMediaAsset[]): NormalizedMediaAsset
   }
 
   return output;
+}
+
+function normalizeIdentifier(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || undefined;
 }
 
 function dedupeBulkRules(rules: NormalizedBulkPricingRule[]): NormalizedBulkPricingRule[] {
@@ -356,7 +363,10 @@ function extractInventorySnapshot(payload: unknown): {
 
     const partId = getFirstString(node, ['partId', 'PartID', 'partID']);
     if (partId) {
-      byPartId.set(partId, (byPartId.get(partId) ?? 0) + number);
+      const normalizedPartId = normalizeIdentifier(partId);
+      if (normalizedPartId) {
+        byPartId.set(normalizedPartId, (byPartId.get(normalizedPartId) ?? 0) + number);
+      }
       return;
     }
 
@@ -393,7 +403,7 @@ function applyInventorySnapshot(
       (value): value is string => !!value,
     );
     const matchedLevel = partKeys
-      .map(key => snapshot.byPartId.get(key))
+      .map(key => snapshot.byPartId.get(normalizeIdentifier(key) ?? key))
       .find((value): value is number => value !== undefined);
 
     if (matchedLevel === undefined) {
@@ -479,6 +489,16 @@ function extractIdentifierList(
   const collectFromValue = (target: unknown): void => {
     if (target === null || target === undefined) return;
 
+    if (typeof target === 'string' && target.trim()) {
+      values.push(target.trim());
+      return;
+    }
+
+    if (typeof target === 'number') {
+      values.push(String(target));
+      return;
+    }
+
     if (Array.isArray(target)) {
       target.forEach(item => collectFromValue(item));
       return;
@@ -490,17 +510,23 @@ function extractIdentifierList(
       if (direct) {
         values.push(direct);
       }
-      Object.values(record).forEach(item => collectFromValue(item));
-      return;
-    }
 
-    if (typeof target === 'string' && target.trim()) {
-      values.push(target.trim());
-      return;
-    }
+      Object.entries(record).forEach(([key, item]) => {
+        if (nestedKey && key === nestedKey) {
+          collectFromValue(item);
+          return;
+        }
 
-    if (typeof target === 'number') {
-      values.push(String(target));
+        if (candidateKeys.includes(key)) {
+          collectFromValue(item);
+          return;
+        }
+
+        if (Array.isArray(item) || asRecord(item)) {
+          collectFromValue(item);
+        }
+      });
+      return;
     }
   };
 
@@ -522,17 +548,27 @@ function extractClassTypes(value: unknown): string[] | undefined {
 }
 
 function extractLocationIds(value: unknown): string[] | undefined {
-  const ids = extractIdentifierList(value, 'Location', ['locationId', 'id', 'locationName', 'name']);
+  const ids = extractIdentifierList(value, 'Location', ['locationId', 'id']);
   return ids.length > 0 ? ids : undefined;
 }
 
+function extractLocationNames(value: unknown): string[] | undefined {
+  const names = extractIdentifierList(value, 'Location', ['locationName', 'name']);
+  return names.length > 0 ? names : undefined;
+}
+
 function extractDecorationIds(value: unknown, fallbackDecorationId?: string): string[] | undefined {
-  const ids = extractIdentifierList(value, 'Decoration', ['decorationId', 'id', 'decorationName', 'name']);
+  const ids = extractIdentifierList(value, 'Decoration', ['decorationId', 'id']);
   if (fallbackDecorationId) {
     ids.push(fallbackDecorationId);
   }
   const unique = dedupeUrls(ids);
   return unique.length > 0 ? unique : undefined;
+}
+
+function extractDecorationNames(value: unknown): string[] | undefined {
+  const names = extractIdentifierList(value, 'Decoration', ['decorationName', 'name']);
+  return names.length > 0 ? names : undefined;
 }
 
 function extractMediaContentNodes(payload: unknown): AnyRecord[] {
@@ -557,8 +593,10 @@ function extractMediaAssets(payload: unknown): NormalizedMediaAsset[] {
 
     const classTypes = extractClassTypes(node.ClassTypeArray);
     const locationIds = extractLocationIds(node.LocationArray);
+    const locationNames = extractLocationNames(node.LocationArray);
     const decorationId = getFirstString(node, ['decorationId']);
     const decorationIds = extractDecorationIds(node.DecorationArray, decorationId);
+    const decorationNames = extractDecorationNames(node.DecorationArray);
     const partId = getFirstString(node, ['partId', 'PartID', 'partID']);
     const description = getFirstString(node, ['description', 'Description']);
     const color = getFirstString(node, ['color', 'Color']);
@@ -573,7 +611,9 @@ function extractMediaAssets(payload: unknown): NormalizedMediaAsset[] {
       media_type: mediaType,
       ...(partId ? { part_id: partId } : {}),
       ...(locationIds ? { location_ids: locationIds } : {}),
+      ...(locationNames ? { location_names: locationNames } : {}),
       ...(decorationIds ? { decoration_ids: decorationIds } : {}),
+      ...(decorationNames ? { decoration_names: decorationNames } : {}),
       ...(description ? { description } : {}),
       ...(classTypes ? { class_types: classTypes } : {}),
       ...(color ? { color } : {}),

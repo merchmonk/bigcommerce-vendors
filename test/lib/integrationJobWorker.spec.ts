@@ -163,6 +163,78 @@ describe('integration job worker', () => {
     );
   });
 
+  test('passes catalog sync continuation payload into the sync runner', async () => {
+    mockGetIntegrationJobById.mockResolvedValue({
+      integration_job_id: 90,
+      job_kind: 'CATALOG_SYNC',
+      vendor_id: 14,
+      mapping_id: 33,
+      sync_scope: 'MAPPING',
+      source_action: 'manual_sync',
+      dedupe_key: 'catalog_sync:14:MAPPING:33:manual_sync:50',
+      correlation_id: 'corr-90',
+      request_payload: {
+        continuation: {
+          start_reference_index: 50,
+          initial_last_successful_sync_at: '2026-03-22T00:00:00.000Z',
+        },
+      },
+      status: 'ENQUEUED',
+      attempt_count: 1,
+      queue_message_id: 'message-90',
+      last_error: null,
+      submitted_at: new Date().toISOString(),
+      started_at: null,
+      ended_at: null,
+    });
+    mockMarkIntegrationJobRunning.mockResolvedValue({
+      integration_job_id: 90,
+      job_kind: 'CATALOG_SYNC',
+      vendor_id: 14,
+      mapping_id: 33,
+      sync_scope: 'MAPPING',
+      source_action: 'manual_sync',
+      dedupe_key: 'catalog_sync:14:MAPPING:33:manual_sync:50',
+      correlation_id: 'corr-90',
+      request_payload: {
+        continuation: {
+          start_reference_index: 50,
+          initial_last_successful_sync_at: '2026-03-22T00:00:00.000Z',
+        },
+      },
+      status: 'RUNNING',
+      attempt_count: 2,
+      queue_message_id: 'message-90',
+      last_error: null,
+      submitted_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      ended_at: null,
+    });
+    mockWithVendorExecutionLock.mockImplementation(async (_vendorId, callback) => {
+      await callback();
+      return { acquired: true };
+    });
+
+    const { handler } = await import('../../workers/integrationJobWorker');
+    await handler({
+      Records: [
+        {
+          body: JSON.stringify({ integrationJobId: 90 }),
+          attributes: { ApproximateReceiveCount: '1' },
+        },
+      ],
+    });
+
+    expect(mockRunVendorSync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        continuation: {
+          start_reference_index: 50,
+          initial_last_successful_sync_at: '2026-03-22T00:00:00.000Z',
+        },
+      }),
+    );
+  });
+
   test('keeps the job enqueued when the vendor lock is unavailable', async () => {
     mockWithVendorExecutionLock.mockResolvedValue({ acquired: false });
 

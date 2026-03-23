@@ -12,7 +12,9 @@ export interface NormalizedMediaAsset {
   media_type: NormalizedMediaType;
   part_id?: string;
   location_ids?: string[];
+  location_names?: string[];
   decoration_ids?: string[];
+  decoration_names?: string[];
   description?: string;
   class_types?: string[];
   color?: string;
@@ -357,7 +359,9 @@ function dedupeMediaAssets(assets: NormalizedMediaAsset[]): NormalizedMediaAsset
       asset.url,
       asset.part_id ?? '',
       (asset.location_ids ?? []).join(','),
+      (asset.location_names ?? []).join(','),
       (asset.decoration_ids ?? []).join(','),
+      (asset.decoration_names ?? []).join(','),
     ].join('|');
     if (seen.has(key)) continue;
     seen.add(key);

@@ -1095,10 +1095,10 @@ describe('buildProductAssembly', () => {
                   ClassType: ['Primary', 'Decorated'],
                 },
                 LocationArray: {
-                  Location: [{ locationId: 'LOC-FRONT' }],
+                  Location: [{ locationId: 'LOC-FRONT', locationName: 'Front Pocket', locationRank: 1 }],
                 },
                 DecorationArray: {
-                  Decoration: [{ decorationId: 'DEC-SCREEN' }],
+                  Decoration: [{ decorationId: 'DEC-SCREEN', decorationName: 'Screen Print' }],
                 },
               },
             ],
@@ -1223,7 +1223,9 @@ describe('buildProductAssembly', () => {
         media_type: 'Image',
         part_id: 'PART-BLK',
         location_ids: ['LOC-FRONT'],
+        location_names: ['Front Pocket'],
         decoration_ids: ['DEC-SCREEN'],
+        decoration_names: ['Screen Print'],
         description: 'Black front',
         class_types: ['Primary', 'Decorated'],
         color: 'Black',

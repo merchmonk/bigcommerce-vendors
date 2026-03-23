@@ -20,7 +20,7 @@ export interface CatalogSyncJobRequest {
   vendorId: number;
   mappingId?: number;
   syncAll?: boolean;
-  sourceAction: 'vendor_create_auto_sync' | 'manual_sync';
+  sourceAction: 'vendor_create_auto_sync' | 'manual_sync' | 'manual_inventory_sync';
   correlationId: string;
   requestPayload?: Record<string, unknown>;
 }
@@ -58,10 +58,31 @@ export function buildCatalogSyncDedupeKey(input: {
   mappingId?: number;
   syncAll?: boolean;
   sourceAction: CatalogSyncJobRequest['sourceAction'];
+  requestPayload?: Record<string, unknown>;
 }): string {
   const syncScope = input.syncAll ? 'ALL' : 'MAPPING';
   const mappingScope = input.mappingId ?? 'all';
-  return `catalog_sync:${input.vendorId}:${syncScope}:${mappingScope}:${input.sourceAction}`;
+  const continuationStartIndex = readContinuationStartIndex(input.requestPayload);
+
+  if (continuationStartIndex === null) {
+    return `catalog_sync:${input.vendorId}:${syncScope}:${mappingScope}:${input.sourceAction}`;
+  }
+
+  return `catalog_sync:${input.vendorId}:${syncScope}:${mappingScope}:${input.sourceAction}:${continuationStartIndex}`;
+}
+
+function readContinuationStartIndex(requestPayload?: Record<string, unknown>): number | null {
+  const continuation = requestPayload?.continuation;
+  if (!continuation || typeof continuation !== 'object') {
+    return null;
+  }
+
+  const startReferenceIndex = (continuation as { start_reference_index?: unknown }).start_reference_index;
+  if (typeof startReferenceIndex !== 'number' || !Number.isFinite(startReferenceIndex)) {
+    return null;
+  }
+
+  return startReferenceIndex;
 }
 
 export function buildOrderLifecycleDedupeKey(input: {

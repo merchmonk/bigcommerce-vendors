@@ -24,6 +24,12 @@ interface QueueEvent {
   Records: QueueRecord[];
 }
 
+interface CatalogSyncContinuationPayload {
+  start_reference_index?: number;
+  max_references_per_run?: number;
+  initial_last_successful_sync_at?: string | null;
+}
+
 function getMaxReceiveCount(): number {
   const value = Number(process.env.INTEGRATION_JOB_MAX_RECEIVE_COUNT ?? '5');
   return Number.isFinite(value) && value > 0 ? value : 5;
@@ -353,12 +359,16 @@ function getLockUnavailableMessage(
 async function executeIntegrationJob(job: NonNullable<Awaited<ReturnType<typeof markIntegrationJobRunning>>>) {
   if (job.job_kind === 'CATALOG_SYNC') {
     const session = await getSystemSessionContext();
+    const continuation = readCatalogSyncContinuationPayload(job.request_payload);
     const result = await runVendorSync({
       vendorId: job.vendor_id,
       mappingId: job.mapping_id ?? undefined,
       syncAll: job.sync_scope === 'ALL',
       session,
       integrationJobId: job.integration_job_id,
+      sourceAction: job.source_action,
+      correlationId: job.correlation_id,
+      continuation,
     });
 
     return {
@@ -385,6 +395,26 @@ async function executeIntegrationJob(job: NonNullable<Awaited<ReturnType<typeof 
       lifecycleStatus: result.orderIntegrationState.lifecycle_status,
     },
   };
+}
+
+function readCatalogSyncContinuationPayload(requestPayload: unknown): CatalogSyncContinuationPayload | undefined {
+  if (!requestPayload || typeof requestPayload !== 'object') {
+    return undefined;
+  }
+
+  const continuation = (requestPayload as { continuation?: unknown }).continuation;
+  if (!continuation || typeof continuation !== 'object') {
+    return undefined;
+  }
+
+  const payload = continuation as CatalogSyncContinuationPayload;
+  const hasKnownField =
+    typeof payload.start_reference_index === 'number' ||
+    typeof payload.max_references_per_run === 'number' ||
+    typeof payload.initial_last_successful_sync_at === 'string' ||
+    payload.initial_last_successful_sync_at === null;
+
+  return hasKnownField ? payload : undefined;
 }
 
 function getJobSucceededEvent(

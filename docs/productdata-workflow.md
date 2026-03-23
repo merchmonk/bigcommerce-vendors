@@ -8,8 +8,15 @@ Implemented discovery flow:
 
 1. `getProductSellable` discovers currently sellable `productId`/`partId` references.
 2. `getProductDateModified` discovers changed `productId`/`partId` references since `changeTimeStamp`.
-3. `getProductCloseOut` discovers closeout items for closeout flagging.
-4. `getProduct` is then executed per discovered ID reference to pull full product detail.
+3. `getProduct` is then executed per discovered ID reference to pull full product detail.
+
+Current runtime behavior:
+
+- First syncs use `getProductSellable`.
+- Later syncs use `getProductDateModified` with the last successful sync timestamp.
+- `getProductCloseOut` is not part of the active catalog sync path.
+- Product discovery references are de-duped by `productId` before fetch.
+- Large ProductData syncs are processed in resumable batches so the worker can continue a catalog across multiple jobs instead of timing out in a single Lambda run.
 
 ## ProductData Operations in Seeded Endpoint Mappings
 
@@ -17,7 +24,6 @@ The seed now includes ProductData 2.0.0 operations as first-class mapping record
 
 - `getProductSellable`
 - `getProductDateModified`
-- `getProductCloseOut`
 - `getProduct`
 
 These are seeded in:
@@ -28,7 +34,8 @@ These are seeded in:
 
 Per vendor mapping (`vendor_endpoint_mappings.runtime_config`) supports:
 
-- `endpoint_url` (override URL per operation mapping)
+- `endpoint_path` (manual endpoint suffix override stored relative to `vendor_api_url`)
+- `endpoint_url` (resolved full URL from discovery/runtime composition)
 - `localization_country` / `localizationCountry` (default `US`)
 - `localization_language` / `localizationLanguage` (default `en`)
 - `is_sellable` / `isSellable` (for `getProductSellable`, default `true`)
@@ -46,9 +53,10 @@ From `GetProductResponse` + `SharedProductObjects`, the ETL now maps:
 - Variants: mapped from `ProductPartArray.ProductPart` with option values
 - Variant options: ensures option definitions and option values exist
 - Bulk pricing rules: mapped from ProductPrice tiers and synced to BigCommerce rules
-- Images: primary image URL mapped as product image
+- Images: vendor image URLs are uploaded into BigCommerce product images after product upsert
+- Inventory: vendor inventory is normalized by part, mapped onto variants, and written to BigCommerce through the Inventory API (`/v3/inventory/adjustments/absolute`) at the end of each sync batch
 - Product map persistence: vendor product id + BigCommerce product id + SKU in `vendor_product_map`
-- Closeout: `is_closeout=true` custom field set for product IDs found via `getProductCloseOut`
+- Sync batching: catalog jobs can continue from a saved ProductData reference offset across multiple worker jobs
 
 ## Key Implementation Files
 
