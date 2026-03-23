@@ -44,6 +44,12 @@ interface BigCommerceCategory {
 interface BigCommerceVariant {
   id: number;
   sku: string;
+  option_values?: Array<{
+    option_id?: number;
+    id?: number;
+    option_display_name?: string;
+    label?: string;
+  }>;
 }
 
 interface BigCommerceOptionValue {
@@ -55,6 +61,13 @@ interface BigCommerceProductOption {
   id: number;
   display_name: string;
   option_values?: BigCommerceOptionValue[];
+}
+
+interface BigCommerceVariantOptionValueInput {
+  option_id: number;
+  id: number;
+  option_display_name?: string;
+  label?: string;
 }
 
 interface BigCommerceBulkPricingRule {
@@ -100,6 +113,7 @@ interface DesiredBigCommerceVideo {
 const VENDOR_MEDIA_MARKER_PREFIX = 'mm_media:';
 const BIGCOMMERCE_CATEGORY_NAME_MAX_LENGTH = 50;
 const BIGCOMMERCE_BRAND_NAME_MAX_LENGTH = 100;
+const INVENTORY_ONLY_FOR_EXISTING_PRODUCTS = true;
 
 export interface UpsertBigCommerceProductInput {
   accessToken: string;
@@ -117,6 +131,33 @@ export interface UpsertBigCommerceProductResult {
   resolvedSku: string;
   markupPercent: number;
   pricingReconciliation: PricingReconciliationSummary;
+}
+
+export interface PartialBigCommerceUpsertResult {
+  product: BigCommerceCatalogProduct;
+  duplicate: boolean;
+  action: 'create' | 'update';
+  resolvedSku: string;
+  markupPercent: number;
+  pricingReconciliation?: PricingReconciliationSummary;
+}
+
+export type BigCommercePartialUpsertError = Error & {
+  partial_upsert_result: PartialBigCommerceUpsertResult;
+};
+
+function buildPartialUpsertError(
+  error: unknown,
+  partialResult: PartialBigCommerceUpsertResult,
+): BigCommercePartialUpsertError {
+  const baseError =
+    error instanceof Error
+      ? error
+      : new Error(typeof error === 'string' ? error : 'BigCommerce product upsert failed');
+
+  return Object.assign(baseError, {
+    partial_upsert_result: partialResult,
+  });
 }
 
 function dedupeProducts(products: BigCommerceCatalogProduct[]): BigCommerceCatalogProduct[] {
@@ -231,7 +272,9 @@ function buildBigCommercePayload(
   options: {
     brandId?: number;
     categoryIds?: number[];
+    includeCustomFields?: boolean;
     includeVariants?: boolean;
+    isVisible?: boolean;
     sku: string;
     markupPercent: number;
     duplicate: boolean;
@@ -269,21 +312,24 @@ function buildBigCommercePayload(
     type: 'physical',
     sku: options.sku,
     description: product.description ?? '',
+    weight: product.weight ?? 0,
     ...(options.productFallback.cost_price !== undefined ? { cost_price: options.productFallback.cost_price } : {}),
     ...(options.productFallback.price !== undefined ? { price: options.productFallback.price } : {}),
     inventory_tracking: hasVariants ? 'variant' : 'product',
     ...(!hasVariants && product.inventory_level !== undefined ? { inventory_level: product.inventory_level } : {}),
     search_keywords: product.search_keywords ?? undefined,
-    custom_fields: withSharedFields(product, {
-      vendorId: options.vendorId,
-      duplicate: options.duplicate,
-      markupPercent: options.markupPercent,
-    }),
+    ...(options.includeCustomFields !== false
+      ? {
+          custom_fields: withSharedFields(product, {
+            vendorId: options.vendorId,
+            duplicate: options.duplicate,
+            markupPercent: options.markupPercent,
+          }),
+        }
+      : {}),
     ...(options.brandId ? { brand_id: options.brandId } : {}),
     ...(options.categoryIds && options.categoryIds.length > 0 ? { categories: options.categoryIds } : {}),
-    ...(options.productFallback.bulk_pricing_rules && options.productFallback.bulk_pricing_rules.length > 0
-      ? { bulk_pricing_rules: options.productFallback.bulk_pricing_rules }
-      : {}),
+    ...(typeof options.isVisible === 'boolean' ? { is_visible: options.isVisible } : {}),
     ...(options.includeVariants && variantPayload.length > 0 ? { variants: variantPayload } : {}),
   };
 }
@@ -457,13 +503,7 @@ async function ensureVariantOptions(
   }
   if (optionsNeeded.size === 0) return;
 
-  const optionsResponse = await requestJson<BigCommerceCatalogListResponse<BigCommerceProductOption>>(
-    accessToken,
-    `${buildApiBase(storeHash)}/catalog/products/${productId}/options?limit=250`,
-    { method: 'GET' },
-    'Failed to list BigCommerce product options',
-  );
-  const existingOptions = optionsResponse.data ?? [];
+  const existingOptions = await listProductOptions(accessToken, storeHash, productId);
 
   for (const [displayName, labelsSet] of Array.from(optionsNeeded.entries())) {
     const labels = Array.from(labelsSet);
@@ -510,6 +550,76 @@ async function ensureVariantOptions(
   }
 }
 
+async function listProductOptions(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+): Promise<BigCommerceProductOption[]> {
+  const optionsResponse = await requestJson<BigCommerceCatalogListResponse<BigCommerceProductOption>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/options?limit=250`,
+    { method: 'GET' },
+    'Failed to list BigCommerce product options',
+  );
+  return optionsResponse.data ?? [];
+}
+
+function buildVariantOptionLookup(
+  options: BigCommerceProductOption[],
+): Map<string, Map<string, BigCommerceVariantOptionValueInput>> {
+  const lookup = new Map<string, Map<string, BigCommerceVariantOptionValueInput>>();
+  for (const option of options) {
+    const byLabel = new Map<string, BigCommerceVariantOptionValueInput>();
+    for (const value of option.option_values ?? []) {
+      byLabel.set(value.label.trim().toLowerCase(), {
+        option_id: option.id,
+        id: value.id,
+      });
+    }
+    lookup.set(option.display_name.trim().toLowerCase(), byLabel);
+  }
+  return lookup;
+}
+
+function toBigCommerceVariantOptionValues(
+  optionValues: Array<{ option_display_name: string; label: string }>,
+  lookup: Map<string, Map<string, BigCommerceVariantOptionValueInput>>,
+): Array<BigCommerceVariantOptionValueInput | { option_display_name: string; label: string }> {
+  return optionValues.map(optionValue => {
+    const optionLookup = lookup.get(optionValue.option_display_name.trim().toLowerCase());
+    const resolved = optionLookup?.get(optionValue.label.trim().toLowerCase());
+    return resolved ?? optionValue;
+  });
+}
+
+function serializeBigCommerceVariantOptionValues(
+  optionValues:
+    | Array<{
+        option_display_name?: string;
+        label?: string;
+        option_id?: number;
+        id?: number;
+      }>
+    | undefined,
+): string {
+  return (optionValues ?? [])
+    .map(optionValue => {
+      if (typeof optionValue.option_id === 'number' && typeof optionValue.id === 'number') {
+        return `id:${optionValue.option_id}:${optionValue.id}`;
+      }
+
+      const displayName = optionValue.option_display_name?.trim().toLowerCase() ?? '';
+      const label = optionValue.label?.trim().toLowerCase() ?? '';
+      return `label:${displayName}:${label}`;
+    })
+    .sort()
+    .join('|');
+}
+
+function isDuplicateVariantOptionValuesError(error: unknown): boolean {
+  return error instanceof Error && /same option values set exists/i.test(error.message);
+}
+
 async function listProductVariants(
   accessToken: string,
   storeHash: string,
@@ -522,6 +632,56 @@ async function listProductVariants(
     'Failed to list BigCommerce variants',
   );
   return response.data ?? [];
+}
+
+async function syncInventoryOnlyForExistingProduct(input: {
+  accessToken: string;
+  storeHash: string;
+  productId: number;
+  product: NormalizedProduct;
+}): Promise<Map<string, number>> {
+  const variantIdsBySku = new Map<string, number>();
+  const variants = (input.product.variants ?? []).filter(variant => variant.option_values.length > 0);
+
+  if (variants.length === 0) {
+    await requestJson<BigCommerceCatalogResponse<BigCommerceCatalogProduct>>(
+      input.accessToken,
+      `${buildApiBase(input.storeHash)}/catalog/products/${input.productId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          inventory_level: input.product.inventory_level ?? 0,
+        }),
+      },
+      'Failed to update BigCommerce product inventory',
+    );
+    return variantIdsBySku;
+  }
+
+  const existingVariants = await listProductVariants(input.accessToken, input.storeHash, input.productId);
+  const existingBySku = new Map(existingVariants.map(variant => [variant.sku, variant]));
+
+  for (const variant of variants) {
+    const existing = existingBySku.get(variant.sku);
+    if (!existing) {
+      continue;
+    }
+
+    variantIdsBySku.set(variant.sku, existing.id);
+    await requestJson<BigCommerceCatalogResponse<BigCommerceVariant>>(
+      input.accessToken,
+      `${buildApiBase(input.storeHash)}/catalog/products/${input.productId}/variants/${existing.id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          inventory_level: variant.inventory_level ?? input.product.inventory_level ?? 0,
+        }),
+      },
+      'Failed to update BigCommerce variant inventory',
+    );
+  }
+
+  return variantIdsBySku;
 }
 
 async function syncVariants(
@@ -537,9 +697,15 @@ async function syncVariants(
   }
 
   await ensureVariantOptions(accessToken, storeHash, productId, product);
+  const variantOptionLookup = buildVariantOptionLookup(
+    await listProductOptions(accessToken, storeHash, productId),
+  );
 
   const existingBySku = new Map(
     (await listProductVariants(accessToken, storeHash, productId)).map(variant => [variant.sku, variant]),
+  );
+  const variantIdsBySku = new Map<string, number>(
+    Array.from(existingBySku.entries()).map(([sku, variant]) => [sku, variant.id]),
   );
 
   for (const variant of variants) {
@@ -549,11 +715,11 @@ async function syncVariants(
       cost_price: projected?.cost_price ?? variant.cost_price ?? variant.price ?? product.cost_price ?? product.price ?? 0,
       price: projected?.price ?? variant.price ?? product.price ?? 0,
       inventory_level: variant.inventory_level ?? product.inventory_level ?? 0,
-      option_values: variant.option_values,
+      option_values: toBigCommerceVariantOptionValues(variant.option_values, variantOptionLookup),
     };
     const existing = existingBySku.get(variant.sku);
     if (existing) {
-      await requestJson<BigCommerceCatalogResponse<BigCommerceVariant>>(
+      const updated = await requestJson<BigCommerceCatalogResponse<BigCommerceVariant>>(
         accessToken,
         `${buildApiBase(storeHash)}/catalog/products/${productId}/variants/${existing.id}`,
         {
@@ -562,10 +728,11 @@ async function syncVariants(
         },
         'Failed to update BigCommerce variant',
       );
+      variantIdsBySku.set(variant.sku, updated.data?.id ?? existing.id);
       continue;
     }
 
-    await requestJson<BigCommerceCatalogResponse<BigCommerceVariant>>(
+    const created = await requestJson<BigCommerceCatalogResponse<BigCommerceVariant>>(
       accessToken,
       `${buildApiBase(storeHash)}/catalog/products/${productId}/variants`,
       {
@@ -573,11 +740,45 @@ async function syncVariants(
         body: JSON.stringify(payload),
       },
       'Failed to create BigCommerce variant',
-    );
+    ).catch(async error => {
+      if (!isDuplicateVariantOptionValuesError(error)) {
+        throw error;
+      }
+
+      const refreshedVariants = await listProductVariants(accessToken, storeHash, productId);
+      const targetOptionKey = serializeBigCommerceVariantOptionValues(payload.option_values);
+      const matchingVariant = refreshedVariants.find(existingVariant => {
+        if (existingVariant.sku === variant.sku) {
+          return true;
+        }
+        return serializeBigCommerceVariantOptionValues(existingVariant.option_values) === targetOptionKey;
+      });
+
+      if (!matchingVariant) {
+        throw error;
+      }
+
+      return requestJson<BigCommerceCatalogResponse<BigCommerceVariant>>(
+        accessToken,
+        `${buildApiBase(storeHash)}/catalog/products/${productId}/variants/${matchingVariant.id}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        },
+        'Failed to update existing BigCommerce variant after duplicate create conflict',
+      );
+    });
+    if (created.data?.id) {
+      variantIdsBySku.set(variant.sku, created.data.id);
+    }
   }
 
   const refreshed = await listProductVariants(accessToken, storeHash, productId);
-  return new Map(refreshed.map(variant => [variant.sku, variant.id]));
+  for (const variant of refreshed) {
+    variantIdsBySku.set(variant.sku, variant.id);
+  }
+
+  return variantIdsBySku;
 }
 
 async function syncBulkPricingRules(
@@ -602,15 +803,13 @@ async function syncBulkPricingRules(
     );
   }
 
-  for (const rule of bulkPricingRules ?? []) {
+  for (const rule of normalizeBulkPricingRuleRanges(bulkPricingRules ?? [])) {
     const payload: Record<string, unknown> = {
       quantity_min: rule.quantity_min,
+      quantity_max: typeof rule.quantity_max === 'number' ? rule.quantity_max : 0,
       type: rule.type,
       amount: rule.amount,
     };
-    if (typeof rule.quantity_max === 'number') {
-      payload.quantity_max = rule.quantity_max;
-    }
 
     await requestJson<Record<string, unknown>>(
       accessToken,
@@ -622,6 +821,29 @@ async function syncBulkPricingRules(
       'Failed to create BigCommerce bulk pricing rule',
     );
   }
+}
+
+function normalizeBulkPricingRuleRanges(
+  rules: NormalizedBulkPricingRule[],
+): NormalizedBulkPricingRule[] {
+  const sorted = [...rules].sort((left, right) => left.quantity_min - right.quantity_min);
+
+  return sorted.map((rule, index) => {
+    const next = sorted[index + 1];
+    const nextUpperBound =
+      next && next.quantity_min > rule.quantity_min ? next.quantity_min - 1 : undefined;
+    const normalizedQuantityMax =
+      typeof nextUpperBound === 'number'
+        ? typeof rule.quantity_max === 'number'
+          ? Math.min(rule.quantity_max, nextUpperBound)
+          : nextUpperBound
+        : rule.quantity_max;
+
+    return {
+      ...rule,
+      ...(typeof normalizedQuantityMax === 'number' ? { quantity_max: normalizedQuantityMax } : {}),
+    };
+  });
 }
 
 async function listProductModifiers(
@@ -638,6 +860,29 @@ async function listProductModifiers(
   return response.data ?? [];
 }
 
+function shouldRecreateModifier(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    /Failed to update product modifier \(422\)/.test(error.message) ||
+    /already used on this option/i.test(error.message) ||
+    /not more than one default/i.test(error.message)
+  );
+}
+
+async function deleteProductModifier(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+  modifierId: number,
+): Promise<void> {
+  await requestJson<Record<string, unknown>>(
+    accessToken,
+    `${buildApiBase(storeHash)}/catalog/products/${productId}/modifiers/${modifierId}`,
+    { method: 'DELETE' },
+    'Failed to delete product modifier',
+  );
+}
+
 async function ensureModifier(
   accessToken: string,
   storeHash: string,
@@ -652,14 +897,14 @@ async function ensureModifier(
     modifier => modifier.display_name.toLowerCase() === input.display_name.toLowerCase(),
   );
 
-  const payload = {
+  const buildPayload = (includeDefault: boolean) => ({
     display_name: input.display_name,
     type: 'dropdown',
     required: false,
     option_values: input.option_values.map((value, index) => ({
       label: value.label,
       sort_order: index,
-      is_default: index === 0,
+      ...(includeDefault ? { is_default: index === 0 } : {}),
       ...(value.adjuster_value !== undefined
         ? {
             adjusters: {
@@ -671,19 +916,27 @@ async function ensureModifier(
           }
         : {}),
     })),
-  };
+  });
 
   if (existing) {
-    await requestJson<Record<string, unknown>>(
-      accessToken,
-      `${buildApiBase(storeHash)}/catalog/products/${productId}/modifiers/${existing.id}`,
-      {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      },
-      'Failed to update product modifier',
-    );
-    return;
+    try {
+      await requestJson<Record<string, unknown>>(
+        accessToken,
+        `${buildApiBase(storeHash)}/catalog/products/${productId}/modifiers/${existing.id}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(buildPayload(false)),
+        },
+        'Failed to update product modifier',
+      );
+      return;
+    } catch (error) {
+      if (!shouldRecreateModifier(error)) {
+        throw error;
+      }
+
+      await deleteProductModifier(accessToken, storeHash, productId, existing.id);
+    }
   }
 
   await requestJson<Record<string, unknown>>(
@@ -691,7 +944,7 @@ async function ensureModifier(
     `${buildApiBase(storeHash)}/catalog/products/${productId}/modifiers`,
     {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify(buildPayload(true)),
     },
     'Failed to create product modifier',
   );
@@ -798,7 +1051,7 @@ function ensureBaseVariantMapping(
   product: NormalizedProduct,
   resolvedSku: string,
 ): Map<string, number> {
-  if (variantIdsBySku.size > 0 || !productRecord.base_variant_id) {
+  if (!productRecord.base_variant_id) {
     return variantIdsBySku;
   }
 
@@ -1112,19 +1365,12 @@ async function syncVendorManagedProductMedia(input: {
   product: NormalizedProduct;
 }): Promise<void> {
   const desiredImages = buildDesiredBigCommerceImages(input.product);
-  const desiredVideos = buildDesiredBigCommerceVideos(input.product);
 
   await replaceVendorManagedImages({
     accessToken: input.accessToken,
     storeHash: input.storeHash,
     productId: input.productId,
     desiredImages,
-  });
-  await replaceVendorManagedVideos({
-    accessToken: input.accessToken,
-    storeHash: input.storeHash,
-    productId: input.productId,
-    desiredVideos,
   });
 }
 
@@ -1161,7 +1407,9 @@ export async function upsertBigCommerceProduct(
   const createPayload = buildBigCommercePayload(input.product, {
     brandId,
     categoryIds,
+    includeCustomFields: true,
     includeVariants: true,
+    isVisible: false,
     sku: resolvedSku,
     markupPercent,
     duplicate: decision.duplicate,
@@ -1172,6 +1420,7 @@ export async function upsertBigCommerceProduct(
   const updatePayload = buildBigCommercePayload(input.product, {
     brandId,
     categoryIds,
+    includeCustomFields: false,
     includeVariants: false,
     sku: resolvedSku,
     markupPercent,
@@ -1206,93 +1455,141 @@ export async function upsertBigCommerceProduct(
           )
         ).data;
 
-  let variantIdsBySku = await syncVariants(
-    input.accessToken,
-    input.storeHash,
-    productRecord.id,
-    input.product,
-    pricingProjection,
-  );
-  variantIdsBySku = ensureBaseVariantMapping(variantIdsBySku, productRecord, input.product, resolvedSku);
-
-  await syncBulkPricingRules(
-    input.accessToken,
-    input.storeHash,
-    productRecord.id,
-    pricingProjection.product_fallback.bulk_pricing_rules,
-  );
-
-  await ensureSharedOptionModifiers(input.accessToken, input.storeHash, productRecord.id, {
-    vendorId: input.vendorId,
-    duplicate: decision.duplicate,
-    size: input.product.shared_option_values?.size,
-    markupPercent,
-  });
-  await ensureConfigurationModifiers(input.accessToken, input.storeHash, productRecord.id, input.product);
-
-  const contractProjection = projectBigCommerceProductContract(input.product, {
-    price_list_id: priceListId,
-    currency,
-    markup_percent: markupPercent,
-    markup_namespace: input.pricingContext?.markup_namespace ?? process.env.BIGCOMMERCE_MARKUP_METAFIELD_NAMESPACE ?? 'merchmonk',
-    markup_key: input.pricingContext?.markup_key ?? process.env.BIGCOMMERCE_MARKUP_METAFIELD_KEY ?? 'product_markup',
-  });
-
-  await syncProjectedProductContract({
-    accessToken: input.accessToken,
-    storeHash: input.storeHash,
-    productId: productRecord.id,
-    productDesignerDefaults: contractProjection.product_designer_defaults,
-    variantDesignerOverrides: contractProjection.variant_designer_overrides,
-    variantIdsBySku,
-  });
-
-  try {
-    await syncVendorManagedProductMedia({
-      accessToken: input.accessToken,
-      storeHash: input.storeHash,
-      productId: productRecord.id,
-      product: input.product,
-    });
-  } catch (error) {
-    console.warn(`Failed to sync vendor-managed media for product ${productRecord.id}:`, error);
-  }
-
-  const priceListRecords = pricingProjection.variants
-    .map(variant => {
-      const variantId = variantIdsBySku.get(variant.sku);
-      if (!variantId) return null;
-      return {
-        variant_id: variantId,
-        price: variant.price,
-        ...(variant.price_list_bulk_tiers ? { bulk_pricing_tiers: variant.price_list_bulk_tiers } : {}),
-      };
-    })
-    .filter((record): record is { variant_id: number; price: number; bulk_pricing_tiers?: Array<{ quantity_min: number; quantity_max?: number; price: number }> } => !!record);
-
-  const pricingReconciliation = reconcileProjectedPricingTargets({
-    pricingProjection,
-    variantIdsBySku,
-  });
-
-  await upsertPriceListRecords({
-    accessToken: input.accessToken,
-    storeHash: input.storeHash,
-    price_list_id: priceListId,
-    records: priceListRecords,
-  });
-
-  return {
+  const action = decision.action === 'create' || !decision.target_product_id ? 'create' : 'update';
+  let partialResult: PartialBigCommerceUpsertResult = {
     product: {
       ...productRecord,
       sku: resolvedSku,
     },
     duplicate: decision.duplicate,
-    action: decision.action === 'create' || !decision.target_product_id ? 'create' : 'update',
+    action,
     resolvedSku,
     markupPercent,
-    pricingReconciliation,
   };
+
+  try {
+    if (INVENTORY_ONLY_FOR_EXISTING_PRODUCTS && action === 'update') {
+      const variantIdsBySku = await syncInventoryOnlyForExistingProduct({
+        accessToken: input.accessToken,
+        storeHash: input.storeHash,
+        productId: productRecord.id,
+        product: input.product,
+      });
+      const pricingReconciliation = reconcileProjectedPricingTargets({
+        pricingProjection,
+        variantIdsBySku,
+      });
+
+      return {
+        ...partialResult,
+        pricingReconciliation,
+      } satisfies UpsertBigCommerceProductResult;
+    }
+
+    let variantIdsBySku = await syncVariants(
+      input.accessToken,
+      input.storeHash,
+      productRecord.id,
+      input.product,
+      pricingProjection,
+    );
+    variantIdsBySku = ensureBaseVariantMapping(variantIdsBySku, productRecord, input.product, resolvedSku);
+
+    const pricingReconciliation = reconcileProjectedPricingTargets({
+      pricingProjection,
+      variantIdsBySku,
+    });
+    partialResult = {
+      ...partialResult,
+      pricingReconciliation,
+    };
+
+    await syncBulkPricingRules(
+      input.accessToken,
+      input.storeHash,
+      productRecord.id,
+      pricingProjection.product_fallback.bulk_pricing_rules,
+    );
+
+    await ensureSharedOptionModifiers(input.accessToken, input.storeHash, productRecord.id, {
+      vendorId: input.vendorId,
+      duplicate: decision.duplicate,
+      size: input.product.shared_option_values?.size,
+      markupPercent,
+    });
+    await ensureConfigurationModifiers(input.accessToken, input.storeHash, productRecord.id, input.product);
+
+    const contractProjection = projectBigCommerceProductContract(input.product, {
+      price_list_id: priceListId,
+      currency,
+      markup_percent: markupPercent,
+      markup_namespace: input.pricingContext?.markup_namespace ?? process.env.BIGCOMMERCE_MARKUP_METAFIELD_NAMESPACE ?? 'merchmonk',
+      markup_key: input.pricingContext?.markup_key ?? process.env.BIGCOMMERCE_MARKUP_METAFIELD_KEY ?? 'product_markup',
+    });
+
+    await syncProjectedProductContract({
+      accessToken: input.accessToken,
+      storeHash: input.storeHash,
+      productId: productRecord.id,
+      productDesignerDefaults: contractProjection.product_designer_defaults,
+      variantDesignerOverrides: contractProjection.variant_designer_overrides,
+      variantIdsBySku,
+    });
+
+    try {
+      await syncVendorManagedProductMedia({
+        accessToken: input.accessToken,
+        storeHash: input.storeHash,
+        productId: productRecord.id,
+        product: input.product,
+      });
+    } catch (error) {
+      console.warn(`Failed to sync vendor-managed media for product ${productRecord.id}:`, error);
+    }
+
+    const variantPriceListRecords = pricingProjection.variants
+      .map(variant => {
+        const variantId = variantIdsBySku.get(variant.sku);
+        if (!variantId) return null;
+        return {
+          variant_id: variantId,
+          price: variant.price,
+          currency,
+          ...(variant.price_list_bulk_tiers ? { bulk_pricing_tiers: variant.price_list_bulk_tiers } : {}),
+        };
+      })
+      .filter((record): record is { variant_id: number; price: number; currency: string; bulk_pricing_tiers?: import('./pricingProjector').PriceListBulkPricingTier[] } => !!record);
+
+    const basePriceListRecord =
+      input.product.variants && input.product.variants.length > 0 && productRecord.base_variant_id && pricingProjection.product_fallback.price !== undefined
+        ? {
+            variant_id: productRecord.base_variant_id,
+            price: pricingProjection.product_fallback.price,
+            currency,
+          }
+        : null;
+
+    const priceListRecords = [
+      ...(basePriceListRecord ? [basePriceListRecord] : []),
+      ...variantPriceListRecords,
+    ].filter(
+      (record, index, records) => records.findIndex(item => item.variant_id === record.variant_id) === index,
+    );
+
+    await upsertPriceListRecords({
+      accessToken: input.accessToken,
+      storeHash: input.storeHash,
+      price_list_id: priceListId,
+      records: priceListRecords,
+    });
+
+    return {
+      ...partialResult,
+      pricingReconciliation,
+    } satisfies UpsertBigCommerceProductResult;
+  } catch (error) {
+    throw buildPartialUpsertError(error, partialResult);
+  }
 }
 
 export async function upsertRelatedProducts(input: {

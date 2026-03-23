@@ -1,6 +1,7 @@
 import type { EndpointMapping, MappingProtocol, VendorEndpointMapping } from '../../types';
 import type { Vendor } from '../vendors';
 import { resolveEndpointAdapter } from './adapters/factory';
+import { resolveRuntimeEndpointUrl } from './endpointUrl';
 import {
   extractProductReferencesFromPayload,
   normalizeProductsFromEndpoint,
@@ -147,9 +148,10 @@ function mergeRequestFields(
 }
 
 function getEndpointUrl(vendor: Vendor, runtimeConfig: Record<string, unknown>): string {
-  const runtimeEndpointUrl = readStringConfig(runtimeConfig, ['endpoint_url', 'endpointUrl']);
-  if (runtimeEndpointUrl) return runtimeEndpointUrl;
-  return vendor.vendor_api_url ?? '';
+  return resolveRuntimeEndpointUrl({
+    vendorApiUrl: vendor.vendor_api_url,
+    runtimeConfig,
+  });
 }
 
 function getLocalization(runtimeConfig: Record<string, unknown>): {
@@ -217,7 +219,9 @@ export async function discoverProductDataReferences(input: {
 
   const lookupRefs: ProductReference[] = [];
   const discoveryErrors: string[] = [];
-  const discoveryOperationName = input.lastSuccessfulSyncAt ? 'getProductDateModified' : 'getProductSellable';
+  //const discoveryOperationName = input.lastSuccessfulSyncAt ? 'getProductDateModified' : 'getProductSellable';
+  //temporary
+  const discoveryOperationName = 'getProductSellable';
 
   async function runDiscoveryOperation(
     operationName: 'getProductSellable' | 'getProductDateModified',

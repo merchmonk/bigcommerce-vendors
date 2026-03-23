@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { VendorOperationalStatus } from '../../types';
 
 export interface OperatorToast {
@@ -369,7 +370,60 @@ export function RowActionMenu(props: {
   }>;
 }) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const visibleActions = useMemo(() => props.actions.filter(action => !action.disabled), [props.actions]);
+
+  useEffect(() => {
+    if (!open) {
+      setMenuPosition(null);
+      return undefined;
+    }
+
+    const updateMenuPosition = () => {
+      if (!buttonRef.current) {
+        return;
+      }
+
+      const triggerRect = buttonRef.current.getBoundingClientRect();
+      const menuWidth = menuRef.current?.offsetWidth ?? 180;
+      const menuHeight = menuRef.current?.offsetHeight ?? visibleActions.length * 44 + 16;
+      const nextLeft = Math.min(
+        Math.max(8, triggerRect.right - menuWidth),
+        Math.max(8, window.innerWidth - menuWidth - 8),
+      );
+      const preferredTop = triggerRect.bottom + 8;
+      const shouldFlipAbove = preferredTop + menuHeight > window.innerHeight - 8 && triggerRect.top - menuHeight - 8 >= 8;
+      const nextTop = shouldFlipAbove
+        ? triggerRect.top - menuHeight - 8
+        : Math.max(8, Math.min(preferredTop, window.innerHeight - menuHeight - 8));
+
+      setMenuPosition({ left: nextLeft, top: nextTop });
+    };
+
+    updateMenuPosition();
+
+    const animationFrameId = window.requestAnimationFrame(updateMenuPosition);
+    const handleLayoutChange = () => updateMenuPosition();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener('resize', handleLayoutChange);
+    window.addEventListener('scroll', handleLayoutChange, true);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      window.removeEventListener('resize', handleLayoutChange);
+      window.removeEventListener('scroll', handleLayoutChange, true);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open, visibleActions.length]);
 
   useEffect(() => {
     if (!open) {
@@ -377,7 +431,11 @@ export function RowActionMenu(props: {
     }
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const clickedTrigger = triggerRef.current?.contains(target);
+      const clickedMenu = menuRef.current?.contains(target);
+
+      if (!clickedTrigger && !clickedMenu) {
         setOpen(false);
       }
     };
@@ -388,13 +446,14 @@ export function RowActionMenu(props: {
     };
   }, [open]);
 
-  const visibleActions = useMemo(() => props.actions.filter(action => !action.disabled), [props.actions]);
-
   return (
-    <div ref={containerRef} style={{ position: 'relative' }}>
+    <div ref={triggerRef} style={{ position: 'relative' }}>
       <button
+        ref={buttonRef}
         type="button"
         aria-label="Vendor row actions"
+        aria-expanded={open}
+        aria-haspopup="menu"
         onClick={() => setOpen(current => !current)}
         style={{
           alignItems: 'center',
@@ -413,47 +472,55 @@ export function RowActionMenu(props: {
       >
         ...
       </button>
-      {open && visibleActions.length > 0 ? (
-        <div
-          style={{
-            background: '#ffffff',
-            border: '1px solid #dbe3ef',
-            borderRadius: '14px',
-            boxShadow: '0 18px 40px rgba(15, 23, 42, 0.14)',
-            minWidth: '180px',
-            padding: '8px',
-            position: 'absolute',
-            right: 0,
-            top: '48px',
-            zIndex: 100,
-          }}
-        >
-          {visibleActions.map(action => (
-            <button
-              key={action.id}
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                action.onSelect();
-              }}
+      {open && visibleActions.length > 0 && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              aria-label="Row actions"
               style={{
-                background: 'transparent',
-                border: 'none',
-                borderRadius: '10px',
-                color: action.tone === 'danger' ? '#b91c1c' : '#0f172a',
-                cursor: 'pointer',
-                display: 'block',
-                fontWeight: 600,
+                background: '#ffffff',
+                border: '1px solid #dbe3ef',
+                borderRadius: '14px',
+                boxShadow: '0 18px 40px rgba(15, 23, 42, 0.14)',
+                left: menuPosition?.left ?? 8,
+                minWidth: '180px',
                 padding: '8px',
-                textAlign: 'left',
-                width: '100%',
+                position: 'fixed',
+                top: menuPosition?.top ?? 8,
+                visibility: menuPosition ? 'visible' : 'hidden',
+                zIndex: 1200,
               }}
             >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+              {visibleActions.map(action => (
+                <button
+                  key={action.id}
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    action.onSelect();
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    borderRadius: '10px',
+                    color: action.tone === 'danger' ? '#b91c1c' : '#0f172a',
+                    cursor: 'pointer',
+                    display: 'block',
+                    fontWeight: 600,
+                    padding: '8px',
+                    textAlign: 'left',
+                    width: '100%',
+                  }}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

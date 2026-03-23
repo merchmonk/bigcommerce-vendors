@@ -92,7 +92,7 @@ const PROMOSTANDARDS_SEED_SOURCE_RECORDS: PromoSeedSourceRecord[] = [
   { endpoint_name: 'Inventory', endpoint_version: '2.0.0', operation_name: 'getInventoryLevels', is_product_endpoint: true },
   { endpoint_name: 'ProductMedia', endpoint_version: '1.0.0', operation_name: 'getMediaContent', is_product_endpoint: true },
   { endpoint_name: 'ProductMedia', endpoint_version: '1.1.0', operation_name: 'getMediaContent', is_product_endpoint: true },
-  { endpoint_name: 'ProductCompliance', endpoint_version: '1.0.0', operation_name: 'getComplianceData', is_product_endpoint: true },
+  { endpoint_name: 'ProductCompliance', endpoint_version: '1.0.0', operation_name: 'getCompliance', is_product_endpoint: true },
   {
     endpoint_name: 'ProductData',
     endpoint_version: '1.0.0',

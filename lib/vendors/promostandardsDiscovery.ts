@@ -24,8 +24,38 @@ interface ProbeClassification {
   credentialsValid: boolean | null;
 }
 
+interface CapabilityProbe {
+  endpoint_name: string;
+  endpoint_version: string;
+  operation_name: string;
+  protocol: MappingProtocol;
+  metadata: Record<string, unknown>;
+}
+
+const PROMOSTANDARDS_ENDPOINT_ALIASES: Record<string, string[]> = {
+  CompanyData: ['companydata', 'companydataservicebinding'],
+  Inventory: ['inventory', 'inventoryservicebinding'],
+  PricingAndConfiguration: [
+    'pricingandconfiguration',
+    'productpriceandconfiguration',
+    'ppc',
+    'pricingandconfigurationservicebinding',
+  ],
+  ProductData: ['productdata', 'productdataservicebinding'],
+  ProductMedia: ['productmedia', 'mediacontent', 'mediacontentservicebinding'],
+  purchaseOrder: ['purchaseorder', 'po', 'purchaseorderservicebinding'],
+  OrderStatusService: ['orderstatusservice', 'orderstatus'],
+  OrderShipmentNotification: ['ordershipmentnotification', 'shipmentnotification'],
+  Invoice: ['invoice', 'invoiceservicebinding'],
+  RemittanceAdvice: ['remittanceadvice', 'remittanceservicebinding'],
+};
+
 function normalizeProtocol(protocol: MappingProtocol | undefined): MappingProtocol {
   return protocol ?? 'SOAP';
+}
+
+function normalizeLookupText(value: string): string {
+  return value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 }
 
 function compareEndpointVersions(left: string, right: string): number {
@@ -171,6 +201,156 @@ function parseWsdlOperations(rawXml: string): Set<string> {
   return operations;
 }
 
+function asArray<T>(value: T | T[] | null | undefined): T[] {
+  if (value === null || value === undefined) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function walkNodes(value: unknown, callback: (node: Record<string, unknown>) => void): void {
+  if (!value) return;
+  if (Array.isArray(value)) {
+    value.forEach(item => walkNodes(item, callback));
+    return;
+  }
+  if (typeof value !== 'object') return;
+
+  const node = value as Record<string, unknown>;
+  callback(node);
+  Object.values(node).forEach(child => walkNodes(child, callback));
+}
+
+function collectStringValues(value: unknown): string[] {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(item => collectStringValues(item));
+  }
+
+  const record = asRecord(value);
+  if (!record) return [];
+  return Object.values(record).flatMap(item => collectStringValues(item));
+}
+
+function extractVersionCandidates(strings: string[]): string[] {
+  const versions: string[] = [];
+  for (const value of strings) {
+    const matches = value.match(/\b\d+\.\d+\.\d+\b/g);
+    if (!matches) continue;
+    versions.push(...matches);
+  }
+
+  return Array.from(new Set(versions));
+}
+
+function normalizeResolvedEndpointUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.search.toLowerCase() === '?wsdl') {
+      url.search = '';
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function getEndpointAliasTokens(endpointName: string): string[] {
+  const aliases = PROMOSTANDARDS_ENDPOINT_ALIASES[endpointName] ?? [];
+  return Array.from(
+    new Set(
+      [endpointName, ...aliases]
+        .map(normalizeLookupText)
+        .filter(Boolean),
+    ),
+  );
+}
+
+function lookupKey(endpointName: string, endpointVersion: string): string {
+  return `${endpointName}|${endpointVersion}`;
+}
+
+function resolveProbeFromServiceDetail(input: {
+  probes: CapabilityProbe[];
+  strings: string[];
+}): CapabilityProbe | null {
+  const normalizedStrings = input.strings.map(normalizeLookupText).filter(Boolean);
+  if (normalizedStrings.length === 0) {
+    return null;
+  }
+
+  const matchingByName = input.probes.filter(probe => {
+    const aliasTokens = getEndpointAliasTokens(probe.endpoint_name);
+    return normalizedStrings.some(value => aliasTokens.some(token => value.includes(token)));
+  });
+
+  if (matchingByName.length === 0) {
+    return null;
+  }
+
+  const versionCandidates = extractVersionCandidates(input.strings);
+  if (versionCandidates.length > 0) {
+    const exactVersionMatch = matchingByName.find(probe => versionCandidates.includes(probe.endpoint_version));
+    if (exactVersionMatch) {
+      return exactVersionMatch;
+    }
+  }
+
+  if (matchingByName.length === 1) {
+    return matchingByName[0];
+  }
+
+  return null;
+}
+
+function extractResolvedEndpointUrls(input: {
+  payload: Record<string, unknown> | null;
+  probes: CapabilityProbe[];
+}): Map<string, string> {
+  const resolved = new Map<string, string>();
+  if (!input.payload) return resolved;
+
+  walkNodes(input.payload, node => {
+    const strings = collectStringValues(node);
+    const urls = strings
+      .filter(value => /^https?:\/\//i.test(value))
+      .map(normalizeResolvedEndpointUrl);
+    if (urls.length === 0) {
+      return;
+    }
+
+    const matchedProbe = resolveProbeFromServiceDetail({
+      probes: input.probes,
+      strings,
+    });
+    if (!matchedProbe) {
+      return;
+    }
+
+    resolved.set(lookupKey(matchedProbe.endpoint_name, matchedProbe.endpoint_version), urls[0]);
+  });
+
+  return resolved;
+}
+
+function mergeResolvedEndpointUrls(target: Map<string, string>, source: Map<string, string>): void {
+  source.forEach((value, key) => {
+    if (!target.has(key)) {
+      target.set(key, value);
+    }
+  });
+}
+
 async function inspectSoapWsdl(input: {
   endpointUrl: string;
   endpointName: string;
@@ -212,13 +392,133 @@ async function inspectSoapWsdl(input: {
   }
 }
 
-function toCapabilityProbes(mappings: Awaited<ReturnType<typeof listEndpointMappings>>): Array<{
-  endpoint_name: string;
-  endpoint_version: string;
-  operation_name: string;
-  protocol: MappingProtocol;
-  metadata: Record<string, unknown>;
+export async function probePromostandardsEndpoint(input: {
+  endpointUrl: string;
+  endpointName: string;
+  endpointVersion: string;
+  operationName: string;
+  vendorAccountId?: string | null;
+  vendorSecret?: string | null;
+  protocol?: MappingProtocol;
+  metadata?: Record<string, unknown>;
+}): Promise<PromostandardsEndpointCapability> {
+  const result = await runPromostandardsEndpointProbe(input);
+  return result.capability;
+}
+
+async function runPromostandardsEndpointProbe(input: {
+  endpointUrl: string;
+  endpointName: string;
+  endpointVersion: string;
+  operationName: string;
+  vendorAccountId?: string | null;
+  vendorSecret?: string | null;
+  protocol?: MappingProtocol;
+  metadata?: Record<string, unknown>;
+}): Promise<{
+  capability: PromostandardsEndpointCapability;
+  parsedBody: Record<string, unknown> | null;
+  rawPayload: string;
 }> {
+  const protocol = normalizeProtocol(input.protocol);
+  const adapter = resolveEndpointAdapter(protocol);
+  const metadata = input.metadata ?? {};
+  const baseCapability = {
+    endpoint_name: input.endpointName,
+    endpoint_version: input.endpointVersion,
+    operation_name: input.operationName,
+    capability_scope:
+      typeof metadata.capability_scope === 'string'
+        ? (metadata.capability_scope as 'catalog' | 'order')
+        : (input.endpointName === 'CompanyData' ? 'catalog' : 'catalog'),
+    lifecycle_role:
+      typeof metadata.lifecycle_role === 'string'
+        ? metadata.lifecycle_role
+        : undefined,
+    optional_by_vendor:
+      typeof metadata.optional_by_vendor === 'boolean'
+        ? metadata.optional_by_vendor
+        : undefined,
+    recommended_poll_minutes:
+      typeof metadata.recommended_poll_minutes === 'number'
+        ? metadata.recommended_poll_minutes
+        : null,
+  };
+
+  try {
+    let wsdlInspection: {
+      available: boolean;
+      statusCode: number | null;
+      message: string;
+    } | null = null;
+
+    if (protocol === 'SOAP') {
+      wsdlInspection = await inspectSoapWsdl({
+        endpointUrl: input.endpointUrl,
+        endpointName: input.endpointName,
+        endpointVersion: input.endpointVersion,
+        operationName: input.operationName,
+      });
+    }
+
+    const result = await adapter.invokeEndpoint({
+      endpointUrl: input.endpointUrl,
+      endpointName: input.endpointName,
+      operationName: input.operationName,
+      endpointVersion: input.endpointVersion,
+      vendorAccountId: input.vendorAccountId ?? null,
+      vendorSecret: input.vendorSecret ?? null,
+      runtimeConfig: {},
+    });
+
+    const classified = classifyPromostandardsProbe({
+      status: result.status,
+      parsedBody: result.parsedBody,
+      rawPayload: result.rawPayload,
+    });
+
+    return {
+      capability: {
+        ...baseCapability,
+        available: wsdlInspection?.available ?? classified.available,
+        status_code: result.status,
+        message: wsdlInspection
+          ? wsdlInspection.available
+            ? 'Operation listed in endpoint WSDL.'
+            : 'Operation not listed in endpoint WSDL.'
+          : classified.available
+            ? 'Endpoint reachable.'
+            : 'Endpoint probe did not confirm availability.',
+        wsdl_available: wsdlInspection?.available ?? null,
+        credentials_valid: classified.credentialsValid,
+        live_probe_message: classified.message,
+        resolved_endpoint_url: input.endpointUrl,
+        custom_endpoint_url: null,
+      },
+      parsedBody: result.parsedBody,
+      rawPayload: result.rawPayload,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Endpoint probe failed';
+    return {
+      capability: {
+        ...baseCapability,
+        available: false,
+        status_code: null,
+        message,
+        wsdl_available: null,
+        credentials_valid: null,
+        live_probe_message: null,
+        resolved_endpoint_url: input.endpointUrl,
+        custom_endpoint_url: null,
+      },
+      parsedBody: null,
+      rawPayload: '',
+    };
+  }
+}
+
+function toCapabilityProbes(mappings: Awaited<ReturnType<typeof listEndpointMappings>>): CapabilityProbe[] {
   return [...mappings].map(mapping => ({
     endpoint_name: mapping.endpoint_name,
     endpoint_version: mapping.endpoint_version,
@@ -266,113 +566,47 @@ export async function discoverPromostandardsCapabilities(
     protocol,
   });
   const probes = toCapabilityProbes(mappings);
-  const adapter = resolveEndpointAdapter(protocol);
   const endpoints: PromostandardsEndpointCapability[] = [];
   let credentialsValid: boolean | null = null;
+  const resolvedEndpointUrls = new Map<string, string>();
 
   for (const probe of probes) {
-    try {
-      const baseCapability = {
-        endpoint_name: probe.endpoint_name,
-        endpoint_version: probe.endpoint_version,
-        operation_name: probe.operation_name,
-        capability_scope:
-          typeof probe.metadata.capability_scope === 'string'
-            ? (probe.metadata.capability_scope as 'catalog' | 'order')
-            : (probe.endpoint_name === 'CompanyData' ? 'catalog' : 'catalog'),
-        lifecycle_role:
-          typeof probe.metadata.lifecycle_role === 'string'
-            ? probe.metadata.lifecycle_role
-            : undefined,
-        optional_by_vendor:
-          typeof probe.metadata.optional_by_vendor === 'boolean'
-            ? probe.metadata.optional_by_vendor
-            : undefined,
-        recommended_poll_minutes:
-          typeof probe.metadata.recommended_poll_minutes === 'number'
-            ? probe.metadata.recommended_poll_minutes
-            : null,
-      };
+    const endpointUrl =
+      resolvedEndpointUrls.get(lookupKey(probe.endpoint_name, probe.endpoint_version)) ??
+      input.vendor_api_url ??
+      '';
+    const probeResult = await runPromostandardsEndpointProbe({
+      endpointUrl,
+      endpointName: probe.endpoint_name,
+      endpointVersion: probe.endpoint_version,
+      operationName: probe.operation_name,
+      vendorAccountId: input.vendor_account_id ?? null,
+      vendorSecret: input.vendor_secret ?? null,
+      protocol,
+      metadata: probe.metadata,
+    });
+    const capability = probeResult.capability;
 
-      let wsdlInspection: {
-        available: boolean;
-        statusCode: number | null;
-        message: string;
-      } | null = null;
-
-      if (protocol === 'SOAP') {
-        wsdlInspection = await inspectSoapWsdl({
-          endpointUrl: input.vendor_api_url ?? '',
-          endpointName: probe.endpoint_name,
-          endpointVersion: probe.endpoint_version,
-          operationName: probe.operation_name,
-        });
-      }
-
-      const result = await adapter.invokeEndpoint({
-        endpointUrl: input.vendor_api_url ?? '',
-        endpointName: probe.endpoint_name,
-        operationName: probe.operation_name,
-        endpointVersion: probe.endpoint_version,
-        vendorAccountId: input.vendor_account_id ?? null,
-        vendorSecret: input.vendor_secret ?? null,
-        runtimeConfig: {},
-      });
-      const classified = classifyPromostandardsProbe({
-        status: result.status,
-        parsedBody: result.parsedBody,
-        rawPayload: result.rawPayload,
-      });
-      if (classified.credentialsValid === true) {
-        credentialsValid = true;
-      } else if (credentialsValid !== true && classified.credentialsValid === false) {
-        credentialsValid = false;
-      }
-      endpoints.push({
-        ...baseCapability,
-        available: wsdlInspection?.available ?? classified.available,
-        status_code: result.status,
-        message: wsdlInspection
-          ? wsdlInspection.available
-            ? 'Operation listed in endpoint WSDL.'
-            : 'Operation not listed in endpoint WSDL.'
-          : classified.available
-            ? 'Endpoint reachable.'
-            : 'Endpoint probe did not confirm availability.',
-        wsdl_available: wsdlInspection?.available ?? null,
-        credentials_valid: classified.credentialsValid,
-        live_probe_message: classified.message,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Endpoint probe failed';
-      endpoints.push({
-        endpoint_name: probe.endpoint_name,
-        endpoint_version: probe.endpoint_version,
-        operation_name: probe.operation_name,
-        capability_scope:
-          typeof probe.metadata.capability_scope === 'string'
-            ? (probe.metadata.capability_scope as 'catalog' | 'order')
-            : (probe.endpoint_name === 'CompanyData' ? 'catalog' : 'catalog'),
-        lifecycle_role:
-          typeof probe.metadata.lifecycle_role === 'string'
-            ? probe.metadata.lifecycle_role
-            : undefined,
-        optional_by_vendor:
-          typeof probe.metadata.optional_by_vendor === 'boolean'
-            ? probe.metadata.optional_by_vendor
-            : undefined,
-        recommended_poll_minutes:
-          typeof probe.metadata.recommended_poll_minutes === 'number'
-            ? probe.metadata.recommended_poll_minutes
-            : null,
-        available: false,
-        status_code: null,
-        message,
-        wsdl_available: null,
-        credentials_valid: null,
-        live_probe_message: null,
-      });
+    if (probe.endpoint_name === 'CompanyData') {
+      mergeResolvedEndpointUrls(
+        resolvedEndpointUrls,
+        extractResolvedEndpointUrls({
+          payload: probeResult.parsedBody,
+          probes,
+        }),
+      );
     }
+
+    if (capability.credentials_valid === true) {
+      credentialsValid = true;
+    } else if (credentialsValid !== true && capability.credentials_valid === false) {
+      credentialsValid = false;
+    }
+
+    endpoints.push({
+      ...capability,
+      resolved_endpoint_url: resolvedEndpointUrls.get(lookupKey(probe.endpoint_name, probe.endpoint_version)) ?? capability.resolved_endpoint_url ?? null,
+    });
   }
 
   const availableEndpointCount = endpoints.filter(endpoint => endpoint.available).length;

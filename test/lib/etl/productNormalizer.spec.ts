@@ -65,11 +65,19 @@ describe('normalizeProductsFromEndpoint', () => {
                 partId: 'P-100-BLK-M',
                 primaryColor: { Color: { colorName: 'Black' } },
                 ApparelSize: { labelSize: 'M' },
+                Dimension: {
+                  weight: 0.75,
+                  weightUom: 'LB',
+                },
               },
               {
                 partId: 'P-100-BLU-L',
                 primaryColor: { Color: { colorName: 'Blue' } },
                 ApparelSize: { labelSize: 'L' },
+                Dimension: {
+                  weight: 12,
+                  weightUom: 'OZ',
+                },
               },
             ],
           },
@@ -89,7 +97,10 @@ describe('normalizeProductsFromEndpoint', () => {
     expect(result[0].vendor_product_id).toBe('P-100');
     expect(result[0].brand_name).toBe('Acme Brand');
     expect(result[0].categories).toEqual(['Apparel > Polos']);
+    expect(result[0].weight).toBeCloseTo(0.75);
     expect(result[0].variants).toHaveLength(2);
+    expect(result[0].variants?.[0].weight).toBeCloseTo(0.75);
+    expect(result[0].variants?.[1].weight).toBeCloseTo(0.75);
     expect(result[0].bulk_pricing_rules).toEqual([
       {
         quantity_min: 10,
@@ -97,6 +108,54 @@ describe('normalizeProductsFromEndpoint', () => {
         type: 'price',
         amount: 22.5,
       },
+    ]);
+  });
+
+  test('adds a Part option when vendor parts would otherwise collide on the same option combination', () => {
+    const payload = {
+      getProductResponse: {
+        Product: {
+          productId: 'P-200',
+          productName: 'Duplicate Color Product',
+          ProductPartArray: {
+            ProductPart: [
+              {
+                partId: 'P-200-BLK-1',
+                primaryColor: { Color: { colorName: 'Black' } },
+              },
+              {
+                partId: 'P-200-BLK-2',
+                primaryColor: { Color: { colorName: 'Black' } },
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    const result = normalizeProductsFromEndpoint(
+      'ProductData',
+      '2.0.0',
+      'getProduct',
+      payload,
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].variants).toEqual([
+      expect.objectContaining({
+        sku: 'P-200-BLK-1',
+        option_values: [
+          { option_display_name: 'Color', label: 'Black' },
+          { option_display_name: 'Part', label: 'P-200-BLK-1' },
+        ],
+      }),
+      expect.objectContaining({
+        sku: 'P-200-BLK-2',
+        option_values: [
+          { option_display_name: 'Color', label: 'Black' },
+          { option_display_name: 'Part', label: 'P-200-BLK-2' },
+        ],
+      }),
     ]);
   });
 
@@ -128,6 +187,48 @@ describe('normalizeProductsFromEndpoint', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].categories).toEqual(['Business accessories > Key rings']);
+  });
+
+  test('omits obvious non-taxonomy vendor tags from flat product categories', () => {
+    const payload = {
+      getProductResponse: {
+        Product: {
+          productId: 'BG207',
+          productName: 'Weekender bag',
+          ProductCategoryArray: {
+            ProductCategory: [
+              { category: 'BackPack' },
+              { category: 'LUGGAGE' },
+              { category: 'HYBRID' },
+              { category: 'Bags' },
+              { category: 'MADE IN CHINA' },
+              { category: 'Duffle' },
+              { category: 'Branding solutions' },
+              { category: 'LUGGAGE WEEKENDERS' },
+              { category: 'New Items' },
+            ],
+          },
+        },
+      },
+    };
+
+    const result = normalizeProductsFromEndpoint(
+      'ProductData',
+      '2.0.0',
+      'getProduct',
+      payload,
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].categories).toEqual([
+      'BackPack',
+      'LUGGAGE',
+      'HYBRID',
+      'Bags',
+      'Duffle',
+      'LUGGAGE WEEKENDERS',
+      'New Items',
+    ]);
   });
 
   test('extracts product references from ProductData discovery responses', () => {

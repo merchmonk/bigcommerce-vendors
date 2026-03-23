@@ -185,6 +185,69 @@ describe('promostandardsDiscovery', () => {
     );
   });
 
+  test('captures resolved endpoint URLs from CompanyData service details and uses them for later probes', async () => {
+    mockListEndpointMappings.mockResolvedValue([
+      {
+        mapping_id: 1,
+        endpoint_name: 'CompanyData',
+        endpoint_version: '1.0.0',
+        operation_name: 'getCompanyData',
+        protocol: 'SOAP',
+      },
+      {
+        mapping_id: 2,
+        endpoint_name: 'PricingAndConfiguration',
+        endpoint_version: '1.0.0',
+        operation_name: 'getConfigurationAndPricing',
+        protocol: 'SOAP',
+      },
+    ]);
+
+    mockInvokeEndpoint
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<Envelope><Body><getCompanyDataResponse /></Body></Envelope>',
+        parsedBody: {
+          getCompanyDataResponse: {
+            PromoStandardsServiceDetailArray: {
+              PromoStandardsServiceDetail: {
+                serviceName: 'PPC',
+                serviceVersion: '1.0.0',
+                url: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap?wsdl',
+              },
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<Envelope><Body><getConfigurationAndPricingResponse /></Body></Envelope>',
+        parsedBody: { getConfigurationAndPricingResponse: {} },
+      });
+
+    const result = await discoverPromostandardsCapabilities({
+      vendor_api_url: 'https://vendor.example.com',
+      vendor_account_id: 'acct-1',
+      vendor_secret: 'secret',
+      api_protocol: 'SOAP',
+    });
+
+    expect(mockInvokeEndpoint).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        endpointUrl: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
+      }),
+    );
+    expect(result.endpoints).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          endpoint_name: 'PricingAndConfiguration',
+          resolved_endpoint_url: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
+        }),
+      ]),
+    );
+  });
+
   test('resolves mapping ids from available endpoint versions', async () => {
     mockFindMappingsByEndpointOperations.mockResolvedValue([
       { mapping_id: 11 },

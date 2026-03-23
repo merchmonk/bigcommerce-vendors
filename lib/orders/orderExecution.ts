@@ -1,6 +1,7 @@
 import type { IntegrationJob, IntegrationJobKind, OrderIntegrationState, OrderLifecycleStatus } from '../../types';
 import { getVendorById } from '../vendors';
 import { resolveEndpointAdapter } from '../etl/adapters/factory';
+import { resolveRuntimeEndpointUrl } from '../etl/endpointUrl';
 import {
   getOrderIntegrationStateById,
   updateOrderIntegrationState,
@@ -327,7 +328,10 @@ async function invokeCapability(
 
   const adapter = resolveEndpointAdapter(capability.protocol);
   const result = await adapter.invokeEndpoint({
-    endpointUrl: vendor.vendor_api_url,
+    endpointUrl: resolveRuntimeEndpointUrl({
+      vendorApiUrl: vendor.vendor_api_url,
+      runtimeConfig: capability.runtime_config,
+    }),
     endpointName: capability.endpoint_name,
     operationName: capability.operation_name,
     endpointVersion: capability.endpoint_version,

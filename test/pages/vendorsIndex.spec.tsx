@@ -61,7 +61,7 @@ describe('vendors index actions', () => {
     render(<VendorsPage />);
 
     fireEvent.click(screen.getByLabelText('Vendor row actions'));
-    fireEvent.click(screen.getByRole('button', { name: 'Reactivate' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reactivate' }));
 
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(screen.getByText('Reactivate vendor?')).toBeTruthy();
@@ -78,5 +78,34 @@ describe('vendors index actions', () => {
         }),
       );
     });
+  });
+
+  test('renders the row action menu in a portal outside the table scroll container', async () => {
+    const VendorsPage = (await import('../../pages/vendors/index')).default;
+
+    render(<VendorsPage />);
+
+    const trigger = screen.getByLabelText('Vendor row actions');
+    Object.defineProperty(trigger, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 140,
+        height: 40,
+        left: 300,
+        right: 340,
+        top: 100,
+        width: 40,
+        x: 300,
+        y: 100,
+        toJSON: () => ({}),
+      }),
+    });
+
+    fireEvent.click(trigger);
+
+    const menu = screen.getByRole('menu');
+
+    expect(menu.parentElement).toBe(document.body);
+    expect(menu.style.position).toBe('fixed');
   });
 });

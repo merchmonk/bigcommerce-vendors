@@ -20,6 +20,7 @@ const mockGetIntegrationJobById = jest.fn();
 const mockUpdateSyncRunProgress = jest.fn();
 const mockUpsertRelatedProducts = jest.fn();
 const mockResolveBigCommercePricingContext = jest.fn();
+const mockReconcileStaleCatalogSyncRunsForVendor = jest.fn();
 const mockLoggerInfo = jest.fn();
 const mockLoggerWarn = jest.fn();
 const mockLoggerError = jest.fn();
@@ -41,6 +42,7 @@ jest.mock('@lib/etl/repository', () => ({
   listPendingRelatedProductLinks: (...args: unknown[]) => mockListPendingRelatedProductLinks(...args),
   findVendorProductMapByVendorProductId: (...args: unknown[]) => mockFindVendorProductMapByVendorProductId(...args),
   getIntegrationJobById: (...args: unknown[]) => mockGetIntegrationJobById(...args),
+  reconcileStaleCatalogSyncRunsForVendor: (...args: unknown[]) => mockReconcileStaleCatalogSyncRunsForVendor(...args),
   updateSyncRunProgress: (...args: unknown[]) => mockUpdateSyncRunProgress(...args),
 }));
 
@@ -196,6 +198,7 @@ describe('runVendorSync', () => {
     mockListPendingRelatedProductLinks.mockResolvedValue([]);
     mockFindVendorProductMapByVendorProductId.mockResolvedValue(null);
     mockGetIntegrationJobById.mockResolvedValue(null);
+    mockReconcileStaleCatalogSyncRunsForVendor.mockResolvedValue(0);
     mockUpdateSyncRunProgress.mockResolvedValue({});
     mockUpsertRelatedProducts.mockResolvedValue(undefined);
     mockResolveBigCommercePricingContext.mockResolvedValue({
@@ -219,6 +222,7 @@ describe('runVendorSync', () => {
     });
 
     expect(mockDiscoverProductDataReferences).toHaveBeenCalledTimes(1);
+    expect(mockReconcileStaleCatalogSyncRunsForVendor).toHaveBeenCalledWith(7);
     expect(mockDiscoverProductDataReferences).toHaveBeenCalledWith(
       expect.objectContaining({
         lastSuccessfulSyncAt: null,
@@ -435,10 +439,508 @@ describe('runVendorSync', () => {
         }),
       }),
     );
-    expect(mockLoggerError).toHaveBeenCalledWith(
+  expect(mockLoggerError).toHaveBeenCalledWith(
       'vendor sync failed',
       expect.objectContaining({
         syncRunId: 11,
+      }),
+    );
+  });
+
+  test('continues sync when a later product is blocked before BigCommerce write but earlier products already synced', async () => {
+    mockDiscoverProductDataReferences.mockResolvedValue({
+      endpointResults: [
+        {
+          mapping_id: 100,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductSellable',
+          status: 200,
+          products_found: 2,
+        },
+      ],
+      references: [
+        { productId: 'PROD-1', partId: 'SKU-1' },
+        { productId: '66P3251', partId: '66P3251-BLK' },
+      ],
+      getProductConfig: {
+        mapping: {
+          mapping_id: 101,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProduct',
+        },
+        runtimeConfig: {},
+        endpointUrl: 'https://vendor.example.com/productdata',
+        localizationCountry: 'US',
+        localizationLanguage: 'en',
+      },
+    });
+
+    mockFetchProductDataReference
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [
+          {
+            sku: 'SKU-1',
+            vendor_product_id: 'PROD-1',
+            name: 'Example',
+            cost_price: 10,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [
+          {
+            sku: '66P3251',
+            vendor_product_id: '66P3251',
+            name: 'Blocked Product',
+          },
+        ],
+      });
+
+    mockBuildProductAssembly
+      .mockResolvedValueOnce({
+        endpointResults: [
+          {
+            mapping_id: 200,
+            endpoint_name: 'Inventory',
+            endpoint_version: '1.2.1',
+            operation_name: 'getInventoryLevels',
+            status: 200,
+            products_found: 1,
+          },
+        ],
+        products: [
+          {
+            sku: 'SKU-1',
+            vendor_product_id: 'PROD-1',
+            name: 'Example',
+            cost_price: 10,
+            enrichment_status: {
+              pricing: 'SUCCESS',
+              inventory: 'SUCCESS',
+              media: 'SUCCESS',
+              gating_reasons: [],
+            },
+          },
+        ],
+        statuses: [
+          {
+            sku: 'SKU-1',
+            vendor_product_id: 'PROD-1',
+            blocked: false,
+            gating_reasons: [],
+            enrichment_status: {
+              pricing: 'SUCCESS',
+              inventory: 'SUCCESS',
+              media: 'SUCCESS',
+              gating_reasons: [],
+            },
+          },
+        ],
+        mediaRetries: [],
+      })
+      .mockResolvedValueOnce({
+        endpointResults: [
+          {
+            mapping_id: 300,
+            endpoint_name: 'PricingAndConfiguration',
+            endpoint_version: '1.0.0',
+            operation_name: 'getConfigurationAndPricing',
+            status: 200,
+            products_found: 0,
+            message: 'This product cannot be sale in this region!',
+          },
+        ],
+        products: [],
+        statuses: [
+          {
+            sku: '66P3251',
+            vendor_product_id: '66P3251',
+            blocked: true,
+            gating_reasons: ['No pricing data available for product.'],
+            enrichment_status: {
+              pricing: 'FAILED',
+              inventory: 'SUCCESS',
+              media: 'SUCCESS',
+              gating_reasons: ['No pricing data available for product.'],
+            },
+          },
+        ],
+        mediaRetries: [],
+      });
+
+    const result = await runVendorSync({
+      vendorId: 7,
+      session: {
+        accessToken: 'token',
+        storeHash: 'storehash',
+        user: { id: 1, email: 'test@example.com' },
+      },
+      syncAll: true,
+    });
+
+    expect(result.recordsRead).toBe(2);
+    expect(result.recordsWritten).toBe(1);
+    expect(mockUpsertBigCommerceProduct).toHaveBeenCalledTimes(1);
+    expect(mockCompleteSyncRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sync_run_id: 11,
+        status: 'SUCCESS',
+        records_read: 2,
+        records_written: 1,
+        details: expect.objectContaining({
+          productStatuses: expect.arrayContaining([
+            expect.objectContaining({
+              sku: '66P3251',
+              blocked: true,
+              gating_reasons: ['No pricing data available for product.'],
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      'vendor sync skipped blocked product before BigCommerce write',
+      expect.objectContaining({
+        syncRunId: 11,
+        productId: '66P3251',
+      }),
+    );
+  });
+
+  test('skips duplicate ProductData fetches when multiple references share the same product id', async () => {
+    mockDiscoverProductDataReferences.mockResolvedValue({
+      endpointResults: [
+        {
+          mapping_id: 100,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductSellable',
+          status: 200,
+          products_found: 2,
+        },
+      ],
+      references: [
+        { productId: 'PROD-1', partId: 'PROD-1-BLK' },
+        { productId: 'PROD-1', partId: 'PROD-1-BLU' },
+      ],
+      getProductConfig: {
+        mapping: {
+          mapping_id: 101,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProduct',
+        },
+        runtimeConfig: {},
+        endpointUrl: 'https://vendor.example.com/productdata',
+        localizationCountry: 'US',
+        localizationLanguage: 'en',
+      },
+    });
+
+    mockFetchProductDataReference
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [
+          {
+            sku: 'SKU-1',
+            vendor_product_id: 'PROD-1',
+            name: 'Example',
+            cost_price: 10,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [
+          {
+            sku: 'SKU-1',
+            vendor_product_id: 'PROD-1',
+            name: 'Example',
+            cost_price: 10,
+          },
+        ],
+      });
+
+    await runVendorSync({
+      vendorId: 7,
+      session: {
+        accessToken: 'token',
+        storeHash: 'storehash',
+        user: { id: 1, email: 'test@example.com' },
+      },
+      syncAll: true,
+    });
+
+    expect(mockFetchProductDataReference).toHaveBeenCalledTimes(1);
+    expect(mockBuildProductAssembly).toHaveBeenCalledTimes(1);
+    expect(mockUpsertBigCommerceProduct).toHaveBeenCalledTimes(1);
+    expect(mockUpsertVendorProductMap).toHaveBeenCalledTimes(1);
+  });
+
+  test('fails early when the first two products are blocked before any BigCommerce write', async () => {
+    mockDiscoverProductDataReferences.mockResolvedValue({
+      endpointResults: [
+        {
+          mapping_id: 100,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductSellable',
+          status: 200,
+          products_found: 3,
+        },
+      ],
+      references: [
+        { productId: 'BLOCK-1', partId: 'BLOCK-1-BLK' },
+        { productId: 'BLOCK-2', partId: 'BLOCK-2-BLK' },
+        { productId: 'PASS-3', partId: 'PASS-3-BLK' },
+      ],
+      getProductConfig: {
+        mapping: {
+          mapping_id: 101,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProduct',
+        },
+        runtimeConfig: {},
+        endpointUrl: 'https://vendor.example.com/productdata',
+        localizationCountry: 'US',
+        localizationLanguage: 'en',
+      },
+    });
+
+    mockFetchProductDataReference
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [{ sku: 'BLOCK-1', vendor_product_id: 'BLOCK-1', name: 'Blocked One' }],
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [{ sku: 'BLOCK-2', vendor_product_id: 'BLOCK-2', name: 'Blocked Two' }],
+      });
+
+    mockBuildProductAssembly
+      .mockResolvedValueOnce({
+        endpointResults: [],
+        products: [],
+        statuses: [
+          {
+            sku: 'BLOCK-1',
+            vendor_product_id: 'BLOCK-1',
+            blocked: true,
+            gating_reasons: ['No pricing data available for product.'],
+            enrichment_status: {
+              pricing: 'FAILED',
+              inventory: 'SUCCESS',
+              media: 'SUCCESS',
+              gating_reasons: ['No pricing data available for product.'],
+            },
+          },
+        ],
+        mediaRetries: [],
+      })
+      .mockResolvedValueOnce({
+        endpointResults: [],
+        products: [],
+        statuses: [
+          {
+            sku: 'BLOCK-2',
+            vendor_product_id: 'BLOCK-2',
+            blocked: true,
+            gating_reasons: ['No pricing data available for product.'],
+            enrichment_status: {
+              pricing: 'FAILED',
+              inventory: 'SUCCESS',
+              media: 'SUCCESS',
+              gating_reasons: ['No pricing data available for product.'],
+            },
+          },
+        ],
+        mediaRetries: [],
+      });
+
+    await expect(
+      runVendorSync({
+        vendorId: 7,
+        session: {
+          accessToken: 'token',
+          storeHash: 'storehash',
+          user: { id: 1, email: 'test@example.com' },
+        },
+        syncAll: true,
+      }),
+    ).rejects.toThrow('Vendor sync halted during early product validation');
+
+    expect(mockFetchProductDataReference).toHaveBeenCalledTimes(2);
+    expect(mockUpsertBigCommerceProduct).not.toHaveBeenCalled();
+    expect(mockCompleteSyncRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sync_run_id: 11,
+        status: 'FAILED',
+        error_message: expect.stringContaining('0 of first 2 products passed enrichment'),
+      }),
+    );
+  });
+
+  test('fails when blocked products reach 50 percent after 100 attempted products', async () => {
+    const blockedStatuses = Array.from({ length: 99 }, (_, index) => ({
+      sku: `BLOCK-${index + 1}`,
+      vendor_product_id: `BLOCK-${index + 1}`,
+      blocked: true as const,
+      gating_reasons: ['No pricing data available for product.'],
+      enrichment_status: {
+        pricing: 'FAILED',
+        inventory: 'SUCCESS',
+        media: 'SUCCESS',
+        gating_reasons: ['No pricing data available for product.'],
+      },
+    }));
+
+    mockDiscoverProductDataReferences.mockResolvedValue({
+      endpointResults: [
+        {
+          mapping_id: 100,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductSellable',
+          status: 200,
+          products_found: 1,
+        },
+      ],
+      references: [{ productId: 'BULK-SET', partId: 'BULK-SET-1' }],
+      getProductConfig: {
+        mapping: {
+          mapping_id: 101,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProduct',
+        },
+        runtimeConfig: {},
+        endpointUrl: 'https://vendor.example.com/productdata',
+        localizationCountry: 'US',
+        localizationLanguage: 'en',
+      },
+    });
+
+    mockFetchProductDataReference.mockResolvedValue({
+      status: 200,
+      products: [
+        { sku: 'PASS-1', vendor_product_id: 'PASS-1', name: 'Passing Product', cost_price: 10 },
+        ...blockedStatuses.map(status => ({
+          sku: status.sku,
+          vendor_product_id: status.vendor_product_id,
+          name: status.sku,
+        })),
+      ],
+    });
+
+    mockBuildProductAssembly.mockResolvedValue({
+      endpointResults: [],
+      products: [
+        {
+          sku: 'PASS-1',
+          vendor_product_id: 'PASS-1',
+          name: 'Passing Product',
+          cost_price: 10,
+          enrichment_status: {
+            pricing: 'SUCCESS',
+            inventory: 'SUCCESS',
+            media: 'SUCCESS',
+            gating_reasons: [],
+          },
+        },
+      ],
+      statuses: [
+        {
+          sku: 'PASS-1',
+          vendor_product_id: 'PASS-1',
+          blocked: false,
+          gating_reasons: [],
+          enrichment_status: {
+            pricing: 'SUCCESS',
+            inventory: 'SUCCESS',
+            media: 'SUCCESS',
+            gating_reasons: [],
+          },
+        },
+        ...blockedStatuses,
+      ],
+      mediaRetries: [],
+    });
+
+    await expect(
+      runVendorSync({
+        vendorId: 7,
+        session: {
+          accessToken: 'token',
+          storeHash: 'storehash',
+          user: { id: 1, email: 'test@example.com' },
+        },
+        syncAll: true,
+      }),
+    ).rejects.toThrow('exceeding the 50% threshold');
+
+    expect(mockUpsertBigCommerceProduct).not.toHaveBeenCalled();
+    expect(mockCompleteSyncRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sync_run_id: 11,
+        status: 'FAILED',
+        error_message: expect.stringContaining('99 products (99%) failed enrichment'),
+      }),
+    );
+  });
+
+  test('persists vendor product map and records written when BigCommerce product exists before a later sync failure', async () => {
+    const error = new Error('Failed to update product modifier (422): duplicate label');
+    Object.assign(error, {
+      partial_upsert_result: {
+        product: { id: 999, sku: 'SKU-1', name: 'Example' },
+        duplicate: false,
+        action: 'update',
+        resolvedSku: 'SKU-1',
+        markupPercent: 30,
+      },
+    });
+    mockUpsertBigCommerceProduct.mockRejectedValueOnce(error);
+
+    await expect(
+      runVendorSync({
+        vendorId: 7,
+        session: {
+          accessToken: 'token',
+          storeHash: 'storehash',
+          user: { id: 1, email: 'test@example.com' },
+        },
+        syncAll: true,
+      }),
+    ).rejects.toThrow('Failed to update product modifier');
+
+    expect(mockUpsertVendorProductMap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vendor_id: 7,
+        bigcommerce_product_id: 999,
+        sku: 'SKU-1',
+        metadata: expect.objectContaining({
+          partial_failure: true,
+        }),
+      }),
+    );
+    expect(mockCompleteSyncRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sync_run_id: 11,
+        status: 'FAILED',
+        details: expect.objectContaining({
+          recordsWritten: 1,
+        }),
+      }),
+    );
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      'vendor sync failed',
+      expect.objectContaining({
+        recordsWritten: 1,
       }),
     );
   });

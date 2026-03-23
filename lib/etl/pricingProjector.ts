@@ -12,7 +12,8 @@ import {
 export interface PriceListBulkPricingTier {
   quantity_min: number;
   quantity_max?: number;
-  price: number;
+  type: 'price';
+  amount: number;
 }
 
 export interface VariantPricingProjection {
@@ -93,7 +94,8 @@ function toPriceListBulkTiers(
       const tier: PriceListBulkPricingTier = {
         quantity_min: rule.quantity_min,
         quantity_max: rule.quantity_max,
-        price,
+        type: 'price',
+        amount: price,
       };
       return tier;
     })

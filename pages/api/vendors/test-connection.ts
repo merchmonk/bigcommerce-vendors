@@ -3,9 +3,11 @@ import { getSession } from '../../../lib/auth';
 import { recordInternalFailure } from '../../../lib/apiTelemetry';
 import logger from '../../../lib/logger';
 import { buildApiRequestContext, runWithRequestContext } from '../../../lib/requestContext';
+import { resolveRuntimeEndpointUrl } from '../../../lib/etl/endpointUrl';
 import { testVendorConnectionConfig } from '../../../lib/etl/runner';
 import {
   discoverPromostandardsCapabilities,
+  probePromostandardsEndpoint,
   resolvePromostandardsCapabilityMappings,
 } from '../../../lib/vendors/promostandardsDiscovery';
 import type { IntegrationFamily, MappingProtocol } from '../../../types';
@@ -16,6 +18,7 @@ interface TestConnectionBody {
   vendor_secret?: string;
   integration_family?: IntegrationFamily;
   api_protocol?: MappingProtocol;
+  endpoint_name?: string;
   operation_name?: string;
   endpoint_version?: string;
   runtime_config?: Record<string, unknown>;
@@ -37,6 +40,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       if ((body.integration_family ?? 'CUSTOM') === 'PROMOSTANDARDS') {
+        if (body.endpoint_name && body.operation_name && body.endpoint_version) {
+          const endpoint = await probePromostandardsEndpoint({
+            endpointUrl: resolveRuntimeEndpointUrl({
+              vendorApiUrl: body.vendor_api_url,
+              runtimeConfig: body.runtime_config ?? {},
+            }),
+            endpointName: body.endpoint_name,
+            endpointVersion: body.endpoint_version,
+            operationName: body.operation_name,
+            vendorAccountId: body.vendor_account_id ?? null,
+            vendorSecret: body.vendor_secret ?? null,
+            protocol: body.api_protocol ?? 'SOAP',
+          });
+          const ok = endpoint.available && endpoint.credentials_valid !== false;
+
+          return res.status(ok ? 200 : 400).json({
+            ok,
+            message: endpoint.live_probe_message ?? endpoint.message,
+            endpoint,
+          });
+        }
+
         const result = await discoverPromostandardsCapabilities({
           vendor_api_url: body.vendor_api_url,
           vendor_account_id: body.vendor_account_id ?? null,

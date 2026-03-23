@@ -353,14 +353,15 @@ function projectStructuredMedia(product: NormalizedProduct): Record<string, unkn
     };
   };
 
-  const videoGroups = createGroups(assets.filter(asset => asset.media_type === 'Video'));
+ /* const videoGroups = createGroups(assets.filter(asset => asset.media_type === 'Video'));
   if (Object.keys(videoGroups).length === 0) {
     return undefined;
   }
 
   return {
     videos: videoGroups,
-  };
+  };*/
+  return undefined;
 }
 
 export function projectBigCommerceProductContract(

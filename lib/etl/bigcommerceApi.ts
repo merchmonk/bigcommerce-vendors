@@ -34,11 +34,15 @@ export async function requestJson<T>(
     ...createHeaders(accessToken),
     ...(options.headers ?? {}),
   };
+  const controller = new AbortController();
+  const timeoutMs = Number(process.env.BIGCOMMERCE_API_TIMEOUT_MS ?? 45000);
+  const timeout = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 45000);
 
   try {
     const response = await fetch(url, {
       ...options,
       headers,
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -107,5 +111,7 @@ export async function requestJson<T>(
       error,
     });
     throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }

@@ -39,17 +39,56 @@ function normalizeEndpointSegment(endpointName: string): string {
   return endpointName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 }
 
+export function resolveSoapOperationName(options: {
+  endpointName: string;
+  operationName: string;
+}): string {
+  if (
+    options.endpointName === 'ProductCompliance' &&
+    options.operationName.trim() === 'getComplianceData'
+  ) {
+    return 'getCompliance';
+  }
+
+  return options.operationName.trim();
+}
+
+function resolveEndpointSegmentAlias(options: {
+  host: string;
+  endpointName: string;
+}): string | null {
+  const host = options.host.toLowerCase();
+  const endpointName = options.endpointName.trim();
+
+  if (
+    endpointName === 'PricingAndConfiguration' &&
+    (host === 'spectorapps.com' || host === 'www.spectorapps.com')
+  ) {
+    return 'productpriceandconfiguration';
+  }
+
+  return null;
+}
+
 export function resolveSoapEndpointUrl(options: {
   endpointUrl: string;
   endpointName: string;
   endpointVersion: string;
 }): string {
   const url = new URL(options.endpointUrl);
-  const normalizedEndpoint = normalizeEndpointSegment(options.endpointName);
+  const normalizedEndpoint =
+    resolveEndpointSegmentAlias({
+      host: url.hostname,
+      endpointName: options.endpointName,
+    }) ?? normalizeEndpointSegment(options.endpointName);
   const trimmedPath = url.pathname.replace(/\/+$/, '');
   const segments = trimmedPath.split('/').filter(Boolean);
   const lastSegment = segments[segments.length - 1];
   const secondLastSegment = segments[segments.length - 2];
+
+  if (segments.includes(options.endpointVersion) && segments.length > 0) {
+    return url.toString();
+  }
 
   if (lastSegment === options.endpointVersion && secondLastSegment === normalizedEndpoint) {
     return url.toString();
@@ -226,23 +265,32 @@ function extractSoapBody(parsed: Record<string, unknown>): Record<string, unknow
 }
 
 export async function callSoapEndpoint(options: SoapCallOptions): Promise<SoapCallResult> {
+  const normalizedOperationName = resolveSoapOperationName({
+    endpointName: options.endpointName,
+    operationName: options.operationName,
+  });
+  const normalizedOptions: SoapCallOptions = {
+    ...options,
+    operationName: normalizedOperationName,
+    soapAction: options.soapAction ?? normalizedOperationName,
+  };
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 45000);
-  const resolvedEndpointUrl = resolveSoapEndpointUrl(options);
-  const operationMetadata = options.requestTemplate
+  const timeout = setTimeout(() => controller.abort(), normalizedOptions.timeoutMs ?? 45000);
+  const resolvedEndpointUrl = resolveSoapEndpointUrl(normalizedOptions);
+  const operationMetadata = normalizedOptions.requestTemplate
     ? null
     : await loadSoapOperationMetadata({
         resolvedEndpointUrl,
-        operationName: options.operationName,
+        operationName: normalizedOperationName,
       }).catch(() => null);
-  const envelope = buildSoapEnvelope(options, operationMetadata);
+  const envelope = buildSoapEnvelope(normalizedOptions, operationMetadata);
 
   try {
     const response = await fetch(resolvedEndpointUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml; charset=utf-8',
-        SOAPAction: options.soapAction ?? options.operationName,
+        SOAPAction: normalizedOptions.soapAction ?? normalizedOperationName,
       },
       body: envelope,
       signal: controller.signal,
@@ -261,13 +309,13 @@ export async function callSoapEndpoint(options: SoapCallOptions): Promise<SoapCa
       category: 'vendor-api',
       target: resolvedEndpointUrl,
       method: 'POST',
-      action: `${options.operationName}:${options.endpointVersion}`,
+      action: `${normalizedOperationName}:${normalizedOptions.endpointVersion}`,
       status: response.status,
       request: {
-        endpoint_version: options.endpointVersion,
-        operation_name: options.operationName,
-        soap_action: options.soapAction ?? options.operationName,
-        request_fields: options.requestFields ?? {},
+        endpoint_version: normalizedOptions.endpointVersion,
+        operation_name: normalizedOperationName,
+        soap_action: normalizedOptions.soapAction ?? normalizedOperationName,
+        request_fields: normalizedOptions.requestFields ?? {},
         envelope,
       },
       response: {
@@ -286,12 +334,12 @@ export async function callSoapEndpoint(options: SoapCallOptions): Promise<SoapCa
       category: 'vendor-api',
       target: resolvedEndpointUrl,
       method: 'POST',
-      action: `${options.operationName}:${options.endpointVersion}`,
+      action: `${normalizedOperationName}:${normalizedOptions.endpointVersion}`,
       request: {
-        endpoint_version: options.endpointVersion,
-        operation_name: options.operationName,
-        soap_action: options.soapAction ?? options.operationName,
-        request_fields: options.requestFields ?? {},
+        endpoint_version: normalizedOptions.endpointVersion,
+        operation_name: normalizedOperationName,
+        soap_action: normalizedOptions.soapAction ?? normalizedOperationName,
+        request_fields: normalizedOptions.requestFields ?? {},
         envelope,
       },
       error,

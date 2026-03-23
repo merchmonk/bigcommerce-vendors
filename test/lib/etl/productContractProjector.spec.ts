@@ -61,12 +61,12 @@ describe('projectBigCommerceProductContract', () => {
             location_ids: ['FULL_FRONT'],
             decoration_ids: ['SCREEN_PRINT'],
           },
-          {
+        /*  {
             url: 'https://www.youtube.com/watch?v=abc123xyz89',
             media_type: 'Video',
             description: 'Promo video',
             part_id: 'PC54-BLK-XL',
-          },
+          },*/
         ],
         location_decoration_data: {
           LocationDecoration: [
@@ -205,7 +205,7 @@ describe('projectBigCommerceProductContract', () => {
           },
         ],
         media: {
-          videos: {
+          /*videos: {
             variantAssets: {
               'PC54-BLK-XL': [
                 {
@@ -217,7 +217,7 @@ describe('projectBigCommerceProductContract', () => {
                 },
               ],
             },
-          },
+          },*/
         },
       }),
     );

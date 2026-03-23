@@ -40,6 +40,10 @@ const NewVendorPage = () => {
     vendor_secret?: string;
     integration_family?: VendorFormData['integration_family'];
     api_protocol?: MappingProtocol;
+    endpoint_name?: string;
+    endpoint_version?: string;
+    operation_name?: string;
+    runtime_config?: Record<string, unknown>;
   }): Promise<VendorConnectionTestResult> => {
     const response = await fetch(withContext('/api/vendors/test-connection'), {
       method: 'POST',

@@ -9,7 +9,7 @@ import {
 } from '../../../../lib/integrationJobs';
 import logger from '../../../../lib/logger';
 import { buildApiRequestContext, getRequestContext, runWithRequestContext } from '../../../../lib/requestContext';
-import { listSyncRunsForVendor } from '../../../../lib/etl/repository';
+import { listSyncRunsForVendor, reconcileStaleCatalogSyncRunsForVendor } from '../../../../lib/etl/repository';
 
 interface RunSyncBody {
   mapping_id?: number;
@@ -34,10 +34,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       if (req.method === 'GET') {
-        const [runs, activeJob] = await Promise.all([
-          listSyncRunsForVendor(vendorId),
-          getActiveCatalogSyncJobForVendor(vendorId),
-        ]);
+        await reconcileStaleCatalogSyncRunsForVendor(vendorId);
+        const activeJob = await getActiveCatalogSyncJobForVendor(vendorId);
+        const runs = await listSyncRunsForVendor(vendorId);
         return res.status(200).json({ data: runs, active_job: activeJob });
       }
 

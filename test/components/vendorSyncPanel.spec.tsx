@@ -1,7 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@test/utils';
-import VendorSyncPanel from '@components/vendorSyncPanel';
+import VendorSyncPanel, { vendorSyncPanelSwrOptions } from '@components/vendorSyncPanel';
 
 describe('VendorSyncPanel', () => {
+  test('disables automatic SWR refresh behavior', () => {
+    expect(vendorSyncPanelSwrOptions).toEqual({
+      refreshInterval: 0,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+    });
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

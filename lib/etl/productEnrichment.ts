@@ -1,6 +1,7 @@
 import type { EndpointMapping, MappingProtocol, VendorEndpointMapping } from '../../types';
 import type { Vendor } from '../vendors';
 import { resolveEndpointAdapter } from './adapters/factory';
+import { resolveRuntimeEndpointUrl } from './endpointUrl';
 import {
   applyPricingConfigurationToProduct,
   buildProductPricingConfiguration,
@@ -49,7 +50,17 @@ export interface ProductAssemblyResult {
 
 const DEFAULT_LOCALIZATION_COUNTRY = 'US';
 const DEFAULT_LOCALIZATION_LANGUAGE = 'en';
-const PRODUCT_MEDIA_TYPES = ['Image'] as const; //removed 'Video' for the time being
+const DEFAULT_PRICING_CURRENCY = process.env.BIGCOMMERCE_PRICE_LIST_CURRENCY?.trim() || 'USD';
+const DEFAULT_PRICING_PRICE_TYPE = 'List';
+const DEFAULT_PRICING_CONFIGURATION_TYPE = 'Blank';
+const PRODUCT_MEDIA_TYPES = ['Image'] as const;
+const PRICING_OPERATION_ORDER = [
+  'getAvailableLocations',
+  'getDecorationColors',
+  'getFobPoints',
+  'getAvailableCharges',
+  'getConfigurationAndPricing',
+] as const;
 
 const INVENTORY_KEYS = ['quantityAvailable', 'inventory', 'Inventory', 'qty', 'Qty', 'quantity', 'Quantity'];
 const PRICE_KEYS = ['price', 'Price', 'netPrice', 'NetPrice', 'listPrice', 'ListPrice', 'partPrice', 'PartPrice'];
@@ -168,9 +179,18 @@ function dedupeBulkRules(rules: NormalizedBulkPricingRule[]): NormalizedBulkPric
 }
 
 function getEndpointUrl(vendor: Vendor, runtimeConfig: Record<string, unknown>): string {
-  const runtimeEndpointUrl = readStringConfig(runtimeConfig, ['endpoint_url', 'endpointUrl']);
-  if (runtimeEndpointUrl) return runtimeEndpointUrl;
-  return vendor.vendor_api_url ?? '';
+  return resolveRuntimeEndpointUrl({
+    vendorApiUrl: vendor.vendor_api_url,
+    runtimeConfig,
+  });
+}
+
+interface PricingRequestContext {
+  currency?: string;
+  locationId?: string;
+  fobId?: string;
+  priceType?: string;
+  configurationType?: string;
 }
 
 function mergeRequestFields(
@@ -206,16 +226,185 @@ function buildBaseRequestFields(
   return fields;
 }
 
-function extractInventoryLevel(payload: unknown): number | undefined {
+function buildEndpointSpecificRequestFields(input: {
+  endpointName: string;
+  operationName: string;
+  runtimeConfig: Record<string, unknown>;
+  pricingContext?: PricingRequestContext;
+}): Record<string, unknown> {
+  if (input.endpointName !== 'PricingAndConfiguration') {
+    return {};
+  }
+
+  const requestFields = asRecord(input.runtimeConfig.request_fields);
+  const currency =
+    readStringConfig(requestFields ?? {}, ['currency', 'currencyCode', 'currency_code']) ||
+    readStringConfig(input.runtimeConfig, ['currency', 'currencyCode', 'currency_code']) ||
+    input.pricingContext?.currency ||
+    DEFAULT_PRICING_CURRENCY;
+
+  const locationId =
+    readStringConfig(requestFields ?? {}, ['locationId', 'locationID', 'location_id']) ||
+    readStringConfig(input.runtimeConfig, ['locationId', 'locationID', 'location_id']) ||
+    input.pricingContext?.locationId;
+
+  const fobId =
+    readStringConfig(requestFields ?? {}, ['fobId', 'fobID', 'fob_id']) ||
+    readStringConfig(input.runtimeConfig, ['fobId', 'fobID', 'fob_id']) ||
+    input.pricingContext?.fobId;
+
+  const priceType =
+    readStringConfig(requestFields ?? {}, ['priceType', 'price_type']) ||
+    readStringConfig(input.runtimeConfig, ['priceType', 'price_type']) ||
+    input.pricingContext?.priceType ||
+    DEFAULT_PRICING_PRICE_TYPE;
+
+  const configurationType =
+    readStringConfig(requestFields ?? {}, ['configurationType', 'configuration_type']) ||
+    readStringConfig(input.runtimeConfig, ['configurationType', 'configuration_type']) ||
+    input.pricingContext?.configurationType ||
+    DEFAULT_PRICING_CONFIGURATION_TYPE;
+
+  const fields: Record<string, unknown> = {};
+  if (currency) {
+    fields.currency = currency;
+  }
+
+  if (input.operationName === 'getDecorationColors' && locationId) {
+    fields.locationId = locationId;
+  }
+
+  if (input.operationName === 'getConfigurationAndPricing') {
+    if (fobId) {
+      fields.fobId = fobId;
+    }
+    if (priceType) {
+      fields.priceType = priceType;
+    }
+    if (configurationType) {
+      fields.configurationType = configurationType;
+    }
+  }
+
+  return fields;
+}
+
+function buildPricingRequestContext(input: {
+  payloads: unknown[];
+  runtimeConfig: Record<string, unknown>;
+  current?: PricingRequestContext;
+}): PricingRequestContext {
+  const requestFields = asRecord(input.runtimeConfig.request_fields);
+  const configuration = buildProductPricingConfiguration(input.payloads);
+  const firstAvailableLocation =
+    configuration?.available_locations?.find(location => location.location_id?.trim())?.location_id ??
+    configuration?.locations.find(location => location.location_id?.trim())?.location_id;
+  const firstFobId = configuration?.fob_points.find(point => point.fob_id?.trim())?.fob_id;
+
+  return {
+    currency:
+      readStringConfig(requestFields ?? {}, ['currency', 'currencyCode', 'currency_code']) ||
+      readStringConfig(input.runtimeConfig, ['currency', 'currencyCode', 'currency_code']) ||
+      configuration?.currency ||
+      input.current?.currency ||
+      DEFAULT_PRICING_CURRENCY,
+    locationId:
+      readStringConfig(requestFields ?? {}, ['locationId', 'locationID', 'location_id']) ||
+      readStringConfig(input.runtimeConfig, ['locationId', 'locationID', 'location_id']) ||
+      firstAvailableLocation ||
+      input.current?.locationId,
+    fobId:
+      readStringConfig(requestFields ?? {}, ['fobId', 'fobID', 'fob_id']) ||
+      readStringConfig(input.runtimeConfig, ['fobId', 'fobID', 'fob_id']) ||
+      firstFobId ||
+      input.current?.fobId,
+    priceType:
+      readStringConfig(requestFields ?? {}, ['priceType', 'price_type']) ||
+      readStringConfig(input.runtimeConfig, ['priceType', 'price_type']) ||
+      configuration?.price_type ||
+      input.current?.priceType ||
+      DEFAULT_PRICING_PRICE_TYPE,
+    configurationType:
+      readStringConfig(requestFields ?? {}, ['configurationType', 'configuration_type']) ||
+      readStringConfig(input.runtimeConfig, ['configurationType', 'configuration_type']) ||
+      input.current?.configurationType ||
+      DEFAULT_PRICING_CONFIGURATION_TYPE,
+  };
+}
+
+function sortPricingMappings(mappings: AssignedMapping[]): AssignedMapping[] {
+  const order = new Map<string, number>(PRICING_OPERATION_ORDER.map((operation, index) => [operation, index]));
+
+  return [...mappings].sort((left, right) => {
+    const leftOrder = order.get((left.mapping.operation_name ?? '').trim()) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = order.get((right.mapping.operation_name ?? '').trim()) ?? Number.MAX_SAFE_INTEGER;
+    return leftOrder - rightOrder;
+  });
+}
+
+function extractInventorySnapshot(payload: unknown): {
+  total?: number;
+  byPartId: Map<string, number>;
+} {
   const quantities: number[] = [];
+  const byPartId = new Map<string, number>();
   walkNodes(payload, node => {
     const number = getFirstNumber(node, INVENTORY_KEYS);
-    if (number !== undefined) {
-      quantities.push(number);
+    if (number === undefined) {
+      return;
     }
+
+    const partId = getFirstString(node, ['partId', 'PartID', 'partID']);
+    if (partId) {
+      byPartId.set(partId, (byPartId.get(partId) ?? 0) + number);
+      return;
+    }
+
+    quantities.push(number);
   });
-  if (quantities.length === 0) return undefined;
-  return quantities.reduce((sum, value) => sum + value, 0);
+
+  const total =
+    byPartId.size > 0
+      ? Array.from(byPartId.values()).reduce((sum, value) => sum + value, 0)
+      : quantities.length > 0
+        ? quantities.reduce((sum, value) => sum + value, 0)
+        : undefined;
+
+  return { total, byPartId };
+}
+
+function applyInventorySnapshot(
+  product: NormalizedProduct,
+  snapshot: {
+    total?: number;
+    byPartId: Map<string, number>;
+  },
+): void {
+  if (snapshot.total !== undefined) {
+    product.inventory_level = snapshot.total;
+  }
+
+  if (!product.variants || product.variants.length === 0 || snapshot.byPartId.size === 0) {
+    return;
+  }
+
+  product.variants = product.variants.map(variant => {
+    const partKeys = [variant.part_id, variant.source_sku, variant.sku].filter(
+      (value): value is string => !!value,
+    );
+    const matchedLevel = partKeys
+      .map(key => snapshot.byPartId.get(key))
+      .find((value): value is number => value !== undefined);
+
+    if (matchedLevel === undefined) {
+      return variant;
+    }
+
+    return {
+      ...variant,
+      inventory_level: matchedLevel,
+    };
+  });
 }
 
 function extractImages(payload: unknown): Array<{ image_url: string; is_thumbnail?: boolean }> {
@@ -271,12 +460,12 @@ function readResponseMessage(parsedBody: Record<string, unknown> | null, rawPayl
   return undefined;
 }
 
-function readMediaType(value: unknown): 'Image' | 'Video' | undefined {
-  if (value === 'Image' || value === 'Video') return value;
+function readMediaType(value: unknown): 'Image' | undefined {//| 'Video'
+  if (value === 'Image') return value; //|| value === 'Video') return value;
   if (typeof value !== 'string') return undefined;
   const normalized = value.trim().toLowerCase();
   if (normalized === 'image') return 'Image';
-  if (normalized === 'video') return 'Video';
+  //if (normalized === 'video') return 'Video';
   return undefined;
 }
 
@@ -362,7 +551,8 @@ function extractMediaAssets(payload: unknown): NormalizedMediaAsset[] {
 
   for (const node of extractMediaContentNodes(payload)) {
     const url = typeof node.url === 'string' ? node.url.trim() : '';
-    const mediaType = readMediaType(node.mediaType) ?? (/\.(mp4|mov|webm)(\?|$)/i.test(url) ? 'Video' : 'Image');
+    //const mediaType = readMediaType(node.mediaType) ?? (/\.(mp4|mov|webm)(\?|$)/i.test(url) ? 'Video' : 'Image');
+    const mediaType = 'Image';
     if (!url || !mediaType) continue;
 
     const classTypes = extractClassTypes(node.ClassTypeArray);
@@ -445,6 +635,7 @@ async function loadMediaAssetsForType(input: {
     vendor: input.vendor,
     mapping: input.mapping,
     product: input.product,
+    includePartId: false,
     requestFields: { mediaType: input.mediaType },
   });
 
@@ -698,11 +889,23 @@ function extractPricingCost(payloads: unknown[], fallback?: number): number | un
   return candidates.sort((a, b) => a - b)[0];
 }
 
+function hasUsablePricing(product: NormalizedProduct): boolean {
+  const candidateValues = [
+    product.price,
+    product.cost_price,
+    ...(product.variants ?? []).flatMap(variant => [variant.price, variant.cost_price]),
+  ];
+
+  return candidateValues.some(value => typeof value === 'number' && Number.isFinite(value) && value > 0);
+}
+
 async function runProductOperation(input: {
   vendor: Vendor;
   mapping: AssignedMapping;
   product: NormalizedProduct;
   requestFields?: Record<string, unknown>;
+  includePartId?: boolean;
+  pricingContext?: PricingRequestContext;
 }): Promise<{ status: number; parsedBody: Record<string, unknown> | null; message?: string; rawPayload: string }> {
   const mapping = input.mapping.mapping;
   const runtimeConfig = asRecord(input.mapping.runtime_config) ?? {};
@@ -729,6 +932,8 @@ async function runProductOperation(input: {
   }
 
   const shouldOmitPartId =
+    input.includePartId === false ||
+    input.mapping.mapping.endpoint_name === 'Inventory' ||
     input.mapping.mapping.endpoint_name === 'PricingAndConfiguration' &&
     input.mapping.mapping.operation_name === 'getConfigurationAndPricing' &&
     (input.product.variants?.length ?? 0) > 0;
@@ -737,6 +942,12 @@ async function runProductOperation(input: {
     {
       ...buildBaseRequestFields(input.product, {
         includePartId: !shouldOmitPartId,
+      }),
+      ...buildEndpointSpecificRequestFields({
+        endpointName: mapping.endpoint_name,
+        operationName,
+        runtimeConfig,
+        pricingContext: input.pricingContext,
       }),
       ...(input.requestFields ?? {}),
     },
@@ -820,7 +1031,7 @@ export async function buildProductAssembly(input: {
   const mediaRetries: MediaRetryMarker[] = [];
 
   const inventoryMappings = filterByEndpoint(input.assignedMappings, 'Inventory');
-  const pricingMappings = filterByEndpoint(input.assignedMappings, 'PricingAndConfiguration');
+  const pricingMappings = sortPricingMappings(filterByEndpoint(input.assignedMappings, 'PricingAndConfiguration'));
   const mediaMappings = filterByEndpointOperation(input.assignedMappings, 'ProductMedia', 'getMediaContent');
 
   for (const base of input.baseProducts) {
@@ -837,12 +1048,14 @@ export async function buildProductAssembly(input: {
       product.enrichment_status!.pricing = 'MISSING';
     } else {
       let pricingFailed = false;
+      let pricingContext: PricingRequestContext | undefined;
       for (const mapping of pricingMappings) {
         try {
           const result = await runProductOperation({
             vendor: input.vendor,
             mapping,
             product,
+            pricingContext,
           });
           if (result.status >= 400 || !result.parsedBody) {
             pricingFailed = true;
@@ -857,6 +1070,11 @@ export async function buildProductAssembly(input: {
           }
 
           pricingPayloads.push(result.parsedBody);
+          pricingContext = buildPricingRequestContext({
+            payloads: pricingPayloads,
+            runtimeConfig: asRecord(mapping.runtime_config) ?? {},
+            current: pricingContext,
+          });
           addEndpointResult(endpointResults, mapping.mapping, result.status, 1);
         } catch (error: any) {
           pricingFailed = true;
@@ -876,7 +1094,7 @@ export async function buildProductAssembly(input: {
       product.enrichment_status!.inventory = 'MISSING';
     } else {
       let inventoryFailed = false;
-      let inventoryLevel: number | undefined;
+      let inventorySnapshot: ReturnType<typeof extractInventorySnapshot> | undefined;
 
       for (const mapping of inventoryMappings) {
         try {
@@ -891,11 +1109,16 @@ export async function buildProductAssembly(input: {
             continue;
           }
 
-          const extracted = extractInventoryLevel(result.parsedBody);
-          if (extracted !== undefined) {
-            inventoryLevel = extracted;
+          const extracted = extractInventorySnapshot(result.parsedBody);
+          if (extracted.total !== undefined || extracted.byPartId.size > 0) {
+            inventorySnapshot = extracted;
           }
-          addEndpointResult(endpointResults, mapping.mapping, result.status, extracted !== undefined ? 1 : 0);
+          addEndpointResult(
+            endpointResults,
+            mapping.mapping,
+            result.status,
+            extracted.total !== undefined || extracted.byPartId.size > 0 ? 1 : 0,
+          );
         } catch (error: any) {
           inventoryFailed = true;
           addEndpointResult(endpointResults, mapping.mapping, 500, 0, error?.message ?? 'Inventory call failed');
@@ -907,8 +1130,8 @@ export async function buildProductAssembly(input: {
         gatingReasons.push('Inventory enrichment failed.');
       } else {
         product.enrichment_status!.inventory = 'SUCCESS';
-        if (inventoryLevel !== undefined) {
-          product.inventory_level = inventoryLevel;
+        if (inventorySnapshot) {
+          applyInventorySnapshot(product, inventorySnapshot);
         }
       }
     }
@@ -978,6 +1201,13 @@ export async function buildProductAssembly(input: {
       const blueprint = extractModifierBlueprint(pricingPayloads);
       if (blueprint) {
         product.modifier_blueprint = blueprint;
+      }
+    }
+
+    if (!hasUsablePricing(product)) {
+      gatingReasons.push('No pricing data available for product.');
+      if (product.enrichment_status!.pricing === 'MISSING') {
+        product.enrichment_status!.pricing = 'FAILED';
       }
     }
 

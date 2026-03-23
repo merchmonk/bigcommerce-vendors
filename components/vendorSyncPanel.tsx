@@ -68,20 +68,26 @@ const subtleButtonStyle: React.CSSProperties = {
   padding: '8px 12px',
 };
 
+export const vendorSyncPanelSwrOptions = {
+  refreshInterval: 0,
+  revalidateOnFocus: false,
+  revalidateOnReconnect: false,
+} as const;
+
 const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const withContext = (path: string) => `${path}?context=${encodeURIComponent(context)}`;
   const mappingsUrl = `/api/vendors/${vendorId}/mappings?context=${encodeURIComponent(context)}`;
   const runsUrl = `/api/vendors/${vendorId}/sync?context=${encodeURIComponent(context)}`;
-  const { data: mappingsData, mutate: mutateMappings } = useSWR<{ data: VendorMappingRow[] }>(mappingsUrl, fetcher, {
-    refreshInterval: 5000,
-  });
+  const { data: mappingsData, mutate: mutateMappings } = useSWR<{ data: VendorMappingRow[] }>(
+    mappingsUrl,
+    fetcher,
+    vendorSyncPanelSwrOptions,
+  );
   const { data: runsData, mutate: mutateRuns } = useSWR<{ data: SyncRunRow[]; active_job?: ActiveJobRow | null }>(
     runsUrl,
     fetcher,
-    {
-      refreshInterval: 5000,
-    },
+    vendorSyncPanelSwrOptions,
   );
 
   const runSync = async (body: { mapping_id?: number; sync_all?: boolean }) => {

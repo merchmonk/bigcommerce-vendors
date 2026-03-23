@@ -39,6 +39,8 @@ export interface PromostandardsEndpointCapability {
   wsdl_available?: boolean | null;
   credentials_valid?: boolean | null;
   live_probe_message?: string | null;
+  resolved_endpoint_url?: string | null;
+  custom_endpoint_url?: string | null;
 }
 
 export interface PromostandardsCapabilityMatrix {

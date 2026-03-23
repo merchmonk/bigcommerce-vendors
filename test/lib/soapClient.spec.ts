@@ -1,4 +1,4 @@
-import { buildSoapEnvelope, resolveSoapEndpointUrl } from '../../lib/etl/soapClient';
+import { buildSoapEnvelope, resolveSoapEndpointUrl, resolveSoapOperationName } from '../../lib/etl/soapClient';
 
 describe('resolveSoapEndpointUrl', () => {
   it('appends endpoint name and version to a base vendor URL', () => {
@@ -29,6 +29,56 @@ describe('resolveSoapEndpointUrl', () => {
         endpointVersion: '2.0.0',
       }),
     ).toBe('https://www.spectorapps.com/productdata/2.0.0');
+  });
+
+  it('uses Spector pricing endpoint alias when resolving PricingAndConfiguration', () => {
+    expect(
+      resolveSoapEndpointUrl({
+        endpointUrl: 'https://www.spectorapps.com/',
+        endpointName: 'PricingAndConfiguration',
+        endpointVersion: '1.0.0',
+      }),
+    ).toBe('https://www.spectorapps.com/productpriceandconfiguration/1.0.0');
+  });
+
+  it('preserves explicit versioned endpoint paths even when the path token differs from the endpoint name', () => {
+    expect(
+      resolveSoapEndpointUrl({
+        endpointUrl: 'https://www.spectorapps.com/orderstatus/2.0.0',
+        endpointName: 'OrderStatusService',
+        endpointVersion: '2.0.0',
+      }),
+    ).toBe('https://www.spectorapps.com/orderstatus/2.0.0');
+  });
+
+  it('preserves explicit resolved service URLs that include the endpoint version before a trailing transport segment', () => {
+    expect(
+      resolveSoapEndpointUrl({
+        endpointUrl: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
+        endpointName: 'PricingAndConfiguration',
+        endpointVersion: '1.0.0',
+      }),
+    ).toBe('https://vendor.example.com/api/promostandards/PPC/1.0.0/soap');
+  });
+});
+
+describe('resolveSoapOperationName', () => {
+  it('maps the legacy ProductCompliance operation name to getCompliance', () => {
+    expect(
+      resolveSoapOperationName({
+        endpointName: 'ProductCompliance',
+        operationName: 'getComplianceData',
+      }),
+    ).toBe('getCompliance');
+  });
+
+  it('leaves other operation names unchanged', () => {
+    expect(
+      resolveSoapOperationName({
+        endpointName: 'ProductData',
+        operationName: 'getProduct',
+      }),
+    ).toBe('getProduct');
   });
 });
 

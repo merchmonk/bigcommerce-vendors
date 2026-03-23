@@ -185,6 +185,7 @@ export interface NormalizedProduct {
   description?: string;
   price?: number;
   cost_price?: number;
+  weight?: number;
   inventory_level?: number;
   vendor_product_id?: string;
   brand_name?: string;
@@ -209,6 +210,7 @@ export interface NormalizedVariant {
   part_id?: string;
   price?: number;
   cost_price?: number;
+  weight?: number;
   inventory_level?: number;
   color?: string;
   size?: string;
@@ -279,6 +281,45 @@ function toNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function normalizeWeightToPounds(weight: number, uom?: string): number | undefined {
+  if (!Number.isFinite(weight) || weight <= 0) return undefined;
+
+  const normalizedUom = uom?.trim().toUpperCase();
+  if (!normalizedUom || normalizedUom === 'LB' || normalizedUom === 'LBS' || normalizedUom === 'POUND' || normalizedUom === 'POUNDS') {
+    return weight;
+  }
+  if (normalizedUom === 'OZ' || normalizedUom === 'OUNCE' || normalizedUom === 'OUNCES') {
+    return weight / 16;
+  }
+  if (normalizedUom === 'KG' || normalizedUom === 'KGS' || normalizedUom === 'KILOGRAM' || normalizedUom === 'KILOGRAMS') {
+    return weight * 2.2046226218;
+  }
+  if (normalizedUom === 'G' || normalizedUom === 'GRAM' || normalizedUom === 'GRAMS') {
+    return weight / 453.59237;
+  }
+
+  return weight;
+}
+
+function extractWeightInPounds(node: AnyRecord): number | undefined {
+  const dimension = asRecord(node.Dimension);
+  const weightFromDimension = toNumber(dimension?.weight);
+  const weightUomFromDimension = getFirstString(dimension ?? {}, ['weightUom', 'uom']);
+  const normalizedDimensionWeight =
+    weightFromDimension !== undefined ? normalizeWeightToPounds(weightFromDimension, weightUomFromDimension) : undefined;
+  if (normalizedDimensionWeight !== undefined) {
+    return normalizedDimensionWeight;
+  }
+
+  const directWeight = getFirstNumber(node, ['weight', 'Weight']);
+  const directWeightUom = getFirstString(node, ['weightUom', 'WeightUom', 'uom']);
+  if (directWeight !== undefined) {
+    return normalizeWeightToPounds(directWeight, directWeightUom);
+  }
+
+  return undefined;
+}
+
 function walkNodes(value: unknown, callback: (node: AnyRecord) => void): void {
   if (!value) return;
   if (Array.isArray(value)) {
@@ -346,9 +387,7 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
     const uniqueRelated = mergedRelated.filter((value, index) => mergedRelated.indexOf(value) === index);
 
     const mergedVariants = [...(existing.variants ?? []), ...(product.variants ?? [])];
-    const uniqueVariants = mergedVariants.filter(
-      (variant, index) => mergedVariants.findIndex(item => item.sku === variant.sku) === index,
-    );
+    const uniqueVariants = mergeVariantsBySku(mergedVariants);
 
     const mergedBulkRules = [...(existing.bulk_pricing_rules ?? []), ...(product.bulk_pricing_rules ?? [])];
     const uniqueBulkRules = mergedBulkRules.filter(
@@ -377,6 +416,7 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
       description: product.description ?? existing.description,
       price: product.price ?? existing.price,
       cost_price: product.cost_price ?? existing.cost_price,
+      weight: product.weight ?? existing.weight,
       inventory_level: product.inventory_level ?? existing.inventory_level,
       brand_name: product.brand_name ?? existing.brand_name,
       categories: uniqueCategories.length > 0 ? uniqueCategories : undefined,
@@ -398,6 +438,40 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
     });
   }
   return Array.from(bySku.values());
+}
+
+function mergeVariantsBySku(variants: NormalizedVariant[]): NormalizedVariant[] {
+  const bySku = new Map<string, NormalizedVariant>();
+  for (const variant of variants) {
+    const existing = bySku.get(variant.sku);
+    if (!existing) {
+      bySku.set(variant.sku, variant);
+      continue;
+    }
+
+    bySku.set(variant.sku, {
+      ...existing,
+      ...variant,
+      source_sku: variant.source_sku ?? existing.source_sku,
+      part_id: variant.part_id ?? existing.part_id,
+      price: variant.price ?? existing.price,
+      cost_price: variant.cost_price ?? existing.cost_price,
+      weight: variant.weight ?? existing.weight,
+      inventory_level: variant.inventory_level ?? existing.inventory_level,
+      color: variant.color ?? existing.color,
+      size: variant.size ?? existing.size,
+      physical: variant.physical ?? existing.physical,
+      option_values: variant.option_values.length > 0 ? variant.option_values : existing.option_values,
+    });
+  }
+  return Array.from(bySku.values());
+}
+
+function shouldOmitFlatVendorCategory(category: string): boolean {
+  const normalized = category.trim().toLowerCase();
+  if (normalized.length === 0) return true;
+  if (normalized === 'branding solutions') return true;
+  return normalized.startsWith('made in ');
 }
 
 function extractProductCategories(node: AnyRecord): string[] {
@@ -425,7 +499,11 @@ function extractProductCategories(node: AnyRecord): string[] {
     return dedupeStrings(hierarchical);
   }
 
-  return dedupeStrings(categories.map(value => value.category));
+  return dedupeStrings(
+    categories
+      .map(value => value.category)
+      .filter((value): value is string => !!value && !shouldOmitFlatVendorCategory(value)),
+  );
 }
 
 function extractProductKeywords(node: AnyRecord): string[] {
@@ -565,7 +643,7 @@ function extractPartPhysical(part: AnyRecord): NormalizedVariantPhysical | undef
 function extractVariantsFromProduct(
   node: AnyRecord,
   fallbackPrice?: number,
-): { variants: NormalizedVariant[]; preferredBaseSku?: string; discoveredSizes: string[] } {
+): { variants: NormalizedVariant[]; preferredBaseSku?: string; discoveredSizes: string[]; preferredWeight?: number } {
   const partArray = asRecord(node.ProductPartArray);
   if (!partArray) return { variants: [], discoveredSizes: [] };
 
@@ -576,9 +654,14 @@ function extractVariantsFromProduct(
 
   const variants: NormalizedVariant[] = [];
   const discoveredSizes: string[] = [];
+  let preferredWeight: number | undefined;
   for (const part of parts) {
     const partSku = getFirstString(part, ['partId', 'partID', 'sku', 'SKU']);
     if (!partSku) continue;
+    const partWeight = extractWeightInPounds(part);
+    if (preferredWeight === undefined && partWeight !== undefined) {
+      preferredWeight = partWeight;
+    }
 
     const optionValues: NormalizedVariant['option_values'] = [];
     const color = extractPartColor(part);
@@ -612,6 +695,7 @@ function extractVariantsFromProduct(
         part_id: partSku,
         price: fallbackPrice,
         cost_price: fallbackPrice,
+        weight: partWeight,
         color,
         size,
         physical: extractPartPhysical(part),
@@ -620,12 +704,62 @@ function extractVariantsFromProduct(
     }
   }
 
+  const uniqueVariants = ensureUniqueVariantOptionCombinations(variants);
   const firstPartSku = getFirstString(parts[0], ['partId', 'partID', 'sku', 'SKU']);
   return {
-    variants,
+    variants: uniqueVariants,
     preferredBaseSku: firstPartSku,
     discoveredSizes: dedupeStrings(discoveredSizes),
+    preferredWeight,
   };
+}
+
+function serializeVariantOptionCombination(
+  optionValues: NormalizedVariant['option_values'],
+): string {
+  return optionValues
+    .map(optionValue => {
+      const displayName = optionValue.option_display_name.trim().toLowerCase();
+      const label = optionValue.label.trim().toLowerCase();
+      return `${displayName}:${label}`;
+    })
+    .sort()
+    .join('|');
+}
+
+function ensureUniqueVariantOptionCombinations(
+  variants: NormalizedVariant[],
+): NormalizedVariant[] {
+  const combinationCounts = new Map<string, number>();
+  for (const variant of variants) {
+    const key = serializeVariantOptionCombination(variant.option_values);
+    combinationCounts.set(key, (combinationCounts.get(key) ?? 0) + 1);
+  }
+
+  return variants.map(variant => {
+    const key = serializeVariantOptionCombination(variant.option_values);
+    if ((combinationCounts.get(key) ?? 0) <= 1) {
+      return variant;
+    }
+
+    const hasPartOption = variant.option_values.some(
+      optionValue => optionValue.option_display_name.trim().toLowerCase() === 'part',
+    );
+    if (hasPartOption) {
+      return variant;
+    }
+
+    return {
+      ...variant,
+      option_values: [
+        ...variant.option_values,
+        {
+          option_display_name: 'Part',
+          label: variant.part_id ?? variant.sku,
+        },
+      ],
+    };
+  });
 }
 
 function normalizeProductDataGetProduct(
@@ -657,7 +791,7 @@ function normalizeProductDataGetProduct(
   const description = descriptions.length > 0 ? descriptions.join('\n') : undefined;
 
   const { basePrice, bulkPricingRules } = extractProductPriceData(productNode);
-  const { variants, preferredBaseSku, discoveredSizes } = extractVariantsFromProduct(productNode, basePrice);
+  const { variants, preferredBaseSku, discoveredSizes, preferredWeight } = extractVariantsFromProduct(productNode, basePrice);
   const categories = extractProductCategories(productNode);
   const brandName = getFirstString(productNode, ['productBrand']);
   const primaryImageUrl = getFirstString(productNode, ['primaryImageUrl']);
@@ -673,6 +807,7 @@ function normalizeProductDataGetProduct(
       : typeof isCloseout === 'string'
         ? isCloseout
         : undefined;
+  const productWeight = extractWeightInPounds(productNode) ?? preferredWeight;
 
   const mappedCustomFields = Array.isArray(transformSchema?.custom_fields)
     ? (transformSchema?.custom_fields as Array<{ name?: string; value?: string }>)
@@ -705,6 +840,7 @@ function normalizeProductDataGetProduct(
       description,
       cost_price: basePrice,
       price: basePrice,
+      weight: productWeight,
       brand_name: brandName,
       categories,
       variants: variants.length > 0 ? variants : undefined,

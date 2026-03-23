@@ -81,7 +81,8 @@ describe('projectProductPricing', () => {
         price_list_bulk_tiers: [
           {
             quantity_min: 48,
-            price: 12.35,
+            type: 'price',
+            amount: 12.35,
           },
         ],
       }),
@@ -92,7 +93,8 @@ describe('projectProductPricing', () => {
         price_list_bulk_tiers: [
           {
             quantity_min: 48,
-            price: 14.95,
+            type: 'price',
+            amount: 14.95,
           },
         ],
       }),

@@ -51,17 +51,25 @@ function normalizeEndpointMappingIds(mappingIds: number[] | undefined): number[]
 
 async function buildStoredPromostandardsCapabilities(input: {
   capabilities: NonNullable<VendorFormData['promostandards_capabilities']>;
-  endpointMappingIds: number[];
+  mappings: Awaited<ReturnType<typeof listEndpointMappingsByIds>>;
 }): Promise<NonNullable<VendorFormData['promostandards_capabilities']>> {
-  const mappings = await listEndpointMappingsByIds(input.endpointMappingIds);
+  const capabilityBySelection = new Map(
+    input.capabilities.endpoints.map(endpoint => [
+      `${endpoint.endpoint_name}|${endpoint.endpoint_version}|${endpoint.operation_name}`,
+      endpoint,
+    ]),
+  );
 
   return {
     fingerprint: input.capabilities.fingerprint,
     tested_at: input.capabilities.tested_at,
-    available_endpoint_count: mappings.length,
+    available_endpoint_count: input.mappings.length,
     credentials_valid: input.capabilities.credentials_valid ?? null,
-    endpoints: mappings.map(mapping => {
+    endpoints: input.mappings.map(mapping => {
       const metadata = (mapping.metadata ?? {}) as Record<string, unknown>;
+      const submittedCapability = capabilityBySelection.get(
+        `${mapping.endpoint_name}|${mapping.endpoint_version}|${mapping.operation_name}`,
+      );
 
       return {
         endpoint_name: mapping.endpoint_name,
@@ -77,10 +85,43 @@ async function buildStoredPromostandardsCapabilities(input: {
         recommended_poll_minutes:
           typeof metadata.recommended_poll_minutes === 'number' ? metadata.recommended_poll_minutes : null,
         available: true,
-        status_code: null,
-        message: 'Endpoint selected from PromoStandards discovery.',
+        status_code: submittedCapability?.status_code ?? null,
+        message: submittedCapability?.message ?? 'Endpoint selected from PromoStandards discovery.',
+        wsdl_available: submittedCapability?.wsdl_available ?? null,
+        credentials_valid: submittedCapability?.credentials_valid ?? input.capabilities.credentials_valid ?? null,
+        live_probe_message: submittedCapability?.live_probe_message ?? null,
+        resolved_endpoint_url: submittedCapability?.resolved_endpoint_url ?? null,
+        custom_endpoint_url: submittedCapability?.custom_endpoint_url ?? null,
       };
     }),
+  };
+}
+
+function resolvePromostandardsRuntimeConfig(input: {
+  mapping: Awaited<ReturnType<typeof listEndpointMappingsByIds>>[number];
+  capabilities: NonNullable<VendorFormData['promostandards_capabilities']>;
+}): Record<string, unknown> {
+  const capability = input.capabilities.endpoints.find(
+    endpoint =>
+      endpoint.endpoint_name === input.mapping.endpoint_name &&
+      endpoint.endpoint_version === input.mapping.endpoint_version &&
+      endpoint.operation_name === input.mapping.operation_name,
+  );
+
+  const customEndpointPath = capability?.custom_endpoint_url?.trim();
+  if (customEndpointPath) {
+    return {
+      endpoint_path: customEndpointPath,
+    };
+  }
+
+  const resolvedEndpointUrl = capability?.resolved_endpoint_url?.trim();
+  if (!resolvedEndpointUrl) {
+    return {};
+  }
+
+  return {
+    endpoint_url: resolvedEndpointUrl,
   };
 }
 
@@ -141,9 +182,10 @@ export async function prepareVendorSubmission(input: {
       throw makeError('At least one available PromoStandards endpoint is required.');
     }
 
+    const selectedMappings = await listEndpointMappingsByIds(mappingIds);
     const storedCapabilities = await buildStoredPromostandardsCapabilities({
       capabilities: promostandardsCapabilities,
-      endpointMappingIds: mappingIds,
+      mappings: selectedMappings,
     });
     connectionConfig = buildVendorConnectionConfig({
       existingConfig: existingVendor?.connection_config,
@@ -155,10 +197,13 @@ export async function prepareVendorSubmission(input: {
 
     mappingAction = {
       type: 'apply',
-      resolvedDrafts: mappingIds.map(mappingId => ({
-        mappingId,
+      resolvedDrafts: selectedMappings.map(mapping => ({
+        mappingId: mapping.mapping_id,
         enabled: true,
-        runtimeConfig: {},
+        runtimeConfig: resolvePromostandardsRuntimeConfig({
+          mapping,
+          capabilities: promostandardsCapabilities,
+        }),
       })),
     };
   } else if (!customApiServiceType) {

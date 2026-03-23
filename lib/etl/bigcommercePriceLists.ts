@@ -4,12 +4,14 @@ import { withExecutionLock } from '../vendorExecutionLock';
 export interface BigCommercePriceListBulkTierInput {
   quantity_min: number;
   quantity_max?: number;
-  price: number;
+  type: 'price';
+  amount: number;
 }
 
 export interface BigCommercePriceListRecordInput {
   variant_id: number;
   price: number;
+  currency: string;
   sale_price?: number;
   retail_price?: number;
   map_price?: number;

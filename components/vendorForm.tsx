@@ -26,8 +26,26 @@ interface VendorFormProps {
     vendor_secret?: string;
     integration_family?: VendorFormData['integration_family'];
     api_protocol?: MappingProtocol;
+    endpoint_name?: string;
+    endpoint_version?: string;
+    operation_name?: string;
+    runtime_config?: Record<string, unknown>;
   }) => Promise<VendorConnectionTestResult>;
   requireConnectionTest?: boolean;
+}
+
+interface PromoEndpointGroup {
+  key: string;
+  endpoint_name: string;
+  endpoint_version: string;
+  operations: PromostandardsCapabilityMatrix['endpoints'];
+  operation_names: string[];
+  available_count: number;
+  wsdl_available: boolean | null;
+  credentials_valid: boolean | null;
+  resolved_endpoint_url: string | null;
+  custom_endpoint_url: string | null;
+  summary_message: string;
 }
 
 const integrationFamilyOptions: Array<{ value: VendorFormData['integration_family']; label: string }> = [
@@ -106,8 +124,96 @@ function compactPromoCapabilitiesForSubmission(
     tested_at: capabilities.tested_at,
     available_endpoint_count: capabilities.available_endpoint_count,
     credentials_valid: capabilities.credentials_valid ?? null,
-    endpoints: [],
+    endpoints: capabilities.endpoints.map(endpoint => ({
+      endpoint_name: endpoint.endpoint_name,
+      endpoint_version: endpoint.endpoint_version,
+      operation_name: endpoint.operation_name,
+      capability_scope: endpoint.capability_scope,
+      lifecycle_role: endpoint.lifecycle_role,
+      optional_by_vendor: endpoint.optional_by_vendor,
+      recommended_poll_minutes: endpoint.recommended_poll_minutes ?? null,
+      available: endpoint.available,
+      status_code: endpoint.status_code,
+      message: endpoint.message,
+      wsdl_available: endpoint.wsdl_available ?? null,
+      credentials_valid: endpoint.credentials_valid ?? null,
+      live_probe_message: endpoint.live_probe_message ?? null,
+      resolved_endpoint_url: endpoint.resolved_endpoint_url ?? null,
+      custom_endpoint_url: endpoint.custom_endpoint_url ?? null,
+    })),
   };
+}
+
+function getPromoEndpointGroupKey(endpoint: PromostandardsCapabilityMatrix['endpoints'][number]): string {
+  return `${endpoint.endpoint_name}|${endpoint.endpoint_version}`;
+}
+
+function summarizePromoEndpointGroup(
+  operations: PromostandardsCapabilityMatrix['endpoints'],
+): string {
+  if (operations.length === 1) {
+    const operation = operations[0];
+    return `${operation.message}${operation.live_probe_message ? ` ${operation.live_probe_message}` : ''}`;
+  }
+
+  const availableCount = operations.filter(operation => operation.available).length;
+  if (availableCount === operations.length) {
+    return `All ${operations.length} operations on this endpoint version were confirmed.`;
+  }
+  if (availableCount > 0) {
+    return `${availableCount} of ${operations.length} operations on this endpoint version were confirmed.`;
+  }
+  return `No operations on this endpoint version were confirmed yet.`;
+}
+
+function buildPromoEndpointGroups(
+  endpoints: PromostandardsCapabilityMatrix['endpoints'],
+): PromoEndpointGroup[] {
+  const grouped = new Map<string, PromostandardsCapabilityMatrix['endpoints']>();
+
+  for (const endpoint of endpoints) {
+    const key = getPromoEndpointGroupKey(endpoint);
+    const existing = grouped.get(key) ?? [];
+    existing.push(endpoint);
+    grouped.set(key, existing);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([key, operations]) => {
+      const first = operations[0];
+      const operationNames = Array.from(new Set(operations.map(operation => operation.operation_name))).sort();
+      const availableCount = operations.filter(operation => operation.available).length;
+      const wsdlAvailable = operations.some(operation => operation.wsdl_available === true)
+        ? true
+        : operations.every(operation => operation.wsdl_available === false)
+          ? false
+          : null;
+      const credentialsValid = operations.some(operation => operation.credentials_valid === true)
+        ? true
+        : operations.some(operation => operation.credentials_valid === false)
+          ? false
+          : null;
+
+      return {
+        key,
+        endpoint_name: first.endpoint_name,
+        endpoint_version: first.endpoint_version,
+        operations,
+        operation_names: operationNames,
+        available_count: availableCount,
+        wsdl_available: wsdlAvailable,
+        credentials_valid: credentialsValid,
+        resolved_endpoint_url: operations.find(operation => operation.resolved_endpoint_url)?.resolved_endpoint_url ?? null,
+        custom_endpoint_url: operations.find(operation => operation.custom_endpoint_url)?.custom_endpoint_url ?? null,
+        summary_message: summarizePromoEndpointGroup(operations),
+      };
+    })
+    .sort((left, right) => {
+      if (left.endpoint_name !== right.endpoint_name) {
+        return left.endpoint_name.localeCompare(right.endpoint_name);
+      }
+      return left.endpoint_version.localeCompare(right.endpoint_version);
+    });
 }
 
 const VendorForm = ({
@@ -124,6 +230,10 @@ const VendorForm = ({
   const [connectionMessage, setConnectionMessage] = useState('');
   const [submissionError, setSubmissionError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [endpointTestStatus, setEndpointTestStatus] = useState<Record<string, {
+    status: 'idle' | 'testing' | 'success' | 'failed';
+    message: string;
+  }>>({});
   const [lastTestFingerprint, setLastTestFingerprint] = useState(() =>
     initialValues?.promostandards_capabilities ? buildConnectionFingerprint(getInitialValues(initialValues)) : '',
   );
@@ -144,6 +254,10 @@ const VendorForm = ({
   const promoEndpointRows = useMemo(
     () => values.promostandards_capabilities?.endpoints ?? [],
     [values.promostandards_capabilities],
+  );
+  const promoEndpointGroups = useMemo(
+    () => buildPromoEndpointGroups(promoEndpointRows),
+    [promoEndpointRows],
   );
 
   const canSubmit =
@@ -183,6 +297,31 @@ const VendorForm = ({
       }
 
       return next;
+    });
+  };
+
+  const handlePromoEndpointFieldChange = (
+    groupKey: string,
+    nextValue: string,
+  ) => {
+    setValues(prev => {
+      const capabilities = prev.promostandards_capabilities;
+      if (!capabilities) return prev;
+
+      return {
+        ...prev,
+        promostandards_capabilities: {
+          ...capabilities,
+          endpoints: capabilities.endpoints.map(endpoint =>
+            getPromoEndpointGroupKey(endpoint) === groupKey
+              ? {
+                ...endpoint,
+                custom_endpoint_url: nextValue.trim() || null,
+              }
+              : endpoint,
+          ),
+        },
+      };
     });
   };
 
@@ -226,9 +365,83 @@ const VendorForm = ({
       setConnectionStatus(result.ok ? 'success' : 'failed');
       setConnectionMessage(result.message ?? (result.ok ? 'Connection successful.' : 'Connection failed.'));
       setLastTestFingerprint(currentFingerprint);
+      setEndpointTestStatus({});
     } catch (error) {
       setConnectionStatus('failed');
       setConnectionMessage(error instanceof Error ? error.message : 'Vendor connection test failed.');
+    }
+  };
+
+  const handlePromoEndpointTest = async (group: PromoEndpointGroup) => {
+    if (!onTestConnection) return;
+
+    const endpointKey = group.key;
+    const customEndpointPath = group.custom_endpoint_url?.trim();
+    const resolvedEndpointUrl = group.resolved_endpoint_url?.trim();
+    if (!customEndpointPath && !resolvedEndpointUrl) {
+      setEndpointTestStatus(prev => ({
+        ...prev,
+        [endpointKey]: {
+          status: 'failed',
+          message: 'Enter or discover an endpoint URL before testing.',
+        },
+      }));
+      return;
+    }
+
+    setEndpointTestStatus(prev => ({
+      ...prev,
+      [endpointKey]: {
+        status: 'testing',
+        message: 'Testing endpoint URI...',
+      },
+    }));
+
+    try {
+      const results = await Promise.all(
+        group.operations.map(endpoint =>
+          onTestConnection({
+            vendor_api_url: values.vendor_api_url,
+            vendor_account_id: values.vendor_account_id,
+            vendor_secret: values.vendor_secret,
+            integration_family: values.integration_family,
+            api_protocol: values.api_protocol ?? 'SOAP',
+            endpoint_name: endpoint.endpoint_name,
+            endpoint_version: endpoint.endpoint_version,
+            operation_name: endpoint.operation_name,
+            runtime_config: customEndpointPath
+              ? {
+                endpoint_path: customEndpointPath,
+              }
+              : {
+                endpoint_url: resolvedEndpointUrl,
+              },
+          }),
+        ),
+      );
+      const successCount = results.filter(result => result.ok).length;
+      const message =
+        successCount === 0
+          ? (results.find(result => result.message)?.message ?? 'Endpoint test failed.')
+          : successCount === group.operations.length
+            ? `Confirmed for ${successCount} operation${successCount === 1 ? '' : 's'}.`
+            : `Confirmed for ${successCount} of ${group.operations.length} operations.`;
+
+      setEndpointTestStatus(prev => ({
+        ...prev,
+        [endpointKey]: {
+          status: successCount > 0 ? 'success' : 'failed',
+          message,
+        },
+      }));
+    } catch (error) {
+      setEndpointTestStatus(prev => ({
+        ...prev,
+        [endpointKey]: {
+          status: 'failed',
+          message: error instanceof Error ? error.message : 'Endpoint test failed.',
+        },
+      }));
     }
   };
 
@@ -444,18 +657,24 @@ const VendorForm = ({
             >
               <span>Endpoint</span>
               <span>Version</span>
-              <span>Operation</span>
+              <span>Operations</span>
               <span>WSDL</span>
               <span>Live Probe</span>
             </div>
-            {promoEndpointRows.length === 0 ? (
+            {promoEndpointGroups.length === 0 ? (
               <div style={{ color: '#64748b', padding: '18px 16px' }}>
                 No PromoStandards discovery results yet.
               </div>
             ) : (
-              promoEndpointRows.map(endpoint => (
+              promoEndpointGroups.map(group => (
+                (() => {
+                  const endpointKey = group.key;
+                  const endpointUrlValue = group.custom_endpoint_url ?? '';
+                  const testState = endpointTestStatus[endpointKey];
+
+                  return (
                 <div
-                  key={`${endpoint.endpoint_name}|${endpoint.endpoint_version}`}
+                  key={endpointKey}
                   style={{
                     borderBottom: '1px solid #eef2f7',
                     display: 'grid',
@@ -465,40 +684,84 @@ const VendorForm = ({
                   }}
                 >
                   <div>
-                    <div style={{ color: '#0f172a', fontWeight: 700 }}>{endpoint.endpoint_name}</div>
+                    <div style={{ color: '#0f172a', fontWeight: 700 }}>{group.endpoint_name}</div>
                     <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>
-                      {endpoint.message}
-                      {endpoint.live_probe_message ? ` ${endpoint.live_probe_message}` : ''}
+                      {group.summary_message}
+                    </div>
+                    <div style={{ display: 'grid', gap: '8px', marginTop: '10px' }}>
+                      <label style={{ display: 'grid', gap: '4px' }}>
+                        <span style={{ color: '#334155', fontSize: '12px', fontWeight: 700 }}>
+                          Custom Endpoint URI Format
+                        </span>
+                        <input
+                          aria-label={`Custom endpoint URI for ${group.endpoint_name} ${group.endpoint_version}`}
+                          value={endpointUrlValue}
+                          onChange={event => handlePromoEndpointFieldChange(endpointKey, event.target.value)}
+                          placeholder="/promostandards/custom/service"
+                          style={textInputStyle}
+                        />
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() => handlePromoEndpointTest(group)}
+                          style={secondaryButtonStyle}
+                          disabled={testState?.status === 'testing'}
+                        >
+                          {testState?.status === 'testing' ? 'Testing URI...' : 'Test URI'}
+                        </button>
+                        {group.resolved_endpoint_url ? (
+                          <span style={{ color: '#64748b', fontSize: '12px' }}>
+                            Discovered: {group.resolved_endpoint_url}
+                          </span>
+                        ) : null}
+                        {testState?.message ? (
+                          <span
+                            style={{
+                              color: testState.status === 'success' ? '#047857' : testState.status === 'failed' ? '#b91c1c' : '#64748b',
+                              fontSize: '12px',
+                            }}
+                          >
+                            {testState.message}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
-                  <div style={{ color: '#334155' }}>{endpoint.endpoint_version}</div>
-                  <div style={{ color: '#334155' }}>{endpoint.operation_name}</div>
+                  <div style={{ color: '#334155' }}>{group.endpoint_version}</div>
+                  <div style={{ color: '#334155' }}>
+                    {group.operation_names.length === 1
+                      ? group.operation_names[0]
+                      : `${group.operation_names.length} operations`}
+                  </div>
                   <div
                     style={{
-                      color: endpoint.wsdl_available ?? endpoint.available ? '#047857' : '#b91c1c',
+                      color: (group.wsdl_available ?? (group.available_count > 0)) ? '#047857' : '#b91c1c',
                       fontWeight: 700,
                     }}
                   >
-                    {endpoint.wsdl_available ?? endpoint.available ? 'Listed' : 'Missing'}
+                    {(group.wsdl_available ?? (group.available_count > 0)) ? 'Listed' : 'Missing'}
                   </div>
                   <div
                     style={{
                       color:
-                        endpoint.credentials_valid === true
+                        group.credentials_valid === true
                           ? '#047857'
-                          : endpoint.credentials_valid === false
+                          : group.credentials_valid === false
                             ? '#b91c1c'
                             : '#b45309',
                       fontWeight: 700,
                     }}
                   >
-                    {endpoint.credentials_valid === true
+                    {group.credentials_valid === true
                       ? 'Accepted'
-                      : endpoint.credentials_valid === false
+                      : group.credentials_valid === false
                         ? 'Rejected'
                         : 'Needs input'}
                   </div>
                 </div>
+                  );
+                })()
               ))
             )}
           </div>

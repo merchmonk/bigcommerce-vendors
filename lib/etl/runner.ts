@@ -10,6 +10,7 @@ import {
   upsertRelatedProducts,
 } from './bigcommerceCatalog';
 import { resolveEndpointAdapter } from './adapters/factory';
+import { resolveRuntimeEndpointUrl } from './endpointUrl';
 import { normalizeProductsFromEndpoint, type NormalizedProduct } from './productNormalizer';
 import { buildProductAssembly } from './productEnrichment';
 import {
@@ -26,6 +27,7 @@ import {
   listSyncRunsForVendor,
   listPendingRelatedProductLinks,
   markSyncRunRunning,
+  reconcileStaleCatalogSyncRunsForVendor,
   updateSyncRunProgress,
   upsertPendingRelatedProductLink,
   upsertProductEnrichmentRetry,
@@ -49,6 +51,7 @@ export interface TestConnectionConfigInput {
   vendorAccountId?: string | null;
   vendorSecret?: string | null;
   apiProtocol?: MappingProtocol;
+  endpointName?: string;
   operationName?: string;
   endpointVersion?: string;
   runtimeConfig?: Record<string, unknown>;
@@ -68,6 +71,10 @@ export interface SyncRunResult {
     message?: string;
   }>;
 }
+
+const EARLY_SYNC_CANARY_PRODUCT_COUNT = 2;
+const BLOCKED_PRODUCT_FAILURE_THRESHOLD_MIN_ATTEMPTS = 100;
+const BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO = 0.5;
 
 interface ProductAssemblyStatusSummary {
   blockedCount: number;
@@ -98,9 +105,7 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
     const uniqueCategories = mergedCategories.filter((value, index) => mergedCategories.indexOf(value) === index);
 
     const mergedVariants = [...(existing.variants ?? []), ...(product.variants ?? [])];
-    const uniqueVariants = mergedVariants.filter(
-      (variant, index) => mergedVariants.findIndex(item => item.sku === variant.sku) === index,
-    );
+    const uniqueVariants = mergeVariantsBySku(mergedVariants);
 
     const mergedBulkRules = [...(existing.bulk_pricing_rules ?? []), ...(product.bulk_pricing_rules ?? [])];
     const uniqueBulkRules = mergedBulkRules.filter(
@@ -160,6 +165,34 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
       },
       modifier_blueprint: product.modifier_blueprint ?? existing.modifier_blueprint,
       enrichment_status: product.enrichment_status ?? existing.enrichment_status,
+      weight: product.weight ?? existing.weight ?? 0,
+    });
+  }
+  return Array.from(bySku.values());
+}
+
+function mergeVariantsBySku(variants: NonNullable<NormalizedProduct['variants']>): NonNullable<NormalizedProduct['variants']> {
+  const bySku = new Map<string, NonNullable<NormalizedProduct['variants']>[number]>();
+  for (const variant of variants) {
+    const existing = bySku.get(variant.sku);
+    if (!existing) {
+      bySku.set(variant.sku, variant);
+      continue;
+    }
+
+    bySku.set(variant.sku, {
+      ...existing,
+      ...variant,
+      source_sku: variant.source_sku ?? existing.source_sku,
+      part_id: variant.part_id ?? existing.part_id,
+      price: variant.price ?? existing.price,
+      cost_price: variant.cost_price ?? existing.cost_price,
+      weight: variant.weight ?? existing.weight,
+      inventory_level: variant.inventory_level ?? existing.inventory_level,
+      color: variant.color ?? existing.color,
+      size: variant.size ?? existing.size,
+      physical: variant.physical ?? existing.physical,
+      option_values: variant.option_values.length > 0 ? variant.option_values : existing.option_values,
     });
   }
   return Array.from(bySku.values());
@@ -220,6 +253,89 @@ function formatGatingReasonSummary(summary: ProductAssemblyStatusSummary): strin
   return summary.topGatingReasons
     .map(item => `${item.reason} (${item.count})`)
     .join('; ');
+}
+
+function shouldFailSyncBecauseAllProductsWereBlocked(input: {
+  recordsRead: number;
+  recordsWritten: number;
+  statuses: Array<{ blocked: boolean }>;
+}): boolean {
+  if (input.recordsRead === 0) return false;
+  if (input.recordsWritten > 0) return false;
+  return input.statuses.some(status => status.blocked);
+}
+
+function shouldFailSyncDuringCanaryWindow(input: {
+  evaluatedProductCount: number;
+  successfulProductCount: number;
+}): boolean {
+  return (
+    input.evaluatedProductCount >= EARLY_SYNC_CANARY_PRODUCT_COUNT &&
+    input.successfulProductCount === 0
+  );
+}
+
+function shouldFailSyncBecauseBlockedRateTooHigh(input: {
+  evaluatedProductCount: number;
+  blockedProductCount: number;
+}): boolean {
+  if (input.evaluatedProductCount < BLOCKED_PRODUCT_FAILURE_THRESHOLD_MIN_ATTEMPTS) {
+    return false;
+  }
+
+  return (
+    input.blockedProductCount / input.evaluatedProductCount >=
+    BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO
+  );
+}
+
+function readPartialBigCommerceUpsertResult(error: unknown): {
+  product: { id: number };
+  duplicate: boolean;
+  action: 'create' | 'update';
+  resolvedSku: string;
+  markupPercent: number;
+  pricingReconciliation?: Record<string, unknown>;
+} | null {
+  if (!error || typeof error !== 'object' || !('partial_upsert_result' in error)) {
+    return null;
+  }
+
+  const candidate = (error as { partial_upsert_result?: unknown }).partial_upsert_result;
+  if (!candidate || typeof candidate !== 'object') {
+    return null;
+  }
+
+  const record = candidate as {
+    product?: { id?: unknown };
+    duplicate?: unknown;
+    action?: unknown;
+    resolvedSku?: unknown;
+    markupPercent?: unknown;
+    pricingReconciliation?: unknown;
+  };
+
+  if (
+    typeof record.product?.id !== 'number' ||
+    typeof record.duplicate !== 'boolean' ||
+    (record.action !== 'create' && record.action !== 'update') ||
+    typeof record.resolvedSku !== 'string' ||
+    typeof record.markupPercent !== 'number'
+  ) {
+    return null;
+  }
+
+  return {
+    product: { id: record.product.id },
+    duplicate: record.duplicate,
+    action: record.action,
+    resolvedSku: record.resolvedSku,
+    markupPercent: record.markupPercent,
+    pricingReconciliation:
+      record.pricingReconciliation && typeof record.pricingReconciliation === 'object'
+        ? (record.pricingReconciliation as Record<string, unknown>)
+        : undefined,
+  };
 }
 
 function buildSyncProgressDetails(input: {
@@ -391,6 +507,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     syncRunId: syncRun.sync_run_id,
   });
   await markSyncRunRunning(syncRun.sync_run_id);
+  await reconcileStaleCatalogSyncRunsForVendor(input.vendorId);
 
   let endpointResults: SyncRunResult['endpointResults'] = [];
   let mergedBaseProducts: NormalizedProduct[] = [];
@@ -446,8 +563,12 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     endpointResults = [];
     const baseProducts: NormalizedProduct[] = [];
     const seenReadProductKeys = new Set<string>();
+    const processedReferenceProductIds = new Set<string>();
+    const processedProductKeys = new Set<string>();
     const writtenProductKeys = new Set<string>();
     let blockedProductCount = 0;
+    let canaryEvaluatedProductCount = 0;
+    let canarySuccessfulProductCount = 0;
 
     const selectedKeys = new Set(selectedMappings.map(item => mappingKey(item.mapping)));
     const productDataMappings = assignedMappings.filter(item => item.mapping.endpoint_name === 'ProductData');
@@ -516,6 +637,18 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       let getProductCallCount = 0;
       for (const reference of discovery.references) {
         await throwIfSyncCancelled(input.integrationJobId);
+
+        if (processedReferenceProductIds.has(reference.productId)) {
+          logger.info('vendor sync skipped duplicate ProductData reference before fetch', {
+            syncRunId: syncRun.sync_run_id,
+            vendorId: input.vendorId,
+            productId: reference.productId,
+            partId: reference.partId ?? null,
+          });
+          continue;
+        }
+
+        processedReferenceProductIds.add(reference.productId);
         getProductCallCount += 1;
 
         const fetchResult = await fetchProductDataReference({
@@ -546,6 +679,26 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
           }
         }
 
+        const unprocessedFetchedProducts = mergedFetchedProducts.filter(product => {
+          const productKey = product.vendor_product_id ?? product.sku;
+          if (processedProductKeys.has(productKey)) {
+            return false;
+          }
+
+          processedProductKeys.add(productKey);
+          return true;
+        });
+
+        if (mergedFetchedProducts.length > 0 && unprocessedFetchedProducts.length === 0) {
+          logger.info('vendor sync skipped duplicate product reference', {
+            syncRunId: syncRun.sync_run_id,
+            vendorId: input.vendorId,
+            productId: reference.productId,
+            partId: reference.partId ?? null,
+          });
+          continue;
+        }
+
         const assembly = await buildProductAssembly({
           vendor,
           assignedMappings: assignedMappings.filter(item => {
@@ -556,13 +709,15 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
             }
             return true;
           }),
-          baseProducts: mergedFetchedProducts,
+          baseProducts: unprocessedFetchedProducts,
         });
 
         assembly.endpointResults.forEach(result => endpointResults.push(result));
         assemblyStatuses.push(...assembly.statuses);
         mediaRetries.push(...assembly.mediaRetries);
         blockedProductCount += assembly.statuses.filter(status => status.blocked).length;
+        canaryEvaluatedProductCount += assembly.statuses.length;
+        canarySuccessfulProductCount += assembly.products.length;
 
         for (const retry of assembly.mediaRetries) {
           await upsertProductEnrichmentRetry({
@@ -575,24 +730,81 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
           });
         }
 
+        if (shouldFailSyncDuringCanaryWindow({
+          evaluatedProductCount: canaryEvaluatedProductCount,
+          successfulProductCount: canarySuccessfulProductCount,
+        })) {
+          const blockedSummary = summarizeBlockedProducts(assemblyStatuses);
+          throw new Error(
+            `Vendor sync halted during early product validation: 0 of first ${canaryEvaluatedProductCount} products passed enrichment. ${formatGatingReasonSummary(blockedSummary)}`,
+          );
+        }
+
+        if (shouldFailSyncBecauseBlockedRateTooHigh({
+          evaluatedProductCount: assemblyStatuses.length,
+          blockedProductCount,
+        })) {
+          const blockedSummary = summarizeBlockedProducts(assemblyStatuses);
+          throw new Error(
+            `Vendor sync halted after ${assemblyStatuses.length} attempted products because ${blockedProductCount} products (${Math.round((blockedProductCount / assemblyStatuses.length) * 100)}%) failed enrichment, exceeding the ${Math.round(BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO * 100)}% threshold. ${formatGatingReasonSummary(blockedSummary)}`,
+          );
+        }
+
         if (mergedFetchedProducts.length > 0 && assembly.products.length === 0) {
           const blockedSummary = summarizeBlockedProducts(assembly.statuses);
-          throw new Error(
-            `Vendor sync halted before BigCommerce write for ${reference.productId}. ${formatGatingReasonSummary(blockedSummary)}`,
-          );
+          logger.warn('vendor sync skipped blocked product before BigCommerce write', {
+            syncRunId: syncRun.sync_run_id,
+            vendorId: input.vendorId,
+            productId: reference.productId,
+            blockedProductCount: blockedSummary.blockedCount,
+            topGatingReasons: blockedSummary.topGatingReasons,
+          });
+          continue;
         }
 
         for (const product of assembly.products) {
           await throwIfSyncCancelled(input.integrationJobId);
 
-          const upsertResult = await upsertBigCommerceProduct({
-            accessToken: input.session.accessToken,
-            storeHash: input.session.storeHash,
-            vendorId: input.vendorId,
-            product,
-            defaultMarkupPercent: 30,
-            pricingContext,
-          });
+          let upsertResult;
+          try {
+            upsertResult = await upsertBigCommerceProduct({
+              accessToken: input.session.accessToken,
+              storeHash: input.session.storeHash,
+              vendorId: input.vendorId,
+              product,
+              defaultMarkupPercent: 30,
+              pricingContext,
+            });
+          } catch (error) {
+            const partialUpsert = readPartialBigCommerceUpsertResult(error);
+            if (partialUpsert) {
+              await upsertVendorProductMap({
+                vendor_id: input.vendorId,
+                mapping_id: input.mappingId ?? null,
+                vendor_product_id: product.vendor_product_id ?? product.sku,
+                bigcommerce_product_id: partialUpsert.product.id,
+                sku: partialUpsert.resolvedSku,
+                product_name: product.name,
+                metadata: {
+                  source: 'etl-sync',
+                  duplicate: partialUpsert.duplicate,
+                  action: partialUpsert.action,
+                  markup_percent: partialUpsert.markupPercent,
+                  pricing_reconciliation: partialUpsert.pricingReconciliation ?? null,
+                  enrichment: product.enrichment_status ?? {},
+                  partial_failure: true,
+                  partial_error: error instanceof Error ? error.message : 'Partial BigCommerce upsert failed.',
+                },
+              });
+
+              if (!writtenProductKeys.has(partialUpsert.resolvedSku)) {
+                writtenProductKeys.add(partialUpsert.resolvedSku);
+                recordsWritten += 1;
+              }
+            }
+
+            throw error;
+          }
 
           await upsertVendorProductMap({
             vendor_id: input.vendorId,
@@ -684,7 +896,10 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
       const mapping = assigned.mapping;
       const runtimeConfig = (assigned.runtime_config ?? {}) as Record<string, unknown>;
-      const endpointUrl = (runtimeConfig.endpoint_url as string | undefined) ?? vendor.vendor_api_url;
+      const endpointUrl = resolveRuntimeEndpointUrl({
+        vendorApiUrl: vendor.vendor_api_url,
+        runtimeConfig,
+      });
       const operationName = mapping.operation_name || (runtimeConfig.operation_name as string | undefined) || '';
       if (!endpointUrl || !operationName) {
         endpointResults.push({
@@ -760,6 +975,8 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       assemblyStatuses.push(...assembly.statuses);
       mediaRetries.push(...assembly.mediaRetries);
       blockedProductCount += assembly.statuses.filter(status => status.blocked).length;
+      canaryEvaluatedProductCount += assembly.statuses.length;
+      canarySuccessfulProductCount += assembly.products.length;
 
       const blockedSummary = summarizeBlockedProducts(assembly.statuses);
       logger.info('vendor sync product assembly completed', {
@@ -772,10 +989,33 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         topGatingReasons: blockedSummary.topGatingReasons,
       });
 
-      if (mergedBaseProducts.length > 0 && assembly.products.length === 0) {
+      if (shouldFailSyncDuringCanaryWindow({
+        evaluatedProductCount: canaryEvaluatedProductCount,
+        successfulProductCount: canarySuccessfulProductCount,
+      })) {
+        const aggregateBlockedSummary = summarizeBlockedProducts(assemblyStatuses);
         throw new Error(
-          `Vendor sync halted before BigCommerce write: 0 of ${mergedBaseProducts.length} products passed enrichment. ${formatGatingReasonSummary(blockedSummary)}`,
+          `Vendor sync halted during early product validation: 0 of first ${canaryEvaluatedProductCount} products passed enrichment. ${formatGatingReasonSummary(aggregateBlockedSummary)}`,
         );
+      }
+
+      if (shouldFailSyncBecauseBlockedRateTooHigh({
+        evaluatedProductCount: assemblyStatuses.length,
+        blockedProductCount,
+      })) {
+        const aggregateBlockedSummary = summarizeBlockedProducts(assemblyStatuses);
+        throw new Error(
+          `Vendor sync halted after ${assemblyStatuses.length} attempted products because ${blockedProductCount} products (${Math.round((blockedProductCount / assemblyStatuses.length) * 100)}%) failed enrichment, exceeding the ${Math.round(BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO * 100)}% threshold. ${formatGatingReasonSummary(aggregateBlockedSummary)}`,
+        );
+      }
+
+      if (mergedBaseProducts.length > 0 && assembly.products.length === 0) {
+        logger.warn('vendor sync skipped blocked products before BigCommerce write', {
+          syncRunId: syncRun.sync_run_id,
+          vendorId: input.vendorId,
+          blockedProductCount: blockedSummary.blockedCount,
+          topGatingReasons: blockedSummary.topGatingReasons,
+        });
       }
 
       for (const retry of assembly.mediaRetries) {
@@ -887,6 +1127,17 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       vendorId: input.vendorId,
     });
 
+    if (shouldFailSyncBecauseAllProductsWereBlocked({
+      recordsRead,
+      recordsWritten,
+      statuses: assemblyStatuses,
+    })) {
+      const blockedSummary = summarizeBlockedProducts(assemblyStatuses);
+      throw new Error(
+        `Vendor sync halted before BigCommerce write: 0 of ${recordsRead} products passed enrichment. ${formatGatingReasonSummary(blockedSummary)}`,
+      );
+    }
+
     await completeSyncRun({
       sync_run_id: syncRun.sync_run_id,
       status: 'SUCCESS',
@@ -971,8 +1222,11 @@ export async function testVendorConnectionConfig(
   const protocol = input.apiProtocol ?? 'SOAP';
   const adapter = resolveEndpointAdapter(protocol);
   return adapter.testConnection({
-    endpointUrl: input.vendorApiUrl,
-    endpointName: 'CompanyData',
+    endpointUrl: resolveRuntimeEndpointUrl({
+      vendorApiUrl: input.vendorApiUrl,
+      runtimeConfig: input.runtimeConfig,
+    }),
+    endpointName: input.endpointName ?? 'CompanyData',
     vendorAccountId: input.vendorAccountId,
     vendorSecret: input.vendorSecret,
     operationName: input.operationName,

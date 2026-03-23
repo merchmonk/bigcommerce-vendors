@@ -1266,6 +1266,66 @@ export async function markSyncRunRunning(syncRunId: number): Promise<EtlSyncRun 
   return row ? serializeSyncRun(row) : null;
 }
 
+export async function reconcileStaleCatalogSyncRunsForVendor(vendorId: number): Promise<number> {
+  const activeJobStatuses: IntegrationJobStatus[] = ['PENDING', 'ENQUEUED', 'RUNNING', 'CANCEL_REQUESTED'];
+  const activeRunStatuses: SyncRunStatus[] = ['PENDING', 'RUNNING'];
+
+  const [activeCatalogJobCount, activeRuns] = await Promise.all([
+    prisma.integrationJob.count({
+      where: {
+        vendor_id: vendorId,
+        job_kind: 'CATALOG_SYNC',
+        status: {
+          in: activeJobStatuses,
+        },
+      },
+    }),
+    prisma.etlSyncRun.findMany({
+      where: {
+        vendor_id: vendorId,
+        status: {
+          in: activeRunStatuses,
+        },
+      },
+      orderBy: {
+        sync_run_id: 'desc',
+      },
+      select: {
+        sync_run_id: true,
+      },
+    }),
+  ]);
+
+  const keepCount = Math.min(activeCatalogJobCount, activeRuns.length);
+  const staleRunIds = activeRuns.slice(keepCount).map(run => run.sync_run_id);
+  if (staleRunIds.length === 0) {
+    return 0;
+  }
+
+  const staleMessage =
+    activeCatalogJobCount > 0
+      ? 'Marked stale because a newer catalog sync run is active for this vendor.'
+      : 'Marked stale because no active catalog sync job exists for this vendor.';
+
+  const result = await prisma.etlSyncRun.updateMany({
+    where: {
+      sync_run_id: {
+        in: staleRunIds,
+      },
+      status: {
+        in: activeRunStatuses,
+      },
+    },
+    data: {
+      status: 'FAILED',
+      ended_at: new Date(),
+      error_message: staleMessage,
+    },
+  });
+
+  return result.count;
+}
+
 export async function updateSyncRunProgress(input: SyncRunProgressInput): Promise<EtlSyncRun | null> {
   const row = await prisma.etlSyncRun.update({
     where: { sync_run_id: BigInt(input.sync_run_id) },
