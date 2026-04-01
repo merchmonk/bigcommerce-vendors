@@ -11,7 +11,7 @@ export type CustomApiServiceType =
 export type VendorOperationalStatus = 'SYNCING' | 'SYNCED' | 'SYNC_FAILED' | 'DEACTIVATED';
 
 export interface EndpointMappingDraft {
-  mapping_id?: number;
+  endpoint_mapping_id?: number;
   enabled: boolean;
   endpoint_name?: string;
   endpoint_version?: string;
@@ -26,39 +26,36 @@ export interface EndpointMappingDraft {
 }
 
 export interface PromostandardsEndpointCapability {
-  endpoint_name: string;
-  endpoint_version: string;
-  operation_name: string;
-  capability_scope?: 'catalog' | 'order';
-  lifecycle_role?: string;
-  optional_by_vendor?: boolean;
-  recommended_poll_minutes?: number | null;
+  endpointName: string;
+  endpointVersion: string | null;
+  endpointUrl: string;
   available: boolean;
   status_code: number | null;
   message: string;
   wsdl_available?: boolean | null;
   credentials_valid?: boolean | null;
   live_probe_message?: string | null;
-  resolved_endpoint_url?: string | null;
-  custom_endpoint_url?: string | null;
+  versionDetectionStatus?: 'detected_from_url' | 'detected_from_wsdl' | 'manual' | 'failed';
+  requiresManualVersionSelection?: boolean;
+  availableVersions?: string[];
 }
 
 export interface PromostandardsCapabilityMatrix {
   fingerprint: string;
-  tested_at: string;
-  available_endpoint_count: number;
-  credentials_valid?: boolean | null;
+  testedAt: string;
+  availableEndpointCount: number;
+  credentialsValid?: boolean | null;
   endpoints: PromostandardsEndpointCapability[];
 }
 
 export interface VendorConnectionTestResult {
   ok: boolean;
   message?: string;
-  available_endpoint_count?: number;
-  credentials_valid?: boolean | null;
-  endpoint_mapping_ids?: number[];
+  availableEndpointCount?: number;
+  credentialsValid?: boolean | null;
+  endpointMappingIds?: number[];
   fingerprint?: string;
-  tested_at?: string;
+  testedAt?: string;
   endpoints?: PromostandardsEndpointCapability[];
 }
 
@@ -75,7 +72,10 @@ export interface VendorFormData {
   endpoint_mappings: EndpointMappingDraft[];
   endpoint_mapping_ids?: number[];
   connection_tested?: boolean;
-  promostandards_capabilities?: PromostandardsCapabilityMatrix | null;
+  hasCompanyDataEndpoint?: boolean;
+  companyDataEndpointUrl?: string;
+  promostandardsEndpoints?: PromostandardsEndpointCapability[];
+  promostandardsCapabilities?: PromostandardsCapabilityMatrix | null;
   connection_config?: Record<string, unknown>;
   auto_sync?: boolean;
 }
@@ -99,7 +99,7 @@ export interface VendorOperatorSummary {
 }
 
 export interface DashboardRecentSyncItem {
-  sync_run_id: number;
+  etl_sync_run_id: number;
   vendor_id: number;
   vendor_name: string;
   status: string;

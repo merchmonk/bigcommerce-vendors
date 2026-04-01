@@ -60,8 +60,8 @@ describe('prisma lazy proxy', () => {
         where: { vendor_id: 1 },
       }),
       prismaModule.default.vendorEndpointMapping.upsert({
-        where: { vendor_id_mapping_id: { vendor_id: 1, mapping_id: 2 } },
-        create: { vendor_id: 1, mapping_id: 2, is_enabled: true, runtime_config: {} },
+        where: { vendor_id_endpoint_mapping_id: { vendor_id: 1, endpoint_mapping_id: 2 } },
+        create: { vendor_id: 1, endpoint_mapping_id: 2, is_enabled: true, runtime_config: {} },
         update: { is_enabled: true },
       }),
     ]);

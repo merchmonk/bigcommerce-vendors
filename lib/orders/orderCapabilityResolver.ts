@@ -7,7 +7,8 @@ import {
 
 export interface VendorResolvedOrderCapability {
   vendor_endpoint_mapping_id: number;
-  mapping_id: number;
+  endpoint_mapping_id: number;
+  endpointUrl: string | null;
   capability_key: string;
   endpoint_name: string;
   endpoint_version: string;
@@ -42,7 +43,8 @@ function toVendorResolvedOrderCapability(
 
   return {
     vendor_endpoint_mapping_id: value.vendor_endpoint_mapping_id,
-    mapping_id: value.mapping_id,
+    endpoint_mapping_id: value.endpoint_mapping_id,
+    endpointUrl: value.endpointUrl ?? null,
     capability_key: capabilityKey,
     endpoint_name: value.mapping.endpoint_name,
     endpoint_version: value.mapping.endpoint_version,

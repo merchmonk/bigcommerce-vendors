@@ -30,12 +30,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       if (req.method === 'GET') {
         const vendorMappings = await listVendorEndpointMappings(vendorId);
-        const mappingIds = vendorMappings.map(item => item.mapping_id);
+        const mappingIds = vendorMappings.map(item => item.endpoint_mapping_id);
         const mappings = await listEndpointMappingsByIds(mappingIds);
-        const mappingById = new Map(mappings.map(mapping => [mapping.mapping_id, mapping]));
+        const mappingById = new Map(mappings.map(mapping => [mapping.endpoint_mapping_id, mapping]));
         const data = vendorMappings.map(vendorMapping => ({
           ...vendorMapping,
-          mapping: mappingById.get(vendorMapping.mapping_id) ?? null,
+          mapping: mappingById.get(vendorMapping.endpoint_mapping_id) ?? null,
         }));
         return res.status(200).json({ data });
       }

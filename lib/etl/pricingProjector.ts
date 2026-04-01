@@ -5,6 +5,7 @@ import type {
   PricingConfigurationPart,
 } from './productNormalizer';
 import {
+  collapseBulkPricingRulesByRange,
   derivePercentBulkPricingRulesFromCost,
   deriveSellingPrice,
 } from './syncSemantics';
@@ -101,7 +102,48 @@ function toPriceListBulkTiers(
     })
     .filter((tier): tier is PriceListBulkPricingTier => !!tier);
 
-  return tiers.length > 0 ? tiers : undefined;
+  const dedupedTiers = tiers.filter(
+    (tier, index) =>
+      tiers.findIndex(
+        candidate =>
+          candidate.quantity_min === tier.quantity_min &&
+          candidate.quantity_max === tier.quantity_max &&
+          candidate.type === tier.type &&
+          candidate.amount === tier.amount,
+      ) === index,
+  );
+
+  const collapsedTiers = collapsePriceListBulkTiersByRange(dedupedTiers);
+  return collapsedTiers.length > 0 ? collapsedTiers : undefined;
+}
+
+function collapsePriceListBulkTiersByRange(
+  tiers: PriceListBulkPricingTier[],
+): PriceListBulkPricingTier[] {
+  const selected = new Map<string, PriceListBulkPricingTier>();
+
+  for (const tier of tiers) {
+    const key = [
+      tier.quantity_min,
+      typeof tier.quantity_max === 'number' ? tier.quantity_max : 'open',
+      tier.type,
+    ].join(':');
+    const existing = selected.get(key);
+
+    if (!existing || tier.amount < existing.amount) {
+      selected.set(key, tier);
+    }
+  }
+
+  return Array.from(selected.values()).sort((left, right) => {
+    if (left.quantity_min !== right.quantity_min) {
+      return left.quantity_min - right.quantity_min;
+    }
+
+    const leftMax = typeof left.quantity_max === 'number' ? left.quantity_max : Number.MAX_SAFE_INTEGER;
+    const rightMax = typeof right.quantity_max === 'number' ? right.quantity_max : Number.MAX_SAFE_INTEGER;
+    return leftMax - rightMax;
+  });
 }
 
 function toVendorBulkRulesFromPart(part: PricingConfigurationPart | undefined): NormalizedBulkPricingRule[] | undefined {
@@ -146,7 +188,9 @@ function resolvePartProjection(
 
   return {
     vendor_cost_price,
-    vendor_bulk_rules: toVendorBulkRulesFromPart(part) ?? product.bulk_pricing_rules,
+    vendor_bulk_rules: collapseBulkPricingRulesByRange(
+      toVendorBulkRulesFromPart(part) ?? product.bulk_pricing_rules ?? [],
+    ),
   };
 }
 

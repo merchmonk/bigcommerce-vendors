@@ -10,6 +10,15 @@ jest.mock('@lib/etl/adapters/factory', () => ({
   }),
 }));
 
+function withEndpointUrls<T extends Array<Record<string, any>>>(mappings: T): T {
+  return mappings.map(mapping => ({
+    ...mapping,
+    endpointUrl:
+      mapping.endpointUrl ??
+      `https://vendor.example.com/${String(mapping.mapping?.endpoint_name ?? 'endpoint').toLowerCase()}/${mapping.mapping?.endpoint_version ?? '1.0.0'}`,
+  })) as unknown as T;
+}
+
 const vendor = {
   vendor_id: 22,
   vendor_name: 'Vendor',
@@ -48,7 +57,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -103,7 +112,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -146,7 +155,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 2,
           vendor_id: 22,
@@ -174,7 +183,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -197,12 +206,10 @@ describe('buildProductAssembly', () => {
       ],
     });
 
-    expect(result.products).toHaveLength(0);
-    expect(result.statuses[0].blocked).toBe(true);
-    expect(result.statuses[0].gating_reasons).toEqual(
-      expect.arrayContaining(['No pricing data available for product.']),
-    );
-    expect(result.statuses[0].enrichment_status.pricing).toBe('FAILED');
+    expect(result.products).toHaveLength(1);
+    expect(result.statuses[0].blocked).toBe(false);
+    expect(result.statuses[0].gating_reasons).toEqual([]);
+    expect(result.statuses[0].enrichment_status.pricing).toBe('MISSING');
   });
 
   test('supplies required derived fields to PricingAndConfiguration operations', async () => {
@@ -286,7 +293,7 @@ describe('buildProductAssembly', () => {
         },
       });
 
-    const assignedMappings = [
+    const assignedMappings = withEndpointUrls([
       {
         vendor_endpoint_mapping_id: 1,
         vendor_id: 22,
@@ -422,7 +429,7 @@ describe('buildProductAssembly', () => {
           updated_at: new Date().toISOString(),
         },
       },
-    ] as any;
+    ]) as any;
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
@@ -445,8 +452,9 @@ describe('buildProductAssembly', () => {
         operationName: 'getAvailableLocations',
         runtimeConfig: expect.objectContaining({
           request_fields: expect.objectContaining({
-            currency: 'USD',
             productId: 'P-1',
+            localizationCountry: 'US',
+            localizationLanguage: 'en',
           }),
         }),
       }),
@@ -457,8 +465,10 @@ describe('buildProductAssembly', () => {
         operationName: 'getDecorationColors',
         runtimeConfig: expect.objectContaining({
           request_fields: expect.objectContaining({
-            currency: 'USD',
             locationId: 'LOC-1',
+            productId: 'P-1',
+            localizationCountry: 'US',
+            localizationLanguage: 'en',
           }),
         }),
       }),
@@ -469,7 +479,9 @@ describe('buildProductAssembly', () => {
         operationName: 'getAvailableCharges',
         runtimeConfig: expect.objectContaining({
           request_fields: expect.objectContaining({
-            currency: 'USD',
+            productId: 'P-1',
+            localizationCountry: 'US',
+            localizationLanguage: 'en',
           }),
         }),
       }),
@@ -523,7 +535,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -605,7 +617,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -663,7 +675,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -745,7 +757,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -795,7 +807,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -850,7 +862,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -881,13 +893,13 @@ describe('buildProductAssembly', () => {
         runtimeConfig: expect.objectContaining({
           request_fields: expect.objectContaining({
             productId: 'P-1',
-            localizationCountry: 'US',
-            localizationLanguage: 'en',
           }),
         }),
       }),
     );
     expect(mockInvokeEndpoint.mock.calls[1]?.[0]?.runtimeConfig?.request_fields?.partId).toBeUndefined();
+    expect(mockInvokeEndpoint.mock.calls[1]?.[0]?.runtimeConfig?.request_fields?.localizationCountry).toBeUndefined();
+    expect(mockInvokeEndpoint.mock.calls[1]?.[0]?.runtimeConfig?.request_fields?.localizationLanguage).toBeUndefined();
     expect(result.products).toHaveLength(1);
     expect(result.products[0].inventory_level).toBe(19);
     expect(result.products[0].variants).toEqual([
@@ -949,7 +961,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -1004,7 +1016,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -1074,7 +1086,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -1156,7 +1168,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -1248,7 +1260,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -1330,7 +1342,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -1460,7 +1472,7 @@ describe('buildProductAssembly', () => {
 
     const result = await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -1542,7 +1554,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',
@@ -1634,7 +1646,7 @@ describe('buildProductAssembly', () => {
 
     await buildProductAssembly({
       vendor: vendor as any,
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 22,
@@ -1716,7 +1728,7 @@ describe('buildProductAssembly', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ] as any,
+      ]) as any,
       baseProducts: [
         {
           sku: 'SKU-1',

@@ -935,7 +935,6 @@ describe('runVendorSync', () => {
     });
     expect(mockCompleteSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sync_run_id: 11,
         status: 'SUCCESS',
         details: expect.objectContaining({
           continuation: expect.objectContaining({
@@ -950,6 +949,115 @@ describe('runVendorSync', () => {
       enqueued: true,
       nextStartReferenceIndex: 2,
       totalReferences: 3,
+    });
+  });
+
+  test('uses the runtime-safe default batch size when no continuation override is provided', async () => {
+    const references = Array.from({ length: 16 }, (_, index) => ({
+      productId: `PROD-${String(index + 1).padStart(2, '0')}`,
+      partId: `PROD-${String(index + 1).padStart(2, '0')}-BLK`,
+    }));
+
+    mockDiscoverProductDataReferences.mockResolvedValue({
+      endpointResults: [
+        {
+          mapping_id: 100,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductSellable',
+          status: 200,
+          products_found: references.length,
+        },
+      ],
+      references,
+      getProductConfig: {
+        mapping: {
+          mapping_id: 101,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProduct',
+        },
+        runtimeConfig: {},
+        endpointUrl: 'https://vendor.example.com/productdata',
+        localizationCountry: 'US',
+        localizationLanguage: 'en',
+      },
+    });
+
+    mockFetchProductDataReference.mockImplementation(async ({ reference }) => ({
+      status: 200,
+      products: [
+        {
+          sku: reference.productId,
+          vendor_product_id: reference.productId,
+          name: reference.productId,
+          cost_price: 10,
+        },
+      ],
+    }));
+
+    mockBuildProductAssembly.mockImplementation(async ({ baseProducts }) => ({
+      endpointResults: [],
+      products: baseProducts.map((product: any) => ({
+        ...product,
+        enrichment_status: {
+          pricing: 'SUCCESS',
+          inventory: 'SUCCESS',
+          media: 'SUCCESS',
+          gating_reasons: [],
+        },
+      })),
+      statuses: baseProducts.map((product: any) => ({
+        sku: product.sku,
+        vendor_product_id: product.vendor_product_id,
+        blocked: false,
+        gating_reasons: [],
+        enrichment_status: {
+          pricing: 'SUCCESS',
+          inventory: 'SUCCESS',
+          media: 'SUCCESS',
+          gating_reasons: [],
+        },
+      })),
+      mediaRetries: [],
+    }));
+
+    const result = await runVendorSync({
+      vendorId: 7,
+      session: {
+        accessToken: 'token',
+        storeHash: 'storehash',
+        user: { id: 1, email: 'test@example.com' },
+      },
+      syncAll: true,
+      integrationJobId: 91,
+      sourceAction: 'manual_sync',
+      correlationId: 'corr-91',
+    });
+
+    expect(mockFetchProductDataReference).toHaveBeenCalledTimes(15);
+    expect(mockFetchProductDataReference).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        reference: expect.objectContaining({ productId: 'PROD-15' }),
+      }),
+    );
+    expect(mockSubmitCatalogSyncJob).toHaveBeenCalledWith({
+      vendorId: 7,
+      syncAll: true,
+      sourceAction: 'manual_sync',
+      correlationId: 'corr-91',
+      requestPayload: {
+        continuation: {
+          start_reference_index: 15,
+          max_references_per_run: 15,
+          initial_last_successful_sync_at: null,
+        },
+      },
+    });
+    expect(result.continuation).toEqual({
+      enqueued: true,
+      nextStartReferenceIndex: 15,
+      totalReferences: 16,
     });
   });
 

@@ -2,6 +2,19 @@ function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+export function hasExplicitRuntimeEndpointOverride(
+  runtimeConfig?: Record<string, unknown> | null,
+): boolean {
+  const config = runtimeConfig ?? {};
+  return Boolean(
+    readString(config.endpoint_url) ||
+      readString(config.endpointUrl) ||
+      readString(config.endpoint_path) ||
+      readString(config.endpointPath) ||
+      readString(config.custom_endpoint_path),
+  );
+}
+
 function joinEndpointPrefix(baseUrl: string, suffix: string): string {
   const normalizedBase = baseUrl.trim().replace(/\/+$/, '');
   const normalizedSuffix = suffix.trim().replace(/^\/+/, '');

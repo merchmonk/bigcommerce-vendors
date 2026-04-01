@@ -88,7 +88,7 @@ describe('db store session persistence', () => {
         },
       },
       orderBy: {
-        id: 'asc',
+        store_id: 'asc',
       },
       select: {
         store_hash: true,

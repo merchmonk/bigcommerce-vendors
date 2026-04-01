@@ -257,7 +257,7 @@ async function processRecord(record: QueueRecord): Promise<void> {
             detail: {
               integration_job_id: job.integration_job_id,
               vendor_id: job.vendor_id,
-              mapping_id: job.mapping_id,
+              endpoint_mapping_id: job.endpoint_mapping_id,
               order_integration_state_id: job.order_integration_state_id,
               job_kind: job.job_kind,
               sync_scope: job.sync_scope,
@@ -325,7 +325,7 @@ function getJobStartedEvent(job: NonNullable<Awaited<ReturnType<typeof markInteg
       detail: {
         integration_job_id: job.integration_job_id,
         vendor_id: job.vendor_id,
-        mapping_id: job.mapping_id,
+        endpoint_mapping_id: job.endpoint_mapping_id,
         sync_scope: job.sync_scope,
         attempt_count: job.attempt_count,
       },
@@ -362,7 +362,7 @@ async function executeIntegrationJob(job: NonNullable<Awaited<ReturnType<typeof 
     const continuation = readCatalogSyncContinuationPayload(job.request_payload);
     const result = await runVendorSync({
       vendorId: job.vendor_id,
-      mappingId: job.mapping_id ?? undefined,
+      mappingId: job.endpoint_mapping_id ?? undefined,
       syncAll: job.sync_scope === 'ALL',
       session,
       integrationJobId: job.integration_job_id,
@@ -427,7 +427,7 @@ function getJobSucceededEvent(
       detail: {
         integration_job_id: job.integration_job_id,
         vendor_id: job.vendor_id,
-        mapping_id: job.mapping_id,
+        endpoint_mapping_id: job.endpoint_mapping_id,
         sync_scope: job.sync_scope,
         ...eventPayload,
       },
@@ -460,7 +460,7 @@ function getJobFailedEvent(
       detail: {
         integration_job_id: job.integration_job_id,
         vendor_id: job.vendor_id,
-        mapping_id: job.mapping_id,
+        endpoint_mapping_id: job.endpoint_mapping_id,
         sync_scope: job.sync_scope,
         terminal,
         receive_count: receiveCount,

@@ -10,7 +10,7 @@ import { listVendors } from '../../../lib/vendors';
 interface InventorySyncResult {
   vendor_id: number;
   vendor_name: string;
-  mapping_id: number | null;
+  endpoint_mapping_id: number | null;
   job: Awaited<ReturnType<typeof submitCatalogSyncJob>>['job'] | null;
   deduplicated: boolean;
   skipped_reason?: string;
@@ -18,14 +18,14 @@ interface InventorySyncResult {
 
 function findInventoryMappingId(
   mappings: Array<{
-    mapping_id: number;
+    endpoint_mapping_id: number;
     mapping: {
       endpoint_name: string;
     };
   }>,
 ): number | null {
   const inventoryMapping = mappings.find(item => item.mapping.endpoint_name === 'Inventory');
-  return inventoryMapping?.mapping_id ?? null;
+  return inventoryMapping?.endpoint_mapping_id ?? null;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -54,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           results.push({
             vendor_id: vendor.vendor_id,
             vendor_name: vendor.vendor_name,
-            mapping_id: null,
+            endpoint_mapping_id: null,
             job: null,
             deduplicated: false,
             skipped_reason: 'No enabled Inventory mapping found for this vendor.',
@@ -69,14 +69,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           correlationId: getRequestContext()?.correlationId ?? 'unknown',
           requestPayload: {
             inventory_only: true,
-            mapping_id: inventoryMappingId,
+            endpoint_mapping_id: inventoryMappingId,
           },
         });
 
         results.push({
           vendor_id: vendor.vendor_id,
           vendor_name: vendor.vendor_name,
-          mapping_id: inventoryMappingId,
+          endpoint_mapping_id: inventoryMappingId,
           job: submitted.job,
           deduplicated: submitted.deduplicated,
         });

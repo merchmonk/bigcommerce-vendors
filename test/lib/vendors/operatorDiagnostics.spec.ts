@@ -154,7 +154,7 @@ describe('operatorDiagnostics', () => {
 
     const diagnostics = await getSyncRunDiagnostics(77, 12);
 
-    expect(diagnostics.syncRun.sync_run_id).toBe(77);
+    expect(diagnostics.syncRun.etl_sync_run_id).toBe(77);
     expect(diagnostics.summary.failedItemCount).toBe(1);
     expect(diagnostics.traces).toHaveLength(1);
   });

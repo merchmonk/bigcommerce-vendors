@@ -3,14 +3,12 @@ import { getSession } from '../../../lib/auth';
 import { recordInternalFailure } from '../../../lib/apiTelemetry';
 import logger from '../../../lib/logger';
 import { buildApiRequestContext, runWithRequestContext } from '../../../lib/requestContext';
-import { resolveRuntimeEndpointUrl } from '../../../lib/etl/endpointUrl';
 import { testVendorConnectionConfig } from '../../../lib/etl/runner';
 import {
-  discoverPromostandardsCapabilities,
-  probePromostandardsEndpoint,
-  resolvePromostandardsCapabilityMappings,
+  discoverPromostandardsEndpointsFromCompanyData,
+  testPromostandardsEndpointUrls,
 } from '../../../lib/vendors/promostandardsDiscovery';
-import type { IntegrationFamily, MappingProtocol } from '../../../types';
+import type { IntegrationFamily, MappingProtocol, PromostandardsEndpointCapability } from '../../../types';
 
 interface TestConnectionBody {
   vendor_api_url?: string;
@@ -18,10 +16,9 @@ interface TestConnectionBody {
   vendor_secret?: string;
   integration_family?: IntegrationFamily;
   api_protocol?: MappingProtocol;
-  endpoint_name?: string;
-  operation_name?: string;
-  endpoint_version?: string;
-  runtime_config?: Record<string, unknown>;
+  hasCompanyDataEndpoint?: boolean;
+  companyDataEndpointUrl?: string;
+  promostandardsEndpoints?: PromostandardsEndpointCapability[];
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -35,49 +32,47 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const body = req.body as TestConnectionBody;
-      if (!body.vendor_api_url) {
-        return res.status(400).json({ ok: false, message: 'vendor_api_url is required' });
-      }
-
       if ((body.integration_family ?? 'CUSTOM') === 'PROMOSTANDARDS') {
-        if (body.endpoint_name && body.operation_name && body.endpoint_version) {
-          const endpoint = await probePromostandardsEndpoint({
-            endpointUrl: resolveRuntimeEndpointUrl({
-              vendorApiUrl: body.vendor_api_url,
-              runtimeConfig: body.runtime_config ?? {},
-            }),
-            endpointName: body.endpoint_name,
-            endpointVersion: body.endpoint_version,
-            operationName: body.operation_name,
+        if (body.hasCompanyDataEndpoint) {
+          if (!body.companyDataEndpointUrl?.trim()) {
+            return res.status(400).json({ ok: false, message: 'companyDataEndpointUrl is required' });
+          }
+
+          const result = await discoverPromostandardsEndpointsFromCompanyData({
+            companyDataEndpointUrl: body.companyDataEndpointUrl.trim(),
             vendorAccountId: body.vendor_account_id ?? null,
             vendorSecret: body.vendor_secret ?? null,
             protocol: body.api_protocol ?? 'SOAP',
           });
-          const ok = endpoint.available && endpoint.credentials_valid !== false;
 
-          return res.status(ok ? 200 : 400).json({
-            ok,
-            message: endpoint.live_probe_message ?? endpoint.message,
-            endpoint,
+          return res.status(result.ok ? 200 : 400).json({
+            ok: result.ok,
+            message: result.message,
+            availableEndpointCount: result.availableEndpointCount,
+            credentialsValid: result.credentialsValid,
+            endpointMappingIds: result.endpointMappingIds,
+            fingerprint: result.fingerprint,
+            testedAt: result.testedAt,
+            endpoints: result.endpoints,
           });
         }
 
-        const result = await discoverPromostandardsCapabilities({
-          vendor_api_url: body.vendor_api_url,
-          vendor_account_id: body.vendor_account_id ?? null,
-          vendor_secret: body.vendor_secret ?? null,
-          api_protocol: body.api_protocol ?? 'SOAP',
+        const result = await testPromostandardsEndpointUrls({
+          vendorAccountId: body.vendor_account_id ?? null,
+          vendorSecret: body.vendor_secret ?? null,
+          protocol: body.api_protocol ?? 'SOAP',
+          endpoints: body.promostandardsEndpoints?.map(endpoint => ({
+            endpointName: endpoint.endpointName,
+            endpointUrl: endpoint.endpointUrl,
+            endpointVersion: endpoint.endpointVersion ?? null,
+          })) ?? [],
         });
 
-        const endpointMappingIds =
-          result.ok && result.available_endpoint_count > 0
-            ? await resolvePromostandardsCapabilityMappings(result)
-            : [];
+        return res.status(result.ok ? 200 : 400).json(result);
+      }
 
-        return res.status(result.ok ? 200 : 400).json({
-          ...result,
-          endpoint_mapping_ids: endpointMappingIds,
-        });
+      if (!body.vendor_api_url) {
+        return res.status(400).json({ ok: false, message: 'vendor_api_url is required' });
       }
 
       const result = await testVendorConnectionConfig({
@@ -85,9 +80,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         vendorAccountId: body.vendor_account_id ?? null,
         vendorSecret: body.vendor_secret ?? null,
         apiProtocol: body.api_protocol ?? 'SOAP',
-        operationName: body.operation_name,
-        endpointVersion: body.endpoint_version,
-        runtimeConfig: body.runtime_config ?? {},
+        operationName: undefined,
+        endpointVersion: undefined,
+        runtimeConfig: {},
       });
 
       return res.status(200).json(result);

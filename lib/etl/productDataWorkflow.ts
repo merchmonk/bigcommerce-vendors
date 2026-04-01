@@ -1,7 +1,6 @@
 import type { EndpointMapping, MappingProtocol, VendorEndpointMapping } from '../../types';
 import type { Vendor } from '../vendors';
 import { resolveEndpointAdapter } from './adapters/factory';
-import { resolveRuntimeEndpointUrl } from './endpointUrl';
 import {
   extractProductReferencesFromPayload,
   normalizeProductsFromEndpoint,
@@ -10,7 +9,7 @@ import {
 } from './productNormalizer';
 
 export interface ProductDataEndpointResult {
-  mapping_id: number;
+  endpoint_mapping_id: number;
   endpoint_name: string;
   endpoint_version: string;
   operation_name: string;
@@ -147,11 +146,8 @@ function mergeRequestFields(
   };
 }
 
-function getEndpointUrl(vendor: Vendor, runtimeConfig: Record<string, unknown>): string {
-  return resolveRuntimeEndpointUrl({
-    vendorApiUrl: vendor.vendor_api_url,
-    runtimeConfig,
-  });
+function getEndpointUrl(endpointUrl?: string | null): string {
+  return endpointUrl?.trim() ?? '';
 }
 
 function getLocalization(runtimeConfig: Record<string, unknown>): {
@@ -200,7 +196,7 @@ export async function discoverProductDataReferences(input: {
   if (getProductMappings.length === 0) {
     for (const item of mappings) {
       endpointResults.push({
-        mapping_id: item.mapping_id,
+        endpoint_mapping_id: item.endpoint_mapping_id,
         endpoint_name: item.mapping.endpoint_name,
         endpoint_version: item.mapping.endpoint_version,
         operation_name: item.mapping.operation_name,
@@ -219,9 +215,7 @@ export async function discoverProductDataReferences(input: {
 
   const lookupRefs: ProductReference[] = [];
   const discoveryErrors: string[] = [];
-  //const discoveryOperationName = input.lastSuccessfulSyncAt ? 'getProductDateModified' : 'getProductSellable';
-  //temporary
-  const discoveryOperationName = 'getProductSellable';
+  const discoveryOperationName = input.lastSuccessfulSyncAt ? 'getProductDateModified' : 'getProductSellable';
 
   async function runDiscoveryOperation(
     operationName: 'getProductSellable' | 'getProductDateModified',
@@ -230,10 +224,10 @@ export async function discoverProductDataReferences(input: {
     for (const assigned of operationMappings) {
       const mapping = assigned.mapping;
       const runtimeConfig = asRecord(assigned.runtime_config);
-      const endpointUrl = getEndpointUrl(input.vendor, runtimeConfig);
+      const endpointUrl = getEndpointUrl(assigned.endpointUrl);
       if (!endpointUrl) {
         endpointResults.push({
-          mapping_id: mapping.mapping_id,
+          endpoint_mapping_id: mapping.endpoint_mapping_id,
           endpoint_name: mapping.endpoint_name,
           endpoint_version: mapping.endpoint_version,
           operation_name: mapping.operation_name,
@@ -282,7 +276,7 @@ export async function discoverProductDataReferences(input: {
         lookupRefs.push(...refs);
 
         endpointResults.push({
-          mapping_id: mapping.mapping_id,
+          endpoint_mapping_id: mapping.endpoint_mapping_id,
           endpoint_name: mapping.endpoint_name,
           endpoint_version: mapping.endpoint_version,
           operation_name: mapping.operation_name,
@@ -293,7 +287,7 @@ export async function discoverProductDataReferences(input: {
       } catch (error: any) {
         discoveryErrors.push(`${operationName}: ${error?.message ?? 'Discovery operation failed'}`);
         endpointResults.push({
-          mapping_id: mapping.mapping_id,
+          endpoint_mapping_id: mapping.endpoint_mapping_id,
           endpoint_name: mapping.endpoint_name,
           endpoint_version: mapping.endpoint_version,
           operation_name: mapping.operation_name,
@@ -318,7 +312,7 @@ export async function discoverProductDataReferences(input: {
     }
 
     endpointResults.push({
-      mapping_id: primaryGetProductMapping.mapping_id,
+      endpoint_mapping_id: primaryGetProductMapping.endpoint_mapping_id,
       endpoint_name: primaryGetProductMapping.mapping.endpoint_name,
       endpoint_version: primaryGetProductMapping.mapping.endpoint_version,
       operation_name: primaryGetProductMapping.mapping.operation_name,
@@ -335,10 +329,10 @@ export async function discoverProductDataReferences(input: {
     };
   }
 
-  const endpointUrl = getEndpointUrl(input.vendor, primaryRuntimeConfig);
+  const endpointUrl = getEndpointUrl(primaryGetProductMapping.endpointUrl);
   if (!endpointUrl) {
     endpointResults.push({
-      mapping_id: primaryGetProductMapping.mapping.mapping_id,
+      endpoint_mapping_id: primaryGetProductMapping.mapping.endpoint_mapping_id,
       endpoint_name: primaryGetProductMapping.mapping.endpoint_name,
       endpoint_version: primaryGetProductMapping.mapping.endpoint_version,
       operation_name: primaryGetProductMapping.mapping.operation_name,
@@ -469,7 +463,7 @@ export async function runProductDataWorkflow(input: {
   }
 
   endpointResults.push({
-    mapping_id: discovery.getProductConfig.mapping.mapping_id,
+    endpoint_mapping_id: discovery.getProductConfig.mapping.endpoint_mapping_id,
     endpoint_name: discovery.getProductConfig.mapping.endpoint_name,
     endpoint_version: discovery.getProductConfig.mapping.endpoint_version,
     operation_name: discovery.getProductConfig.mapping.operation_name,

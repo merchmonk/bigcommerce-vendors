@@ -77,15 +77,15 @@ const DashboardPage = () => {
             </thead>
             <tbody>
               {summary.recent_syncs.map(run => (
-                <tr key={run.sync_run_id}>
+                <tr key={run.etl_sync_run_id}>
                   <td style={tableCellStyle}>
                     <Link href={withContext(`/vendors/${run.vendor_id}`)} style={tableLinkStyle}>
                       {run.vendor_name}
                     </Link>
                   </td>
                   <td style={tableCellStyle}>
-                    <Link href={withContext(`/vendors/${run.vendor_id}/sync-runs/${run.sync_run_id}`)} style={tableLinkStyle}>
-                      #{run.sync_run_id}
+                    <Link href={withContext(`/vendors/${run.vendor_id}/sync-runs/${run.etl_sync_run_id}`)} style={tableLinkStyle}>
+                      #{run.etl_sync_run_id}
                     </Link>
                   </td>
                   <td style={tableCellStyle}>{run.status}</td>

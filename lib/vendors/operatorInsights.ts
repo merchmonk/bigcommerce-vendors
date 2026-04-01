@@ -301,7 +301,7 @@ export async function getOperatorDashboardSummary(): Promise<OperatorDashboardSu
   );
 
   const normalizedRecentSyncs: DashboardRecentSyncItem[] = recentSyncs.map(run => ({
-    sync_run_id: Number(run.sync_run_id),
+    etl_sync_run_id: Number(run.etl_sync_run_id),
     vendor_id: run.vendor_id,
     vendor_name: run.vendor.vendor_name,
     status: run.status,

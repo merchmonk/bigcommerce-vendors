@@ -84,7 +84,7 @@ export async function getSyncRunDiagnostics(syncRunId: number, vendorId?: number
   }
 
   const traces = await listOperatorTraces({
-    sync_run_id: syncRunId,
+    etl_sync_run_id: syncRunId,
     limit: 200,
   });
 

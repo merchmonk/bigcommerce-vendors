@@ -40,10 +40,9 @@ const NewVendorPage = () => {
     vendor_secret?: string;
     integration_family?: VendorFormData['integration_family'];
     api_protocol?: MappingProtocol;
-    endpoint_name?: string;
-    endpoint_version?: string;
-    operation_name?: string;
-    runtime_config?: Record<string, unknown>;
+    hasCompanyDataEndpoint?: boolean;
+    companyDataEndpointUrl?: string;
+    promostandardsEndpoints?: VendorFormData['promostandardsEndpoints'];
   }): Promise<VendorConnectionTestResult> => {
     const response = await fetch(withContext('/api/vendors/test-connection'), {
       method: 'POST',
@@ -54,11 +53,11 @@ const NewVendorPage = () => {
     return {
       ok: response.ok && !!payload?.ok,
       message: payload?.message,
-      available_endpoint_count: payload?.available_endpoint_count,
-      credentials_valid: payload?.credentials_valid,
-      endpoint_mapping_ids: payload?.endpoint_mapping_ids,
+      availableEndpointCount: payload?.availableEndpointCount,
+      credentialsValid: payload?.credentialsValid,
+      endpointMappingIds: payload?.endpointMappingIds,
       fingerprint: payload?.fingerprint,
-      tested_at: payload?.tested_at,
+      testedAt: payload?.testedAt,
       endpoints: payload?.endpoints,
     };
   };

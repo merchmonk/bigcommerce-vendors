@@ -190,6 +190,115 @@ describe('upsertBigCommerceProduct media sync', () => {
     );
   });
 
+  test('skips oversized BigCommerce product images without failing the product sync', async () => {
+    const imageBodies: Array<Record<string, unknown>> = [];
+    const originalFetch = (globalThis as { fetch?: typeof fetch }).fetch;
+    (globalThis as { fetch?: jest.Mock }).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: () => null,
+      },
+    } as unknown as Response);
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-OVERSIZE')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=Oversized%20Image%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        return {
+          data: {
+            id: 905,
+            sku: 'SKU-OVERSIZE',
+            name: 'Oversized Image Product',
+            base_variant_id: 906,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/images') && method === 'POST') {
+        const body = JSON.parse(String(options.body));
+        if (String(body.image_url).includes('oversized.jpg')) {
+          throw new Error(
+            'Failed to create BigCommerce product image (422): {"status":422,"code":10001,"title":"The maximum of 8 MB size limit for upload image is exceeded","type":"https://developer.bigcommerce.com/api-docs/getting-started/api-status-codes"}',
+          );
+        }
+        imageBodies.push(body);
+        return { data: { id: 100 + imageBodies.length } };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await expect(
+      upsertBigCommerceProduct({
+        accessToken: 'token',
+        storeHash: 'abc123',
+        vendorId: 22,
+        defaultMarkupPercent: 30,
+        product: {
+          sku: 'SKU-OVERSIZE',
+          source_sku: 'SKU-OVERSIZE',
+          vendor_product_id: 'P-OVERSIZE',
+          name: 'Oversized Image Product',
+          description: 'Updated product',
+          price: 10,
+          cost_price: 8,
+          media_assets: [
+            {
+              url: 'https://cdn.example.com/products/oversized.jpg',
+              media_type: 'Image',
+              description: 'Oversized source image',
+            },
+            {
+              url: 'https://cdn.example.com/products/allowed.jpg',
+              media_type: 'Image',
+              description: 'Allowed source image',
+            },
+          ],
+        },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        action: 'create',
+      }),
+    );
+
+    expect(imageBodies).toEqual([
+      expect.objectContaining({
+        image_url: 'https://cdn.example.com/products/allowed.jpg',
+      }),
+    ]);
+
+    (globalThis as { fetch?: typeof fetch }).fetch = originalFetch;
+  });
+
   test('skips invalid vendor category names instead of failing the product sync', async () => {
     const createdCategories: Array<{ name: string; parent_id: number }> = [];
     let productPayload: Record<string, unknown> | undefined;
@@ -573,6 +682,200 @@ describe('upsertBigCommerceProduct media sync', () => {
       }),
     ]);
     expect(productPayload).not.toHaveProperty('bulk_pricing_rules');
+  });
+
+  test('dedupes identical normalized bulk pricing rules before BigCommerce create', async () => {
+    const bulkPricingBodies: Array<Record<string, unknown>> = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-BULK-DUPE')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=Bulk%20Duplicate%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        return {
+          data: {
+            id: 901,
+            sku: 'SKU-BULK-DUPE',
+            name: 'Bulk Duplicate Product',
+            base_variant_id: 902,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'POST') {
+        bulkPricingBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 8000 + bulkPricingBodies.length } };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-BULK-DUPE',
+        source_sku: 'SKU-BULK-DUPE',
+        vendor_product_id: 'P-BULK-DUPE',
+        name: 'Bulk Duplicate Product',
+        description: 'Updated',
+        price: 12,
+        cost_price: 9,
+        bulk_pricing_rules: [
+          {
+            quantity_min: 50,
+            quantity_max: 99,
+            type: 'percent',
+            amount: 14.23,
+          },
+          {
+            quantity_min: 50,
+            quantity_max: 99,
+            type: 'percent',
+            amount: 14.23,
+          },
+        ],
+      },
+    });
+
+    expect(bulkPricingBodies).toEqual([
+      {
+        quantity_min: 50,
+        quantity_max: 99,
+        type: 'percent',
+        amount: 14.23,
+      },
+    ]);
+  });
+
+  test('collapses conflicting same-range bulk pricing rules before BigCommerce create', async () => {
+    const bulkPricingBodies: Array<Record<string, unknown>> = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-BULK-CONFLICT')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=Bulk%20Conflict%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        return {
+          data: {
+            id: 951,
+            sku: 'SKU-BULK-CONFLICT',
+            name: 'Bulk Conflict Product',
+            base_variant_id: 952,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'POST') {
+        bulkPricingBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 8100 + bulkPricingBodies.length } };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-BULK-CONFLICT',
+        source_sku: 'SKU-BULK-CONFLICT',
+        vendor_product_id: 'P-BULK-CONFLICT',
+        name: 'Bulk Conflict Product',
+        description: 'Updated',
+        price: 12,
+        cost_price: 9,
+        bulk_pricing_rules: [
+          {
+            quantity_min: 25,
+            quantity_max: 49,
+            type: 'percent',
+            amount: 14.23,
+          },
+          {
+            quantity_min: 25,
+            quantity_max: 49,
+            type: 'percent',
+            amount: 16.45,
+          },
+        ],
+      },
+    });
+
+    expect(bulkPricingBodies).toEqual([
+      {
+        quantity_min: 25,
+        quantity_max: 49,
+        type: 'percent',
+        amount: 16.45,
+      },
+    ]);
   });
 
   test('uses created variant ids for price list records and includes the product base variant price', async () => {

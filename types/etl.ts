@@ -29,7 +29,7 @@ export type EnrichmentSource = 'PRICING' | 'INVENTORY' | 'MEDIA';
 export type EnrichmentRetryStatus = 'PENDING' | 'RETRYING' | 'RESOLVED' | 'FAILED';
 
 export interface EndpointMapping {
-  mapping_id: number;
+  endpoint_mapping_id: number;
   standard_type: MappingStandardType;
   endpoint_name: string;
   endpoint_version: string;
@@ -50,9 +50,19 @@ export interface EndpointMapping {
 export interface VendorEndpointMapping {
   vendor_endpoint_mapping_id: number;
   vendor_id: number;
-  mapping_id: number;
+  endpoint_mapping_id: number;
   is_enabled: boolean;
   runtime_config: Record<string, unknown>;
+  endpointUrl?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorEndpointUrl {
+  vendor_endpoint_url_id: number;
+  vendor_id: number;
+  endpoint_mapping_id: number;
+  endpoint_url: string;
   created_at: string;
   updated_at: string;
 }
@@ -61,7 +71,7 @@ export interface IntegrationJob {
   integration_job_id: number;
   job_kind: IntegrationJobKind;
   vendor_id: number;
-  mapping_id: number | null;
+  endpoint_mapping_id: number | null;
   order_integration_state_id: number | null;
   sync_scope: SyncScope;
   source_action: string;
@@ -84,7 +94,7 @@ export interface OperatorTrace {
   vendor_id: number | null;
   integration_job_id: number | null;
   order_integration_state_id: number | null;
-  sync_run_id: number | null;
+  etl_sync_run_id: number | null;
   method: string;
   target: string;
   action: string;
@@ -105,9 +115,9 @@ export interface IntegrationJobEvent {
 }
 
 export interface EtlSyncRun {
-  sync_run_id: number;
+  etl_sync_run_id: number;
   vendor_id: number;
-  mapping_id: number | null;
+  endpoint_mapping_id: number | null;
   sync_scope: SyncScope;
   status: SyncRunStatus;
   started_at: string;
@@ -121,7 +131,7 @@ export interface EtlSyncRun {
 export interface VendorProductMap {
   vendor_product_map_id: number;
   vendor_id: number;
-  mapping_id: number | null;
+  endpoint_mapping_id: number | null;
   vendor_product_id: string | null;
   bigcommerce_product_id: number | null;
   sku: string;

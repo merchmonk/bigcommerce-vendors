@@ -173,14 +173,14 @@ export async function getPrimaryStoreConnection(): Promise<StoreData | null> {
       },
     },
     orderBy: {
-      id: 'asc',
+      store_id: 'asc',
     },
-      select: {
-        store_hash: true,
-        access_token: true,
-        markup_percent: true,
-        scope: true,
-      },
+    select: {
+      store_hash: true,
+      access_token: true,
+      markup_percent: true,
+      scope: true,
+    },
   });
 
   if (!store?.store_hash || !store.access_token) {

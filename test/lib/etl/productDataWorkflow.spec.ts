@@ -10,6 +10,15 @@ jest.mock('@lib/etl/adapters/factory', () => ({
   }),
 }));
 
+function withEndpointUrls<T extends Array<Record<string, any>>>(mappings: T): T {
+  return mappings.map(mapping => ({
+    ...mapping,
+    endpointUrl:
+      mapping.endpointUrl ??
+      `https://vendor.example.com/${String(mapping.mapping?.endpoint_name ?? 'endpoint').toLowerCase()}/${mapping.mapping?.endpoint_version ?? '1.0.0'}`,
+  })) as unknown as T;
+}
+
 describe('runProductDataWorkflow', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -59,11 +68,11 @@ describe('runProductDataWorkflow', () => {
         datetime_added: new Date().toISOString(),
         datetime_modified: new Date().toISOString(),
       },
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 10,
-          mapping_id: 100,
+          endpoint_mapping_id: 100,
           is_enabled: true,
           runtime_config: {
             localization_country: 'US',
@@ -72,7 +81,7 @@ describe('runProductDataWorkflow', () => {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           mapping: {
-            mapping_id: 100,
+            endpoint_mapping_id: 100,
             standard_type: 'PROMOSTANDARDS',
             endpoint_name: 'ProductData',
             endpoint_version: '2.0.0',
@@ -93,7 +102,7 @@ describe('runProductDataWorkflow', () => {
         {
           vendor_endpoint_mapping_id: 2,
           vendor_id: 10,
-          mapping_id: 101,
+          endpoint_mapping_id: 101,
           is_enabled: true,
           runtime_config: {
             localization_country: 'US',
@@ -102,7 +111,7 @@ describe('runProductDataWorkflow', () => {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           mapping: {
-            mapping_id: 101,
+            endpoint_mapping_id: 101,
             standard_type: 'PROMOSTANDARDS',
             endpoint_name: 'ProductData',
             endpoint_version: '2.0.0',
@@ -120,7 +129,7 @@ describe('runProductDataWorkflow', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ],
+      ]),
     });
 
     expect(mockInvokeEndpoint).toHaveBeenCalledTimes(2);
@@ -174,11 +183,11 @@ describe('runProductDataWorkflow', () => {
           datetime_added: new Date().toISOString(),
           datetime_modified: new Date().toISOString(),
         },
-        assignedMappings: [
+        assignedMappings: withEndpointUrls([
           {
             vendor_endpoint_mapping_id: 1,
             vendor_id: 10,
-            mapping_id: 100,
+            endpoint_mapping_id: 100,
             is_enabled: true,
             runtime_config: {
               localization_country: 'US',
@@ -187,7 +196,7 @@ describe('runProductDataWorkflow', () => {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             mapping: {
-              mapping_id: 100,
+              endpoint_mapping_id: 100,
               standard_type: 'PROMOSTANDARDS',
               endpoint_name: 'ProductData',
               endpoint_version: '2.0.0',
@@ -208,13 +217,13 @@ describe('runProductDataWorkflow', () => {
           {
             vendor_endpoint_mapping_id: 2,
             vendor_id: 10,
-            mapping_id: 101,
+            endpoint_mapping_id: 101,
             is_enabled: true,
             runtime_config: {},
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             mapping: {
-              mapping_id: 101,
+              endpoint_mapping_id: 101,
               standard_type: 'PROMOSTANDARDS',
               endpoint_name: 'ProductData',
               endpoint_version: '2.0.0',
@@ -232,7 +241,7 @@ describe('runProductDataWorkflow', () => {
               updated_at: new Date().toISOString(),
             },
           },
-        ],
+        ]),
       }),
     ).rejects.toThrow(
       'ProductData discovery failed before any product IDs were found. getProductSellable: WsVersion not found.',
@@ -282,11 +291,11 @@ describe('runProductDataWorkflow', () => {
         datetime_added: new Date().toISOString(),
         datetime_modified: new Date().toISOString(),
       },
-      assignedMappings: [
+      assignedMappings: withEndpointUrls([
         {
           vendor_endpoint_mapping_id: 1,
           vendor_id: 10,
-          mapping_id: 100,
+          endpoint_mapping_id: 100,
           is_enabled: true,
           runtime_config: {
             localization_country: 'US',
@@ -295,7 +304,7 @@ describe('runProductDataWorkflow', () => {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           mapping: {
-            mapping_id: 100,
+            endpoint_mapping_id: 100,
             standard_type: 'PROMOSTANDARDS',
             endpoint_name: 'ProductData',
             endpoint_version: '2.0.0',
@@ -316,13 +325,13 @@ describe('runProductDataWorkflow', () => {
         {
           vendor_endpoint_mapping_id: 2,
           vendor_id: 10,
-          mapping_id: 101,
+          endpoint_mapping_id: 101,
           is_enabled: true,
           runtime_config: {},
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           mapping: {
-            mapping_id: 101,
+            endpoint_mapping_id: 101,
             standard_type: 'PROMOSTANDARDS',
             endpoint_name: 'ProductData',
             endpoint_version: '2.0.0',
@@ -343,7 +352,7 @@ describe('runProductDataWorkflow', () => {
         {
           vendor_endpoint_mapping_id: 3,
           vendor_id: 10,
-          mapping_id: 102,
+          endpoint_mapping_id: 102,
           is_enabled: true,
           runtime_config: {
             localization_country: 'US',
@@ -352,7 +361,7 @@ describe('runProductDataWorkflow', () => {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           mapping: {
-            mapping_id: 102,
+            endpoint_mapping_id: 102,
             standard_type: 'PROMOSTANDARDS',
             endpoint_name: 'ProductData',
             endpoint_version: '2.0.0',
@@ -370,7 +379,7 @@ describe('runProductDataWorkflow', () => {
             updated_at: new Date().toISOString(),
           },
         },
-      ],
+      ]),
       lastSuccessfulSyncAt,
     });
 

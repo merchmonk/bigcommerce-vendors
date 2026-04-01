@@ -2,6 +2,7 @@ import type { EndpointMappingDraft, IntegrationFamily } from '../../types';
 import type { MappingProtocol, MappingStandardType } from '../../types';
 import {
   replaceVendorEndpointMappings,
+  replaceVendorEndpointUrls,
   upsertEndpointMapping,
   upsertVendorEndpointMapping,
 } from './repository';
@@ -10,6 +11,7 @@ export interface ResolvedMappingDraft {
   mappingId: number;
   enabled: boolean;
   runtimeConfig: Record<string, unknown>;
+  endpointUrl?: string;
 }
 
 function getStandardType(integrationFamily: IntegrationFamily): MappingStandardType {
@@ -67,9 +69,9 @@ export async function resolveMappingDrafts(input: {
   for (const draft of input.drafts) {
     if (!draft.enabled) continue;
 
-    if (draft.mapping_id && !draft.endpoint_name) {
+    if (draft.endpoint_mapping_id && !draft.endpoint_name) {
       output.push({
-        mappingId: draft.mapping_id,
+        mappingId: draft.endpoint_mapping_id,
         enabled: true,
         runtimeConfig: getRuntimeConfig(draft),
       });
@@ -99,7 +101,7 @@ export async function resolveMappingDrafts(input: {
     });
 
     output.push({
-      mappingId: mapping.mapping_id,
+      mappingId: mapping.endpoint_mapping_id,
       enabled: true,
       runtimeConfig: getRuntimeConfig(draft),
     });
@@ -114,11 +116,21 @@ export async function applyVendorMappingDrafts(
 ): Promise<void> {
   const mappingIds = resolvedDrafts.map(item => item.mappingId);
   await replaceVendorEndpointMappings(vendorId, mappingIds);
+  await replaceVendorEndpointUrls(
+    vendorId,
+    resolvedDrafts
+      .filter((item): item is ResolvedMappingDraft & { endpointUrl: string } => !!item.endpointUrl)
+      .map(item => ({
+        vendorId,
+        endpointMappingId: item.mappingId,
+        endpointUrl: item.endpointUrl,
+      })),
+  );
 
   for (const resolved of resolvedDrafts) {
     await upsertVendorEndpointMapping({
       vendor_id: vendorId,
-      mapping_id: resolved.mappingId,
+      endpoint_mapping_id: resolved.mappingId,
       is_enabled: resolved.enabled,
       runtime_config: resolved.runtimeConfig,
     });

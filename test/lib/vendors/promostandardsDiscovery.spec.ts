@@ -1,17 +1,19 @@
 import {
   buildPromostandardsConnectionFingerprint,
   discoverPromostandardsCapabilities,
+  discoverPromostandardsEndpointsFromCompanyData,
+  probePromostandardsEndpoint,
   resolvePromostandardsCapabilityMappings,
+  testPromostandardsEndpointUrls,
 } from '@lib/vendors/promostandardsDiscovery';
 
 const mockListEndpointMappings = jest.fn();
-const mockFindMappingsByEndpointOperations = jest.fn();
 const mockResolveEndpointAdapter = jest.fn();
 const mockInvokeEndpoint = jest.fn();
+const mockFetch = jest.fn();
 
 jest.mock('@lib/etl/repository', () => ({
   listEndpointMappings: (...args: unknown[]) => mockListEndpointMappings(...args),
-  findMappingsByEndpointOperations: (...args: unknown[]) => mockFindMappingsByEndpointOperations(...args),
 }));
 
 jest.mock('@lib/etl/adapters/factory', () => ({
@@ -24,6 +26,7 @@ describe('promostandardsDiscovery', () => {
     mockResolveEndpointAdapter.mockReturnValue({
       invokeEndpoint: mockInvokeEndpoint,
     });
+    global.fetch = mockFetch as unknown as typeof fetch;
   });
 
   test('builds a stable fingerprint without storing raw credentials', () => {
@@ -51,7 +54,7 @@ describe('promostandardsDiscovery', () => {
     expect(first).not.toContain('top-secret');
   });
 
-  test('discovers endpoint availability from grouped PromoStandards mappings', async () => {
+  test('discovers endpoint availability from PromoStandards mappings', async () => {
     mockListEndpointMappings.mockResolvedValue([
       {
         mapping_id: 1,
@@ -114,31 +117,22 @@ describe('promostandardsDiscovery', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.available_endpoint_count).toBe(2);
+    expect(result.availableEndpointCount).toBe(2);
     expect(result.endpoints).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          endpoint_name: 'CompanyData',
-          endpoint_version: '1.0.0',
-          operation_name: 'getCompanyData',
+          endpointName: 'CompanyData',
+          endpointVersion: '1.0.0',
           available: true,
         }),
         expect.objectContaining({
-          endpoint_name: 'Inventory',
-          endpoint_version: '1.2.1',
-          operation_name: 'getInventoryLevels',
+          endpointName: 'Inventory',
+          endpointVersion: '1.2.1',
           available: true,
         }),
         expect.objectContaining({
-          endpoint_name: 'ProductData',
-          endpoint_version: '2.0.0',
-          operation_name: 'getProduct',
-          available: false,
-        }),
-        expect.objectContaining({
-          endpoint_name: 'ProductData',
-          endpoint_version: '2.0.0',
-          operation_name: 'getProductSellable',
+          endpointName: 'ProductData',
+          endpointVersion: '2.0.0',
           available: false,
         }),
       ]),
@@ -146,7 +140,7 @@ describe('promostandardsDiscovery', () => {
     expect(mockInvokeEndpoint).toHaveBeenCalledTimes(4);
   });
 
-  test('treats request-field not found SOAP faults as live probe validation responses', async () => {
+  test('treats request-field SOAP faults as credential-valid probe responses', async () => {
     mockListEndpointMappings.mockResolvedValue([
       {
         mapping_id: 1,
@@ -171,13 +165,12 @@ describe('promostandardsDiscovery', () => {
       api_protocol: 'SOAP',
     });
 
-    expect(result.credentials_valid).toBe(true);
+    expect(result.credentialsValid).toBe(true);
     expect(result.endpoints).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          endpoint_name: 'ProductData',
-          endpoint_version: '2.0.0',
-          operation_name: 'getProductSellable',
+          endpointName: 'ProductData',
+          endpointVersion: '2.0.0',
           credentials_valid: true,
           live_probe_message: 'WsVersion not found.',
         }),
@@ -241,34 +234,73 @@ describe('promostandardsDiscovery', () => {
     expect(result.endpoints).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          endpoint_name: 'PricingAndConfiguration',
-          resolved_endpoint_url: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
+          endpointName: 'PricingAndConfiguration',
+          endpointUrl: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
         }),
       ]),
     );
   });
 
+  test('treats explicit endpoint URLs as final when probing a PromoStandards endpoint', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => `
+        <wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/">
+          <wsdl:portType>
+            <wsdl:operation name="getProductSellable"></wsdl:operation>
+          </wsdl:portType>
+        </wsdl:definitions>
+      `,
+    });
+    mockInvokeEndpoint.mockResolvedValue({
+      status: 200,
+      rawPayload: '<Envelope><Body><GetProductSellableResponse /></Body></Envelope>',
+      parsedBody: { GetProductSellableResponse: {} },
+    });
+
+    await probePromostandardsEndpoint({
+      endpointUrl: 'https://wsp.gemline.com/GemlineWebService/ProductData/v2/GemlineProductDataService.svc',
+      endpointUrlIsFinal: true,
+      endpointName: 'ProductData',
+      endpointVersion: '2.0.0',
+      operationName: 'getProductSellable',
+      vendorAccountId: 'acct-1',
+      vendorSecret: 'secret-1',
+      protocol: 'SOAP',
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://wsp.gemline.com/GemlineWebService/ProductData/v2/GemlineProductDataService.svc?wsdl',
+      expect.any(Object),
+    );
+    expect(mockInvokeEndpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpointUrl: 'https://wsp.gemline.com/GemlineWebService/ProductData/v2/GemlineProductDataService.svc',
+        runtimeConfig: {
+          endpoint_url: 'https://wsp.gemline.com/GemlineWebService/ProductData/v2/GemlineProductDataService.svc',
+        },
+      }),
+    );
+  });
+
   test('resolves mapping ids from available endpoint versions', async () => {
-    mockFindMappingsByEndpointOperations.mockResolvedValue([
-      { mapping_id: 11 },
-      { mapping_id: 12 },
-      { mapping_id: 13 },
-    ]);
+    mockListEndpointMappings.mockResolvedValue([{ mapping_id: 11 }, { mapping_id: 12 }, { mapping_id: 13 }]);
 
     const mappingIds = await resolvePromostandardsCapabilityMappings({
       endpoints: [
         {
-          endpoint_name: 'CompanyData',
-          endpoint_version: '1.0.0',
-          operation_name: 'getCompanyData',
+          endpointName: 'CompanyData',
+          endpointVersion: '1.0.0',
+          endpointUrl: 'https://vendor.example.com/companydata',
           available: true,
           status_code: 200,
           message: 'ok',
         },
         {
-          endpoint_name: 'Inventory',
-          endpoint_version: '1.2.1',
-          operation_name: 'getInventoryLevels',
+          endpointName: 'Inventory',
+          endpointVersion: '1.2.1',
+          endpointUrl: 'https://vendor.example.com/inventory',
           available: false,
           status_code: 500,
           message: 'unsupported',
@@ -276,108 +308,172 @@ describe('promostandardsDiscovery', () => {
       ],
     });
 
-    expect(mockFindMappingsByEndpointOperations).toHaveBeenCalledWith([
-      {
-        endpoint_name: 'CompanyData',
-        endpoint_version: '1.0.0',
-        operation_name: 'getCompanyData',
-      },
-    ]);
+    expect(mockListEndpointMappings).toHaveBeenCalledWith({
+      standard_type: 'PROMOSTANDARDS',
+      endpoint_name: 'CompanyData',
+      endpoint_version: '1.0.0',
+    });
     expect(mappingIds).toEqual([11, 12, 13]);
   });
 
-  test('prefers the highest available endpoint version per endpoint operation', async () => {
-    mockFindMappingsByEndpointOperations.mockResolvedValue([
-      { mapping_id: 21 },
-      { mapping_id: 22 },
+  test('tests manual endpoint URLs by detecting the version from the URL before WSDL inspection', async () => {
+    mockListEndpointMappings.mockResolvedValue([
+      {
+        mapping_id: 31,
+        endpoint_name: 'Inventory',
+        endpoint_version: '2.0.0',
+        operation_name: 'getInventoryLevels',
+        protocol: 'SOAP',
+      },
     ]);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => `
+        <wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/">
+          <wsdl:portType>
+            <wsdl:operation name="getInventoryLevels"></wsdl:operation>
+          </wsdl:portType>
+        </wsdl:definitions>
+      `,
+    });
+    mockInvokeEndpoint.mockResolvedValue({
+      status: 200,
+      rawPayload: '<Envelope><Body><getInventoryLevelsResponse /></Body></Envelope>',
+      parsedBody: { getInventoryLevelsResponse: {} },
+    });
 
-    const mappingIds = await resolvePromostandardsCapabilityMappings({
+    const result = await testPromostandardsEndpointUrls({
+      vendorAccountId: 'acct-1',
+      vendorSecret: 'secret-1',
+      protocol: 'SOAP',
       endpoints: [
         {
-          endpoint_name: 'ProductData',
-          endpoint_version: '1.0.0',
-          operation_name: 'getProduct',
-          available: true,
-          status_code: 200,
-          message: 'ok',
-        },
-        {
-          endpoint_name: 'ProductData',
-          endpoint_version: '2.0.0',
-          operation_name: 'getProduct',
-          available: true,
-          status_code: 200,
-          message: 'ok',
-        },
-        {
-          endpoint_name: 'ProductData',
-          endpoint_version: '2.1.0',
-          operation_name: 'getProductSellable',
-          available: true,
-          status_code: 200,
-          message: 'ok',
-        },
-        {
-          endpoint_name: 'ProductData',
-          endpoint_version: '2.0.0',
-          operation_name: 'getProductSellable',
-          available: true,
-          status_code: 200,
-          message: 'ok',
+          endpointName: 'Inventory',
+          endpointUrl: 'https://wsp.gemline.com/GemlineWebService/Inventory/v2/GemlineInventoryService.svc',
         },
       ],
     });
 
-    expect(mockFindMappingsByEndpointOperations).toHaveBeenCalledWith([
+    expect(result.ok).toBe(true);
+    expect(result.availableEndpointCount).toBe(1);
+    expect(result.endpoints).toEqual([
+      expect.objectContaining({
+        endpointName: 'Inventory',
+        endpointVersion: '2.0.0',
+        endpointUrl: 'https://wsp.gemline.com/GemlineWebService/Inventory/v2/GemlineInventoryService.svc',
+        versionDetectionStatus: 'detected_from_url',
+        requiresManualVersionSelection: false,
+      }),
+    ]);
+    expect(result.endpointMappingIds).toEqual([31]);
+  });
+
+  test('requires manual version selection when version detection fails', async () => {
+    mockListEndpointMappings.mockResolvedValue([
       {
+        mapping_id: 41,
+        endpoint_name: 'ProductData',
+        endpoint_version: '1.0.0',
+        operation_name: 'getProduct',
+        protocol: 'SOAP',
+      },
+      {
+        mapping_id: 42,
         endpoint_name: 'ProductData',
         endpoint_version: '2.0.0',
         operation_name: 'getProduct',
-      },
-      {
-        endpoint_name: 'ProductData',
-        endpoint_version: '2.1.0',
-        operation_name: 'getProductSellable',
+        protocol: 'SOAP',
       },
     ]);
-    expect(mappingIds).toEqual([21, 22]);
-  });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: async () => '',
+    });
 
-  test('prefers the manually overridden endpoint version over a newer discovered version', async () => {
-    mockFindMappingsByEndpointOperations.mockResolvedValue([
-      { mapping_id: 31 },
-    ]);
-
-    const mappingIds = await resolvePromostandardsCapabilityMappings({
+    const result = await testPromostandardsEndpointUrls({
       endpoints: [
         {
-          endpoint_name: 'OrderShipmentNotification',
-          endpoint_version: '1.0.0',
-          operation_name: 'getOrderShipmentNotification',
-          available: true,
-          status_code: 200,
-          message: 'ok',
-          custom_endpoint_url: '/custom/order-shipment/1.0.0',
-        },
-        {
-          endpoint_name: 'OrderShipmentNotification',
-          endpoint_version: '2.1.0',
-          operation_name: 'getOrderShipmentNotification',
-          available: true,
-          status_code: 200,
-          message: 'ok',
+          endpointName: 'ProductData',
+          endpointUrl: 'https://vendor.example.com/product-data/service',
         },
       ],
     });
 
-    expect(mockFindMappingsByEndpointOperations).toHaveBeenCalledWith([
+    expect(result.ok).toBe(false);
+    expect(result.endpoints).toEqual([
+      expect.objectContaining({
+        endpointName: 'ProductData',
+        endpointVersion: null,
+        versionDetectionStatus: 'failed',
+        requiresManualVersionSelection: true,
+        availableVersions: ['1.0.0', '2.0.0'],
+      }),
+    ]);
+  });
+
+  test('discovers endpoints from CompanyData and keeps the CompanyData URL as a saved endpoint row', async () => {
+    mockListEndpointMappings.mockResolvedValue([
       {
-        endpoint_name: 'OrderShipmentNotification',
+        mapping_id: 51,
+        endpoint_name: 'CompanyData',
         endpoint_version: '1.0.0',
-        operation_name: 'getOrderShipmentNotification',
+        operation_name: 'getCompanyData',
+        protocol: 'SOAP',
+      },
+      {
+        mapping_id: 52,
+        endpoint_name: 'ProductData',
+        endpoint_version: '2.0.0',
+        operation_name: 'getProduct',
+        protocol: 'SOAP',
       },
     ]);
-    expect(mappingIds).toEqual([31]);
+    mockInvokeEndpoint
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<Envelope><Body><getCompanyDataResponse /></Body></Envelope>',
+        parsedBody: {
+          getCompanyDataResponse: {
+            PromoStandardsServiceDetailArray: {
+              PromoStandardsServiceDetail: {
+                serviceName: 'ProductData',
+                serviceVersion: '2.0.0',
+                url: 'https://vendor.example.com/ProductData/v2/GemlineProductDataService.svc?wsdl',
+              },
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<Envelope><Body><getProductResponse /></Body></Envelope>',
+        parsedBody: { getProductResponse: {} },
+      });
+
+    const result = await discoverPromostandardsEndpointsFromCompanyData({
+      companyDataEndpointUrl: 'https://vendor.example.com/CompanyData/v1/CompanyDataService.svc',
+      vendorAccountId: 'acct-1',
+      vendorSecret: 'secret-1',
+      protocol: 'SOAP',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.endpoints).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          endpointName: 'CompanyData',
+          endpointUrl: 'https://vendor.example.com/CompanyData/v1/CompanyDataService.svc',
+          available: true,
+        }),
+        expect.objectContaining({
+          endpointName: 'ProductData',
+          endpointVersion: '2.0.0',
+          endpointUrl: 'https://vendor.example.com/ProductData/v2/GemlineProductDataService.svc',
+          available: true,
+        }),
+      ]),
+    );
   });
 });

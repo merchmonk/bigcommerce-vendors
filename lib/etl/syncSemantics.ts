@@ -132,7 +132,46 @@ export function derivePercentBulkPricingRulesFromCost(input: {
       amount: round2(discountPercent),
     });
   }
-  normalized.sort((a, b) => a.quantity_min - b.quantity_min);
+  const collapsed = collapseBulkPricingRulesByRange(normalized);
 
-  return normalized.length > 0 ? normalized : undefined;
+  return collapsed.length > 0 ? collapsed : undefined;
+}
+
+export function collapseBulkPricingRulesByRange(
+  rules: NormalizedBulkPricingRule[],
+): NormalizedBulkPricingRule[] {
+  const selected = new Map<string, NormalizedBulkPricingRule>();
+
+  for (const rule of rules) {
+    const key = [
+      rule.quantity_min,
+      typeof rule.quantity_max === 'number' ? rule.quantity_max : 'open',
+      rule.type,
+    ].join(':');
+    const existing = selected.get(key);
+
+    if (!existing) {
+      selected.set(key, rule);
+      continue;
+    }
+
+    if (rule.type === 'price' && rule.amount < existing.amount) {
+      selected.set(key, rule);
+      continue;
+    }
+
+    if (rule.type === 'percent' && rule.amount > existing.amount) {
+      selected.set(key, rule);
+    }
+  }
+
+  return Array.from(selected.values()).sort((left, right) => {
+    if (left.quantity_min !== right.quantity_min) {
+      return left.quantity_min - right.quantity_min;
+    }
+
+    const leftMax = typeof left.quantity_max === 'number' ? left.quantity_max : Number.MAX_SAFE_INTEGER;
+    const rightMax = typeof right.quantity_max === 'number' ? right.quantity_max : Number.MAX_SAFE_INTEGER;
+    return leftMax - rightMax;
+  });
 }

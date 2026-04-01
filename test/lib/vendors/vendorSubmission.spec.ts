@@ -56,13 +56,23 @@ describe('prepareVendorSubmission', () => {
         integration_family: 'PROMOSTANDARDS',
         api_protocol: 'SOAP',
         endpoint_mapping_ids: [101],
-        promostandards_capabilities: {
+        promostandardsCapabilities: {
           fingerprint,
-          tested_at: '2026-03-21T23:00:00.000Z',
-          available_endpoint_count: 1,
-          credentials_valid: true,
-          endpoints: [],
+          testedAt: '2026-03-21T23:00:00.000Z',
+          availableEndpointCount: 1,
+          credentialsValid: true,
+          endpoints: [
+            {
+              endpointName: 'CompanyData',
+              endpointVersion: '1.0.0',
+              endpointUrl: 'https://www.spectorapps.com/companydata/1.0.0',
+              available: true,
+              status_code: 200,
+              message: 'ok',
+            },
+          ],
         },
+        connection_tested: true,
       },
     });
 
@@ -75,39 +85,31 @@ describe('prepareVendorSubmission', () => {
           mappingId: 101,
           enabled: true,
           runtimeConfig: {},
+          endpointUrl: 'https://www.spectorapps.com/companydata/1.0.0',
         },
       ],
     });
     expect(prepared.vendorInput.connection_config).toEqual({
       promostandards_capabilities: {
         fingerprint,
-        tested_at: '2026-03-21T23:00:00.000Z',
-        available_endpoint_count: 1,
-        credentials_valid: true,
+        testedAt: '2026-03-21T23:00:00.000Z',
+        availableEndpointCount: 1,
+        credentialsValid: true,
         endpoints: [
           {
-            endpoint_name: 'CompanyData',
-            endpoint_version: '1.0.0',
-            operation_name: 'getCompanyData',
-            capability_scope: 'catalog',
-            lifecycle_role: undefined,
-            optional_by_vendor: undefined,
-            recommended_poll_minutes: null,
+            endpointName: 'CompanyData',
+            endpointVersion: '1.0.0',
+            endpointUrl: 'https://www.spectorapps.com/companydata/1.0.0',
             available: true,
-            status_code: null,
-            message: 'Endpoint selected from PromoStandards discovery.',
-            wsdl_available: null,
-            credentials_valid: true,
-            live_probe_message: null,
-            resolved_endpoint_url: null,
-            custom_endpoint_url: null,
+            status_code: 200,
+            message: 'ok',
           },
         ],
       },
     });
   });
 
-  test('persists custom PromoStandards endpoint URLs into mapping runtime config', async () => {
+  test('persists full PromoStandards endpoint URLs onto resolved drafts', async () => {
     mockListEndpointMappingsByIds.mockResolvedValue([
       {
         mapping_id: 201,
@@ -123,7 +125,6 @@ describe('prepareVendorSubmission', () => {
     const { buildPromostandardsConnectionFingerprint } = await import('@lib/vendors/promostandardsDiscovery');
     const { prepareVendorSubmission } = await import('@lib/vendors/vendorSubmission');
     const fingerprint = buildPromostandardsConnectionFingerprint({
-      vendor_api_url: 'https://vendor.example.com',
       vendor_account_id: 'acct-1',
       vendor_secret: 'secret-1',
       api_protocol: 'SOAP',
@@ -133,30 +134,28 @@ describe('prepareVendorSubmission', () => {
       body: {
         vendor_name: 'Vendor',
         vendor_type: 'SUPPLIER',
-        vendor_api_url: 'https://vendor.example.com',
         vendor_account_id: 'acct-1',
         vendor_secret: 'secret-1',
         integration_family: 'PROMOSTANDARDS',
         api_protocol: 'SOAP',
         endpoint_mapping_ids: [201],
-        promostandards_capabilities: {
+        promostandardsCapabilities: {
           fingerprint,
-          tested_at: '2026-03-22T18:20:00.000Z',
-          available_endpoint_count: 1,
-          credentials_valid: true,
+          testedAt: '2026-03-22T18:20:00.000Z',
+          availableEndpointCount: 1,
+          credentialsValid: true,
           endpoints: [
             {
-              endpoint_name: 'PricingAndConfiguration',
-              endpoint_version: '1.0.0',
-              operation_name: 'getConfigurationAndPricing',
+              endpointName: 'PricingAndConfiguration',
+              endpointVersion: '1.0.0',
+              endpointUrl: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
               available: true,
               status_code: 200,
               message: 'Operation listed in endpoint WSDL.',
-              resolved_endpoint_url: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
-              custom_endpoint_url: '/custom/pricing/soap',
             },
           ],
         },
+        connection_tested: true,
       },
     });
 
@@ -166,23 +165,21 @@ describe('prepareVendorSubmission', () => {
         {
           mappingId: 201,
           enabled: true,
-          runtimeConfig: {
-            endpoint_path: '/custom/pricing/soap',
-          },
+          runtimeConfig: {},
+          endpointUrl: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
         },
       ],
     });
     expect(prepared.vendorInput.connection_config).toEqual({
       promostandards_capabilities: {
         fingerprint,
-        tested_at: '2026-03-22T18:20:00.000Z',
-        available_endpoint_count: 1,
-        credentials_valid: true,
+        testedAt: '2026-03-22T18:20:00.000Z',
+        availableEndpointCount: 1,
+        credentialsValid: true,
         endpoints: [
           expect.objectContaining({
-            endpoint_name: 'PricingAndConfiguration',
-            resolved_endpoint_url: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
-            custom_endpoint_url: '/custom/pricing/soap',
+            endpointName: 'PricingAndConfiguration',
+            endpointUrl: 'https://vendor.example.com/api/promostandards/PPC/1.0.0/soap',
           }),
         ],
       },

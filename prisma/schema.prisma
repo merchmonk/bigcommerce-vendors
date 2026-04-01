@@ -103,32 +103,31 @@ enum EnrichmentRetryStatus {
 }
 
 model User {
-  id       Int     @id @default(autoincrement())
-  user_id  Int     @unique
+  user_id  Int     @id
   email    String
   username String?
 
-  @@map("users")
+  @@map("user")
 }
 
 model Store {
-  id            Int     @id @default(autoincrement())
-  store_hash    String  @unique @db.VarChar(10)
-  access_token  String?
-  scope         String?
+  store_id       Int     @id @default(autoincrement())
+  store_hash     String  @unique @db.VarChar(10)
+  access_token   String?
+  scope          String?
   markup_percent Int?
 
-  @@map("stores")
+  @@map("store")
 }
 
 model StoreUser {
-  id         Int      @id @default(autoincrement())
-  user_id    Int
-  store_hash String   @db.VarChar(10)
-  is_admin   Boolean?
+  store_user_id Int      @id @default(autoincrement())
+  user_id       Int
+  store_hash    String   @db.VarChar(10)
+  is_admin      Boolean?
 
   @@unique([user_id, store_hash])
-  @@map("store_users")
+  @@map("store_user")
 }
 
 model Vendor {
@@ -145,6 +144,7 @@ model Vendor {
   datetime_added     DateTime                @default(now()) @db.Timestamptz(6)
   datetime_modified  DateTime                @default(now()) @db.Timestamptz(6)
   endpoint_mappings  VendorEndpointMapping[]
+  endpoint_urls      VendorEndpointUrl[]
   sync_runs          EtlSyncRun[]
   integration_jobs   IntegrationJob[]
   product_map        VendorProductMap[]
@@ -152,11 +152,11 @@ model Vendor {
   enrichment_retries ProductEnrichmentRetry[]
   order_integrations OrderIntegrationState[]
 
-  @@map("vendors")
+  @@map("vendor")
 }
 
 model EndpointMapping {
-  mapping_id             Int                     @id @default(autoincrement())
+  endpoint_mapping_id    Int                     @id @default(autoincrement())
   standard_type          IntegrationFamily
   endpoint_name          String                  @db.VarChar(128)
   endpoint_version       String                  @db.VarChar(32)
@@ -173,99 +173,114 @@ model EndpointMapping {
   created_at             DateTime                @default(now()) @db.Timestamptz(6)
   updated_at             DateTime                @default(now()) @db.Timestamptz(6)
   vendor_endpoint_links  VendorEndpointMapping[]
+  vendor_endpoint_urls   VendorEndpointUrl[]
   sync_runs              EtlSyncRun[]
   integration_jobs       IntegrationJob[]
   vendor_product_records VendorProductMap[]
 
   @@unique([standard_type, endpoint_name, endpoint_version, operation_name])
-  @@map("endpoint_mappings")
+  @@map("endpoint_mapping")
 }
 
 model VendorEndpointMapping {
   vendor_endpoint_mapping_id Int             @id @default(autoincrement())
   vendor_id                  Int
-  mapping_id                 Int
+  endpoint_mapping_id        Int
   is_enabled                 Boolean         @default(true)
   runtime_config             Json            @default(dbgenerated("'{}'::jsonb")) @db.JsonB
   created_at                 DateTime        @default(now()) @db.Timestamptz(6)
   updated_at                 DateTime        @default(now()) @db.Timestamptz(6)
   vendor                     Vendor          @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
-  mapping                    EndpointMapping @relation(fields: [mapping_id], references: [mapping_id], onDelete: Cascade)
+  endpoint_mapping           EndpointMapping @relation(fields: [endpoint_mapping_id], references: [endpoint_mapping_id], onDelete: Cascade)
 
-  @@unique([vendor_id, mapping_id])
-  @@map("vendor_endpoint_mappings")
+  @@unique([vendor_id, endpoint_mapping_id])
+  @@map("vendor_endpoint_mapping")
+}
+
+model VendorEndpointUrl {
+  vendor_endpoint_url_id Int             @id @default(autoincrement())
+  vendor_id              Int
+  endpoint_mapping_id    Int
+  endpoint_url           String          @db.VarChar(2048)
+  created_at             DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime        @default(now()) @db.Timestamptz(6)
+  vendor                 Vendor          @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
+  endpoint_mapping       EndpointMapping @relation(fields: [endpoint_mapping_id], references: [endpoint_mapping_id], onDelete: Cascade)
+
+  @@unique([vendor_id, endpoint_mapping_id])
+  @@map("vendor_endpoint_url")
 }
 
 model EtlSyncRun {
-  sync_run_id     BigInt           @id @default(autoincrement())
-  vendor_id       Int
-  mapping_id      Int?
-  sync_scope      SyncScope        @default(MAPPING)
-  status          SyncRunStatus    @default(PENDING)
-  started_at      DateTime         @default(now()) @db.Timestamptz(6)
-  ended_at        DateTime?        @db.Timestamptz(6)
-  records_read    Int              @default(0)
-  records_written Int              @default(0)
-  error_message   String?
-  details         Json             @default(dbgenerated("'{}'::jsonb")) @db.JsonB
-  vendor          Vendor           @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
-  mapping         EndpointMapping? @relation(fields: [mapping_id], references: [mapping_id], onDelete: SetNull)
+  etl_sync_run_id    BigInt           @id @default(autoincrement())
+  vendor_id          Int
+  endpoint_mapping_id Int?
+  sync_scope         SyncScope        @default(MAPPING)
+  status             SyncRunStatus    @default(PENDING)
+  started_at         DateTime         @default(now()) @db.Timestamptz(6)
+  ended_at           DateTime?        @db.Timestamptz(6)
+  records_read       Int              @default(0)
+  records_written    Int              @default(0)
+  error_message      String?
+  details            Json             @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  vendor             Vendor           @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
+  endpoint_mapping   EndpointMapping? @relation(fields: [endpoint_mapping_id], references: [endpoint_mapping_id], onDelete: SetNull)
 
-  @@map("etl_sync_runs")
+  @@map("etl_sync_run")
 }
 
 model IntegrationJob {
-  integration_job_id BigInt                @id @default(autoincrement())
-  job_kind           IntegrationJobKind
-  vendor_id          Int
-  mapping_id         Int?
+  integration_job_id        BigInt                @id @default(autoincrement())
+  job_kind                  IntegrationJobKind
+  vendor_id                 Int
+  endpoint_mapping_id       Int?
   order_integration_state_id BigInt?
-  sync_scope         SyncScope             @default(MAPPING)
-  source_action      String                @db.VarChar(128)
-  dedupe_key         String                @db.VarChar(512)
-  correlation_id     String                @db.VarChar(128)
-  request_payload    Json                  @default(dbgenerated("'{}'::jsonb")) @db.JsonB
-  status             IntegrationJobStatus  @default(PENDING)
-  attempt_count      Int                   @default(0)
-  queue_message_id   String?               @db.VarChar(255)
-  last_error         String?
-  submitted_at       DateTime              @default(now()) @db.Timestamptz(6)
-  started_at         DateTime?             @db.Timestamptz(6)
-  ended_at           DateTime?             @db.Timestamptz(6)
-  vendor             Vendor                @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
-  mapping            EndpointMapping?      @relation(fields: [mapping_id], references: [mapping_id], onDelete: SetNull)
-  events             IntegrationJobEvent[]
+  sync_scope                SyncScope             @default(MAPPING)
+  source_action             String                @db.VarChar(128)
+  dedupe_key                String                @db.VarChar(512)
+  correlation_id            String                @db.VarChar(128)
+  request_payload           Json                  @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  status                    IntegrationJobStatus  @default(PENDING)
+  attempt_count             Int                   @default(0)
+  queue_message_id          String?               @db.VarChar(255)
+  last_error                String?
+  submitted_at              DateTime              @default(now()) @db.Timestamptz(6)
+  started_at                DateTime?             @db.Timestamptz(6)
+  ended_at                  DateTime?             @db.Timestamptz(6)
+  vendor                    Vendor                @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
+  endpoint_mapping          EndpointMapping?      @relation(fields: [endpoint_mapping_id], references: [endpoint_mapping_id], onDelete: SetNull)
+  events                    IntegrationJobEvent[]
 
   @@index([vendor_id, status])
   @@index([order_integration_state_id, status])
   @@index([dedupe_key, status])
   @@index([submitted_at])
-  @@map("integration_jobs")
+  @@map("integration_job")
 }
 
 model OperatorTrace {
-  operator_trace_id   BigInt                @id @default(autoincrement())
-  category            OperatorTraceCategory
-  correlation_id      String                @db.VarChar(128)
-  vendor_id           Int?
-  integration_job_id  BigInt?
+  operator_trace_id         BigInt                @id @default(autoincrement())
+  category                  OperatorTraceCategory
+  correlation_id            String                @db.VarChar(128)
+  vendor_id                 Int?
+  integration_job_id        BigInt?
   order_integration_state_id BigInt?
-  sync_run_id         BigInt?
-  method              String                @db.VarChar(16)
-  target              String                @db.VarChar(2048)
-  action              String                @db.VarChar(255)
-  status_code         Int?
-  snapshot_bucket     String?               @db.VarChar(255)
-  snapshot_key        String?               @db.VarChar(1024)
-  metadata            Json                  @default(dbgenerated("'{}'::jsonb")) @db.JsonB
-  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  etl_sync_run_id           BigInt?
+  method                    String                @db.VarChar(16)
+  target                    String                @db.VarChar(2048)
+  action                    String                @db.VarChar(255)
+  status_code               Int?
+  snapshot_bucket           String?               @db.VarChar(255)
+  snapshot_key              String?               @db.VarChar(1024)
+  metadata                  Json                  @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  created_at                DateTime              @default(now()) @db.Timestamptz(6)
 
   @@index([vendor_id, created_at])
   @@index([integration_job_id, created_at])
   @@index([order_integration_state_id, created_at])
-  @@index([sync_run_id, created_at])
+  @@index([etl_sync_run_id, created_at])
   @@index([correlation_id, created_at])
-  @@map("operator_traces")
+  @@map("operator_trace")
 }
 
 model IntegrationJobEvent {
@@ -278,7 +293,7 @@ model IntegrationJobEvent {
   integration_job          IntegrationJob  @relation(fields: [integration_job_id], references: [integration_job_id], onDelete: Cascade)
 
   @@index([integration_job_id, created_at])
-  @@map("integration_job_events")
+  @@map("integration_job_event")
 }
 
 model OrderIntegrationState {
@@ -318,13 +333,13 @@ model OrderIntegrationState {
   @@index([next_status_poll_at])
   @@index([next_shipment_poll_at])
   @@index([next_invoice_poll_at])
-  @@map("order_integration_states")
+  @@map("order_integration_state")
 }
 
 model VendorProductMap {
   vendor_product_map_id  BigInt           @id @default(autoincrement())
   vendor_id              Int
-  mapping_id             Int?
+  endpoint_mapping_id    Int?
   vendor_product_id      String?          @db.VarChar(255)
   bigcommerce_product_id BigInt?
   sku                    String           @db.VarChar(255)
@@ -332,7 +347,7 @@ model VendorProductMap {
   last_synced_at         DateTime         @default(now()) @db.Timestamptz(6)
   metadata               Json             @default(dbgenerated("'{}'::jsonb")) @db.JsonB
   vendor                 Vendor           @relation(fields: [vendor_id], references: [vendor_id], onDelete: Cascade)
-  mapping                EndpointMapping? @relation(fields: [mapping_id], references: [mapping_id], onDelete: SetNull)
+  endpoint_mapping       EndpointMapping? @relation(fields: [endpoint_mapping_id], references: [endpoint_mapping_id], onDelete: SetNull)
 
   @@unique([vendor_id, sku])
   @@map("vendor_product_map")
@@ -356,7 +371,7 @@ model PendingRelatedProductLink {
 
   @@unique([vendor_id, source_vendor_product_id, target_vendor_product_id])
   @@index([vendor_id, status])
-  @@map("pending_related_product_links")
+  @@map("pending_related_product_link")
 }
 
 model ProductEnrichmentRetry {
@@ -376,5 +391,5 @@ model ProductEnrichmentRetry {
 
   @@unique([vendor_id, vendor_product_id, source])
   @@index([vendor_id, status, source])
-  @@map("product_enrichment_retries")
+  @@map("product_enrichment_retry")
 }

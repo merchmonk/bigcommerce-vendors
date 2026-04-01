@@ -53,7 +53,7 @@ const VendorSyncRunDiagnosticsPage = () => {
           }}
         >
           <div>
-            <h2 style={sectionTitleStyle}>Sync Run #{syncRun.sync_run_id}</h2>
+            <h2 style={sectionTitleStyle}>Sync Run #{syncRun.etl_sync_run_id}</h2>
             <p style={{ color: '#475569', margin: '8px 0 0' }}>
               Review endpoint failures, blocked items, retry markers, and related traces for this vendor sync run.
             </p>

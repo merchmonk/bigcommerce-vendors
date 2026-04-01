@@ -2,7 +2,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getSession } from '../../../lib/auth';
 import { recordInternalFailure } from '../../../lib/apiTelemetry';
 import { applyVendorMappingDrafts } from '../../../lib/etl/mappingDrafts';
-import { listEnabledVendorEndpointMappings, replaceVendorEndpointMappings } from '../../../lib/etl/repository';
+import {
+  listEnabledVendorEndpointMappings,
+  listVendorEndpointUrls,
+  replaceVendorEndpointMappings,
+} from '../../../lib/etl/repository';
 import logger from '../../../lib/logger';
 import { buildApiRequestContext, runWithRequestContext } from '../../../lib/requestContext';
 import {
@@ -13,7 +17,7 @@ import {
 } from '../../../lib/vendors';
 import { assertVendorCanDeactivate } from '../../../lib/vendors/operatorInsights';
 import {
-  applyPromostandardsEndpointRuntimeOverrides,
+  buildPromostandardsCapabilitiesFromSavedEndpoints,
   buildVendorConnectionConfig,
   getVendorConnectionSections,
 } from '../../../lib/vendors/vendorConfig';
@@ -41,15 +45,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return;
           }
           const assignedMappings = await listEnabledVendorEndpointMappings(vendorId);
+          const endpointUrls = await listVendorEndpointUrls(vendorId);
           const sections = getVendorConnectionSections(vendor.connection_config);
-          const promostandardsCapabilities = applyPromostandardsEndpointRuntimeOverrides({
-            capabilities: sections.promostandards_capabilities,
-            endpointMappings: assignedMappings.map(item => ({
-              endpoint_name: item.mapping.endpoint_name,
-              endpoint_version: item.mapping.endpoint_version,
-              operation_name: item.mapping.operation_name,
-              runtime_config: item.runtime_config,
-            })),
+          const promostandardsCapabilities = buildPromostandardsCapabilitiesFromSavedEndpoints({
+            existingCapabilities: sections.promostandards_capabilities,
+            endpointUrls: endpointUrls.map(item => {
+              const mapping = assignedMappings.find(
+                assigned => assigned.endpoint_mapping_id === item.endpoint_mapping_id,
+              )?.mapping;
+              return {
+                endpointName: mapping?.endpoint_name,
+                endpointVersion: mapping?.endpoint_version ?? null,
+                endpointUrl: item.endpoint_url,
+              };
+            }),
           });
           const connectionConfig = buildVendorConnectionConfig({
             existingConfig: vendor.connection_config,
@@ -64,7 +73,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             ...sections,
             promostandards_capabilities: promostandardsCapabilities,
             endpoint_mappings: assignedMappings.map(item => ({
-              mapping_id: item.mapping_id,
+              endpoint_mapping_id: item.endpoint_mapping_id,
               enabled: item.is_enabled,
               endpoint_name: item.mapping.endpoint_name,
               endpoint_version: item.mapping.endpoint_version,
@@ -79,6 +88,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               runtime_config: item.runtime_config ?? {},
               transform_schema: item.mapping.transform_schema ?? {},
               metadata: item.mapping.metadata ?? {},
+              endpointUrl: item.endpointUrl ?? undefined,
             })),
           });
           break;

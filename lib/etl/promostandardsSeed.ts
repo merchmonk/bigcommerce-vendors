@@ -4,7 +4,7 @@ import prisma from '../prisma';
 import { PROMOSTANDARDS_SEED_RECORDS } from '../../prisma/seeds/promostandards';
 
 function serializeEndpointMapping(row: {
-  mapping_id: number;
+  endpoint_mapping_id: number;
   standard_type: 'PROMOSTANDARDS' | 'CUSTOM';
   endpoint_name: string;
   endpoint_version: string;

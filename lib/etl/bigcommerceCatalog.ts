@@ -18,6 +18,7 @@ import {
 } from './bigcommerceApi';
 import {
   canonicalizeTaxonomyName,
+  collapseBulkPricingRulesByRange,
   classifyDuplicateDecision,
   type ProductCandidate,
 } from './syncSemantics';
@@ -117,6 +118,8 @@ interface DesiredBigCommerceVideo {
   type: 'youtube';
   video_id: string;
 }
+
+const BIGCOMMERCE_MAX_REMOTE_IMAGE_BYTES = 8 * 1024 * 1024;
 
 const VENDOR_MEDIA_MARKER_PREFIX = 'mm_media:';
 const BIGCOMMERCE_CATEGORY_NAME_MAX_LENGTH = 50;
@@ -1006,7 +1009,9 @@ async function syncBulkPricingRules(
     );
   }
 
-  for (const rule of normalizeBulkPricingRuleRanges(bulkPricingRules ?? [])) {
+  const collapsedRules = collapseBulkPricingRulesByRange(bulkPricingRules ?? []);
+
+  for (const rule of dedupeBulkPricingRuleRanges(normalizeBulkPricingRuleRanges(collapsedRules))) {
     const payload: Record<string, unknown> = {
       quantity_min: rule.quantity_min,
       quantity_max: typeof rule.quantity_max === 'number' ? rule.quantity_max : 0,
@@ -1024,6 +1029,26 @@ async function syncBulkPricingRules(
       'Failed to create BigCommerce bulk pricing rule',
     );
   }
+}
+
+function dedupeBulkPricingRuleRanges(
+  rules: NormalizedBulkPricingRule[],
+): NormalizedBulkPricingRule[] {
+  const seen = new Set<string>();
+  return rules.filter(rule => {
+    const key = [
+      rule.quantity_min,
+      typeof rule.quantity_max === 'number' ? rule.quantity_max : 'open',
+      rule.type,
+      rule.amount,
+    ].join(':');
+
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizeBulkPricingRuleRanges(
@@ -1466,6 +1491,53 @@ function isDuplicateOrValidationError(error: unknown): boolean {
   return /duplicate|already exists|validation/i.test(error.message);
 }
 
+function isOversizedBigCommerceImageError(error: unknown): boolean {
+  return error instanceof Error && /maximum of 8 MB size limit for upload image is exceeded/i.test(error.message);
+}
+
+async function getRemoteContentLength(url: string): Promise<number | undefined> {
+  try {
+    const response = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+    });
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const header = response.headers.get('content-length');
+    if (!header) {
+      return undefined;
+    }
+
+    const parsed = Number(header);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function filterUploadableProductImages(
+  productId: number,
+  images: DesiredBigCommerceImage[],
+): Promise<DesiredBigCommerceImage[]> {
+  const uploadable: DesiredBigCommerceImage[] = [];
+
+  for (const image of images) {
+    const contentLength = await getRemoteContentLength(image.image_url);
+    if (typeof contentLength === 'number' && contentLength > BIGCOMMERCE_MAX_REMOTE_IMAGE_BYTES) {
+      console.warn(
+        `Skipping BigCommerce product image for product ${productId} because ${image.image_url} is ${contentLength} bytes and exceeds the 8 MB upload limit.`,
+      );
+      continue;
+    }
+
+    uploadable.push(image);
+  }
+
+  return uploadable;
+}
+
 async function listProductImages(
   accessToken: string,
   storeHash: string,
@@ -1497,6 +1569,27 @@ async function createProductImage(
   );
 }
 
+async function tryCreateProductImage(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+  image: DesiredBigCommerceImage,
+): Promise<boolean> {
+  try {
+    await createProductImage(accessToken, storeHash, productId, image);
+    return true;
+  } catch (error) {
+    if (!isOversizedBigCommerceImageError(error)) {
+      throw error;
+    }
+
+    console.warn(
+      `Skipping BigCommerce product image for product ${productId} because the remote asset exceeds BigCommerce's 8 MB upload limit: ${image.image_url}`,
+    );
+    return false;
+  }
+}
+
 async function createProductVariantImage(
   accessToken: string,
   storeHash: string,
@@ -1515,6 +1608,28 @@ async function createProductVariantImage(
     },
     'Failed to create BigCommerce product variant image',
   );
+}
+
+async function tryCreateProductVariantImage(
+  accessToken: string,
+  storeHash: string,
+  productId: number,
+  variantId: number,
+  imageUrl: string,
+): Promise<boolean> {
+  try {
+    await createProductVariantImage(accessToken, storeHash, productId, variantId, imageUrl);
+    return true;
+  } catch (error) {
+    if (!isOversizedBigCommerceImageError(error)) {
+      throw error;
+    }
+
+    console.warn(
+      `Skipping BigCommerce variant image for product ${productId} variant ${variantId} because the remote asset exceeds BigCommerce's 8 MB upload limit: ${imageUrl}`,
+    );
+    return false;
+  }
 }
 
 async function deleteProductImage(
@@ -1595,12 +1710,23 @@ async function replaceVendorManagedImages(input: {
     return;
   }
 
+  const uploadableImages = await filterUploadableProductImages(input.productId, input.desiredImages);
   const existingImages = await listProductImages(input.accessToken, input.storeHash, input.productId);
   const vendorManaged = existingImages.filter(image => isVendorManagedDescription(image.description));
 
+  if (uploadableImages.length === 0) {
+    return;
+  }
+
   try {
-    for (const image of input.desiredImages) {
-      await createProductImage(input.accessToken, input.storeHash, input.productId, image);
+    let createdAny = false;
+    for (const image of uploadableImages) {
+      createdAny =
+        (await tryCreateProductImage(input.accessToken, input.storeHash, input.productId, image)) ||
+        createdAny;
+    }
+    if (!createdAny) {
+      return;
     }
     for (const image of vendorManaged) {
       await deleteProductImage(input.accessToken, input.storeHash, input.productId, image.id);
@@ -1610,8 +1736,14 @@ async function replaceVendorManagedImages(input: {
       throw error;
     }
     await deleteExisting();
-    for (const image of input.desiredImages) {
-      await createProductImage(input.accessToken, input.storeHash, input.productId, image);
+    let recreatedAny = false;
+    for (const image of uploadableImages) {
+      recreatedAny =
+        (await tryCreateProductImage(input.accessToken, input.storeHash, input.productId, image)) ||
+        recreatedAny;
+    }
+    if (!recreatedAny) {
+      return;
     }
   }
 }
@@ -1732,7 +1864,7 @@ async function syncVariantImages(input: {
       continue;
     }
 
-    await createProductVariantImage(
+    await tryCreateProductVariantImage(
       input.accessToken,
       input.storeHash,
       input.productId,

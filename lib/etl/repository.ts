@@ -20,6 +20,7 @@ import type {
   SyncRunStatus,
   SyncScope,
   VendorEndpointMapping,
+  VendorEndpointUrl,
   VendorProductMap,
 } from '../../types';
 import { Prisma } from '@prisma/client';
@@ -59,14 +60,20 @@ export interface EndpointMappingUpsertInput {
 
 export interface VendorEndpointMappingInput {
   vendor_id: number;
-  mapping_id: number;
+  endpoint_mapping_id: number;
   is_enabled?: boolean;
   runtime_config?: Record<string, unknown>;
 }
 
+export interface VendorEndpointUrlInput {
+  vendorId: number;
+  endpointMappingId: number;
+  endpointUrl: string;
+}
+
 export interface SyncRunCreateInput {
   vendor_id: number;
-  mapping_id?: number | null;
+  endpoint_mapping_id?: number | null;
   sync_scope?: SyncScope;
   details?: Record<string, unknown>;
 }
@@ -74,7 +81,7 @@ export interface SyncRunCreateInput {
 export interface IntegrationJobCreateInput {
   job_kind: IntegrationJobKind;
   vendor_id: number;
-  mapping_id?: number | null;
+  endpoint_mapping_id?: number | null;
   order_integration_state_id?: number | null;
   sync_scope?: SyncScope;
   source_action: string;
@@ -110,7 +117,7 @@ export interface OperatorTraceCreateInput {
   vendor_id?: number | null;
   integration_job_id?: number | null;
   order_integration_state_id?: number | null;
-  sync_run_id?: number | null;
+  etl_sync_run_id?: number | null;
   method: string;
   target: string;
   action: string;
@@ -121,7 +128,7 @@ export interface OperatorTraceCreateInput {
 }
 
 export interface SyncRunCompleteInput {
-  sync_run_id: number;
+  etl_sync_run_id: number;
   status: Exclude<SyncRunStatus, 'RUNNING' | 'PENDING'>;
   records_read?: number;
   records_written?: number;
@@ -130,7 +137,7 @@ export interface SyncRunCompleteInput {
 }
 
 export interface SyncRunProgressInput {
-  sync_run_id: number;
+  etl_sync_run_id: number;
   records_read?: number;
   records_written?: number;
   details?: Record<string, unknown>;
@@ -138,7 +145,7 @@ export interface SyncRunProgressInput {
 
 export interface VendorProductMapUpsertInput {
   vendor_id: number;
-  mapping_id?: number | null;
+  endpoint_mapping_id?: number | null;
   vendor_product_id?: string | null;
   bigcommerce_product_id?: number | null;
   sku: string;
@@ -223,7 +230,7 @@ export interface OrderIntegrationStateUpdateInput {
 }
 
 function serializeEndpointMapping(row: {
-  mapping_id: number;
+  endpoint_mapping_id: number;
   standard_type: MappingStandardType;
   endpoint_name: string;
   endpoint_version: string;
@@ -255,24 +262,44 @@ function serializeEndpointMapping(row: {
 function serializeVendorEndpointMapping(row: {
   vendor_endpoint_mapping_id: number;
   vendor_id: number;
-  mapping_id: number;
+  endpoint_mapping_id: number;
   is_enabled: boolean;
   runtime_config: unknown;
+  endpointUrl?: string | null;
   created_at: Date;
   updated_at: Date;
 }): VendorEndpointMapping {
   return {
     ...row,
     runtime_config: (row.runtime_config ?? {}) as Record<string, unknown>,
+    endpointUrl: row.endpointUrl ?? null,
+    created_at: row.created_at.toISOString(),
+    updated_at: row.updated_at.toISOString(),
+  };
+}
+
+function serializeVendorEndpointUrl(row: {
+  vendor_endpoint_url_id: number;
+  vendor_id: number;
+  endpoint_mapping_id: number;
+  endpoint_url: string;
+  created_at: Date;
+  updated_at: Date;
+}): VendorEndpointUrl {
+  return {
+    vendor_endpoint_url_id: row.vendor_endpoint_url_id,
+    vendor_id: row.vendor_id,
+    endpoint_mapping_id: row.endpoint_mapping_id,
+    endpoint_url: row.endpoint_url,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
 }
 
 function serializeSyncRun(row: {
-  sync_run_id: bigint;
+  etl_sync_run_id: bigint;
   vendor_id: number;
-  mapping_id: number | null;
+  endpoint_mapping_id: number | null;
   sync_scope: SyncScope;
   status: SyncRunStatus;
   started_at: Date;
@@ -283,9 +310,9 @@ function serializeSyncRun(row: {
   details: unknown;
 }): EtlSyncRun {
   return {
-    sync_run_id: Number(row.sync_run_id),
+    etl_sync_run_id: Number(row.etl_sync_run_id),
     vendor_id: row.vendor_id,
-    mapping_id: row.mapping_id,
+    endpoint_mapping_id: row.endpoint_mapping_id,
     sync_scope: row.sync_scope,
     status: row.status,
     started_at: row.started_at.toISOString(),
@@ -301,7 +328,7 @@ function serializeIntegrationJob(row: {
   integration_job_id: bigint;
   job_kind: IntegrationJobKind;
   vendor_id: number;
-  mapping_id: number | null;
+  endpoint_mapping_id: number | null;
   order_integration_state_id: bigint | null;
   sync_scope: SyncScope;
   source_action: string;
@@ -320,7 +347,7 @@ function serializeIntegrationJob(row: {
     integration_job_id: Number(row.integration_job_id),
     job_kind: row.job_kind,
     vendor_id: row.vendor_id,
-    mapping_id: row.mapping_id,
+    endpoint_mapping_id: row.endpoint_mapping_id,
     order_integration_state_id: row.order_integration_state_id ? Number(row.order_integration_state_id) : null,
     sync_scope: row.sync_scope,
     source_action: row.source_action,
@@ -362,7 +389,7 @@ function serializeOperatorTrace(row: {
   vendor_id: number | null;
   integration_job_id: bigint | null;
   order_integration_state_id: bigint | null;
-  sync_run_id: bigint | null;
+  etl_sync_run_id: bigint | null;
   method: string;
   target: string;
   action: string;
@@ -379,7 +406,7 @@ function serializeOperatorTrace(row: {
     vendor_id: row.vendor_id,
     integration_job_id: row.integration_job_id ? Number(row.integration_job_id) : null,
     order_integration_state_id: row.order_integration_state_id ? Number(row.order_integration_state_id) : null,
-    sync_run_id: row.sync_run_id ? Number(row.sync_run_id) : null,
+    etl_sync_run_id: row.etl_sync_run_id ? Number(row.etl_sync_run_id) : null,
     method: row.method,
     target: row.target,
     action: row.action,
@@ -394,7 +421,7 @@ function serializeOperatorTrace(row: {
 function serializeVendorProductMap(row: {
   vendor_product_map_id: bigint;
   vendor_id: number;
-  mapping_id: number | null;
+  endpoint_mapping_id: number | null;
   vendor_product_id: string | null;
   bigcommerce_product_id: bigint | null;
   sku: string;
@@ -405,7 +432,7 @@ function serializeVendorProductMap(row: {
   return {
     vendor_product_map_id: Number(row.vendor_product_map_id),
     vendor_id: row.vendor_id,
-    mapping_id: row.mapping_id,
+    endpoint_mapping_id: row.endpoint_mapping_id,
     vendor_product_id: row.vendor_product_id,
     bigcommerce_product_id: row.bigcommerce_product_id ? Number(row.bigcommerce_product_id) : null,
     sku: row.sku,
@@ -580,7 +607,7 @@ export async function listEndpointMappings(filters?: {
 
 export async function getEndpointMappingById(mappingId: number): Promise<EndpointMapping | null> {
   const row = await prisma.endpointMapping.findUnique({
-    where: { mapping_id: mappingId },
+    where: { endpoint_mapping_id: mappingId },
   });
   return row ? serializeEndpointMapping(row) : null;
 }
@@ -688,7 +715,7 @@ export async function listEndpointMappingsByIds(mappingIds: number[]): Promise<E
   if (mappingIds.length === 0) return [];
   const rows = await prisma.endpointMapping.findMany({
     where: {
-      mapping_id: {
+      endpoint_mapping_id: {
         in: mappingIds,
       },
     },
@@ -706,14 +733,14 @@ export async function upsertVendorEndpointMapping(
 ): Promise<VendorEndpointMapping> {
   const row = await prisma.vendorEndpointMapping.upsert({
     where: {
-      vendor_id_mapping_id: {
+      vendor_id_endpoint_mapping_id: {
         vendor_id: input.vendor_id,
-        mapping_id: input.mapping_id,
+        endpoint_mapping_id: input.endpoint_mapping_id,
       },
     },
     create: {
       vendor_id: input.vendor_id,
-      mapping_id: input.mapping_id,
+      endpoint_mapping_id: input.endpoint_mapping_id,
       is_enabled: input.is_enabled ?? true,
       runtime_config: toJson(input.runtime_config),
     },
@@ -730,28 +757,48 @@ export async function upsertVendorEndpointMapping(
 export async function listVendorEndpointMappings(vendorId: number): Promise<VendorEndpointMapping[]> {
   const rows = await prisma.vendorEndpointMapping.findMany({
     where: { vendor_id: vendorId },
-    orderBy: { mapping_id: 'asc' },
+    orderBy: { endpoint_mapping_id: 'asc' },
   });
   return rows.map(serializeVendorEndpointMapping);
+}
+
+export async function listVendorEndpointUrls(vendorId: number): Promise<VendorEndpointUrl[]> {
+  const rows = await prisma.vendorEndpointUrl.findMany({
+    where: { vendor_id: vendorId },
+    orderBy: { endpoint_mapping_id: 'asc' },
+  });
+  return rows.map(serializeVendorEndpointUrl);
 }
 
 export async function listEnabledVendorEndpointMappings(
   vendorId: number,
 ): Promise<Array<VendorEndpointMapping & { mapping: EndpointMapping }>> {
-  const rows = await prisma.vendorEndpointMapping.findMany({
-    where: {
-      vendor_id: vendorId,
-      is_enabled: true,
-    },
-    include: {
-      mapping: true,
-    },
-    orderBy: { mapping_id: 'asc' },
-  });
+  const [rows, endpointUrls] = await Promise.all([
+    prisma.vendorEndpointMapping.findMany({
+      where: {
+        vendor_id: vendorId,
+        is_enabled: true,
+      },
+      include: {
+        endpoint_mapping: true,
+      },
+      orderBy: { endpoint_mapping_id: 'asc' },
+    }),
+    prisma.vendorEndpointUrl.findMany({
+      where: { vendor_id: vendorId },
+      orderBy: { endpoint_mapping_id: 'asc' },
+    }),
+  ]);
+  const endpointUrlByMappingId = new Map(
+    endpointUrls.map(row => [row.endpoint_mapping_id, row.endpoint_url]),
+  );
 
   return rows.map(row => ({
-    ...serializeVendorEndpointMapping(row),
-    mapping: serializeEndpointMapping(row.mapping),
+    ...serializeVendorEndpointMapping({
+      ...row,
+      endpointUrl: endpointUrlByMappingId.get(row.endpoint_mapping_id) ?? null,
+    }),
+    mapping: serializeEndpointMapping(row.endpoint_mapping),
   }));
 }
 
@@ -770,7 +817,7 @@ export async function replaceVendorEndpointMappings(
     prisma.vendorEndpointMapping.deleteMany({
       where: {
         vendor_id: vendorId,
-        mapping_id: {
+        endpoint_mapping_id: {
           notIn: mappingIds,
         },
       },
@@ -778,14 +825,14 @@ export async function replaceVendorEndpointMappings(
     ...mappingIds.map(mappingId =>
       prisma.vendorEndpointMapping.upsert({
         where: {
-          vendor_id_mapping_id: {
+          vendor_id_endpoint_mapping_id: {
             vendor_id: vendorId,
-            mapping_id: mappingId,
+            endpoint_mapping_id: mappingId,
           },
         },
         create: {
           vendor_id: vendorId,
-          mapping_id: mappingId,
+          endpoint_mapping_id: mappingId,
           is_enabled: true,
           runtime_config: toJson({}),
         },
@@ -799,16 +846,69 @@ export async function replaceVendorEndpointMappings(
 
   const rows = await prisma.vendorEndpointMapping.findMany({
     where: { vendor_id: vendorId },
-    orderBy: { mapping_id: 'asc' },
+    orderBy: { endpoint_mapping_id: 'asc' },
   });
   return rows.map(serializeVendorEndpointMapping);
+}
+
+export async function replaceVendorEndpointUrls(
+  vendorId: number,
+  endpointUrls: VendorEndpointUrlInput[],
+): Promise<VendorEndpointUrl[]> {
+  if (endpointUrls.length === 0) {
+    await prisma.vendorEndpointUrl.deleteMany({
+      where: { vendor_id: vendorId },
+    });
+    return [];
+  }
+
+  const uniqueUrls = endpointUrls.filter(
+    (item, index, values) =>
+      values.findIndex(value => value.endpointMappingId === item.endpointMappingId) === index,
+  );
+
+  await prisma.$transaction([
+    prisma.vendorEndpointUrl.deleteMany({
+      where: {
+        vendor_id: vendorId,
+        endpoint_mapping_id: {
+          notIn: uniqueUrls.map(item => item.endpointMappingId),
+        },
+      },
+    }),
+    ...uniqueUrls.map(item =>
+      prisma.vendorEndpointUrl.upsert({
+        where: {
+          vendor_id_endpoint_mapping_id: {
+            vendor_id: vendorId,
+            endpoint_mapping_id: item.endpointMappingId,
+          },
+        },
+        create: {
+          vendor_id: vendorId,
+          endpoint_mapping_id: item.endpointMappingId,
+          endpoint_url: item.endpointUrl,
+        },
+        update: {
+          endpoint_url: item.endpointUrl,
+          updated_at: new Date(),
+        },
+      }),
+    ),
+  ]);
+
+  const rows = await prisma.vendorEndpointUrl.findMany({
+    where: { vendor_id: vendorId },
+    orderBy: { endpoint_mapping_id: 'asc' },
+  });
+  return rows.map(serializeVendorEndpointUrl);
 }
 
 export async function createSyncRun(input: SyncRunCreateInput): Promise<EtlSyncRun> {
   const row = await prisma.etlSyncRun.create({
     data: {
       vendor_id: input.vendor_id,
-      mapping_id: input.mapping_id ?? null,
+      endpoint_mapping_id: input.endpoint_mapping_id ?? null,
       sync_scope: input.sync_scope ?? 'MAPPING',
       status: 'PENDING',
       details: toJson(input.details),
@@ -822,7 +922,7 @@ export async function createIntegrationJob(input: IntegrationJobCreateInput): Pr
     data: {
       job_kind: input.job_kind,
       vendor_id: input.vendor_id,
-      mapping_id: input.mapping_id ?? null,
+      endpoint_mapping_id: input.endpoint_mapping_id ?? null,
       order_integration_state_id: input.order_integration_state_id
         ? BigInt(input.order_integration_state_id)
         : null,
@@ -849,7 +949,7 @@ export async function getIntegrationJobById(integrationJobId: number): Promise<I
 
 export async function getSyncRunById(syncRunId: number): Promise<EtlSyncRun | null> {
   const row = await prisma.etlSyncRun.findUnique({
-    where: { sync_run_id: BigInt(syncRunId) },
+    where: { etl_sync_run_id: BigInt(syncRunId) },
   });
   return row ? serializeSyncRun(row) : null;
 }
@@ -1008,7 +1108,7 @@ export async function createOperatorTrace(
       order_integration_state_id: input.order_integration_state_id
         ? BigInt(input.order_integration_state_id)
         : null,
-      sync_run_id: input.sync_run_id ? BigInt(input.sync_run_id) : null,
+      etl_sync_run_id: input.etl_sync_run_id ? BigInt(input.etl_sync_run_id) : null,
       method: input.method,
       target: input.target,
       action: input.action,
@@ -1033,7 +1133,7 @@ export async function listOperatorTraces(filters?: {
   vendor_id?: number;
   integration_job_id?: number;
   order_integration_state_id?: number;
-  sync_run_id?: number;
+  etl_sync_run_id?: number;
   correlation_id?: string;
   categories?: OperatorTraceCategory[];
   limit?: number;
@@ -1045,7 +1145,7 @@ export async function listOperatorTraces(filters?: {
       order_integration_state_id: filters?.order_integration_state_id
         ? BigInt(filters.order_integration_state_id)
         : undefined,
-      sync_run_id: filters?.sync_run_id ? BigInt(filters.sync_run_id) : undefined,
+      etl_sync_run_id: filters?.etl_sync_run_id ? BigInt(filters.etl_sync_run_id) : undefined,
       correlation_id: filters?.correlation_id,
       category: filters?.categories?.length ? { in: filters.categories } : undefined,
     },
@@ -1256,7 +1356,7 @@ export async function findDueOrderIntegrationStates(input: {
 
 export async function markSyncRunRunning(syncRunId: number): Promise<EtlSyncRun | null> {
   const row = await prisma.etlSyncRun.update({
-    where: { sync_run_id: BigInt(syncRunId) },
+    where: { etl_sync_run_id: BigInt(syncRunId) },
     data: {
       status: 'RUNNING',
       started_at: new Date(),
@@ -1288,16 +1388,16 @@ export async function reconcileStaleCatalogSyncRunsForVendor(vendorId: number): 
         },
       },
       orderBy: {
-        sync_run_id: 'desc',
+        etl_sync_run_id: 'desc',
       },
       select: {
-        sync_run_id: true,
+        etl_sync_run_id: true,
       },
     }),
   ]);
 
   const keepCount = Math.min(activeCatalogJobCount, activeRuns.length);
-  const staleRunIds = activeRuns.slice(keepCount).map(run => run.sync_run_id);
+  const staleRunIds = activeRuns.slice(keepCount).map(run => run.etl_sync_run_id);
   if (staleRunIds.length === 0) {
     return 0;
   }
@@ -1309,7 +1409,7 @@ export async function reconcileStaleCatalogSyncRunsForVendor(vendorId: number): 
 
   const result = await prisma.etlSyncRun.updateMany({
     where: {
-      sync_run_id: {
+      etl_sync_run_id: {
         in: staleRunIds,
       },
       status: {
@@ -1328,7 +1428,7 @@ export async function reconcileStaleCatalogSyncRunsForVendor(vendorId: number): 
 
 export async function updateSyncRunProgress(input: SyncRunProgressInput): Promise<EtlSyncRun | null> {
   const row = await prisma.etlSyncRun.update({
-    where: { sync_run_id: BigInt(input.sync_run_id) },
+    where: { etl_sync_run_id: BigInt(input.etl_sync_run_id) },
     data: {
       records_read: input.records_read ?? undefined,
       records_written: input.records_written ?? undefined,
@@ -1341,7 +1441,7 @@ export async function updateSyncRunProgress(input: SyncRunProgressInput): Promis
 
 export async function completeSyncRun(input: SyncRunCompleteInput): Promise<EtlSyncRun | null> {
   const row = await prisma.etlSyncRun.update({
-    where: { sync_run_id: BigInt(input.sync_run_id) },
+    where: { etl_sync_run_id: BigInt(input.etl_sync_run_id) },
     data: {
       status: input.status,
       ended_at: new Date(),
@@ -1358,7 +1458,7 @@ export async function completeSyncRun(input: SyncRunCompleteInput): Promise<EtlS
 export async function listSyncRunsForVendor(vendorId: number, limit = 50): Promise<EtlSyncRun[]> {
   const rows = await prisma.etlSyncRun.findMany({
     where: { vendor_id: vendorId },
-    orderBy: { sync_run_id: 'desc' },
+    orderBy: { etl_sync_run_id: 'desc' },
     take: limit,
   });
   return rows.map(serializeSyncRun);
@@ -1376,7 +1476,7 @@ export async function upsertVendorProductMap(
     },
     create: {
       vendor_id: input.vendor_id,
-      mapping_id: input.mapping_id ?? null,
+      endpoint_mapping_id: input.endpoint_mapping_id ?? null,
       vendor_product_id: input.vendor_product_id ?? null,
       bigcommerce_product_id: input.bigcommerce_product_id ? BigInt(input.bigcommerce_product_id) : null,
       sku: input.sku,
@@ -1384,7 +1484,7 @@ export async function upsertVendorProductMap(
       metadata: toJson(input.metadata),
     },
     update: {
-      mapping_id: input.mapping_id ?? null,
+      endpoint_mapping_id: input.endpoint_mapping_id ?? null,
       vendor_product_id: input.vendor_product_id ?? null,
       bigcommerce_product_id: input.bigcommerce_product_id ? BigInt(input.bigcommerce_product_id) : null,
       product_name: input.product_name,

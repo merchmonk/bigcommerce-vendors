@@ -134,7 +134,7 @@ async function enqueueIntegrationJob(input: {
   const job = await createIntegrationJob({
     job_kind: input.jobKind,
     vendor_id: input.vendorId,
-    mapping_id: input.mappingId ?? null,
+    endpoint_mapping_id: input.mappingId ?? null,
     order_integration_state_id: input.orderIntegrationStateId ?? null,
     sync_scope: input.syncScope ?? 'ALL',
     source_action: input.sourceAction,
@@ -200,7 +200,7 @@ async function enqueueIntegrationJob(input: {
     detail: {
       integration_job_id: job.integration_job_id,
       vendor_id: job.vendor_id,
-      mapping_id: job.mapping_id,
+      endpoint_mapping_id: job.endpoint_mapping_id,
       order_integration_state_id: job.order_integration_state_id,
       sync_scope: job.sync_scope,
       source_action: job.source_action,

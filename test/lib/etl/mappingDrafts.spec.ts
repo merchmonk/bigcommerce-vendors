@@ -1,11 +1,13 @@
 import { applyVendorMappingDrafts, resolveMappingDrafts } from '@lib/etl/mappingDrafts';
 
 const mockReplaceVendorEndpointMappings = jest.fn();
+const mockReplaceVendorEndpointUrls = jest.fn();
 const mockUpsertEndpointMapping = jest.fn();
 const mockUpsertVendorEndpointMapping = jest.fn();
 
 jest.mock('@lib/etl/repository', () => ({
   replaceVendorEndpointMappings: (...args: unknown[]) => mockReplaceVendorEndpointMappings(...args),
+  replaceVendorEndpointUrls: (...args: unknown[]) => mockReplaceVendorEndpointUrls(...args),
   upsertEndpointMapping: (...args: unknown[]) => mockUpsertEndpointMapping(...args),
   upsertVendorEndpointMapping: (...args: unknown[]) => mockUpsertVendorEndpointMapping(...args),
 }));
@@ -19,6 +21,7 @@ describe('mappingDrafts', () => {
     mockUpsertEndpointMapping.mockResolvedValue({
       mapping_id: 321,
     });
+    mockReplaceVendorEndpointUrls.mockResolvedValue([]);
 
     const resolved = await resolveMappingDrafts({
       integrationFamily: 'CUSTOM',
@@ -70,16 +73,24 @@ describe('mappingDrafts', () => {
       {
         mappingId: 4,
         enabled: true,
-        runtimeConfig: { endpoint_url: 'https://example.com' },
+        runtimeConfig: {},
+        endpointUrl: 'https://example.com',
       },
     ]);
 
     expect(mockReplaceVendorEndpointMappings).toHaveBeenCalledWith(55, [4]);
+    expect(mockReplaceVendorEndpointUrls).toHaveBeenCalledWith(55, [
+      {
+        vendorId: 55,
+        endpointMappingId: 4,
+        endpointUrl: 'https://example.com',
+      },
+    ]);
     expect(mockUpsertVendorEndpointMapping).toHaveBeenCalledWith({
       vendor_id: 55,
       mapping_id: 4,
       is_enabled: true,
-      runtime_config: { endpoint_url: 'https://example.com' },
+      runtime_config: {},
     });
   });
 });

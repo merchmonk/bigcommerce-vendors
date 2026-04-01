@@ -13,7 +13,6 @@ import {
   upsertRelatedProducts,
 } from './bigcommerceCatalog';
 import { resolveEndpointAdapter } from './adapters/factory';
-import { resolveRuntimeEndpointUrl } from './endpointUrl';
 import { normalizeProductsFromEndpoint, type NormalizedProduct } from './productNormalizer';
 import { buildProductAssembly } from './productEnrichment';
 import {
@@ -72,7 +71,7 @@ export interface SyncRunResult {
   recordsRead: number;
   recordsWritten: number;
   endpointResults: Array<{
-    mapping_id: number;
+    endpoint_mapping_id: number;
     endpoint_name: string;
     endpoint_version: string;
     operation_name: string;
@@ -87,10 +86,10 @@ export interface SyncRunResult {
   };
 }
 
-const EARLY_SYNC_CANARY_PRODUCT_COUNT = 2;
+const EARLY_SYNC_CANARY_PRODUCT_COUNT = 5;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_MIN_ATTEMPTS = 100;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO = 0.5;
-const DEFAULT_MAX_PRODUCT_REFERENCES_PER_RUN = 50;
+const DEFAULT_MAX_PRODUCT_REFERENCES_PER_RUN = 15;
 const INVENTORY_SYNC_FLUSH_TARGET_COUNT = 25;
 
 interface ProductAssemblyStatusSummary {
@@ -235,9 +234,9 @@ function mappingKey(mapping: { endpoint_name: string; endpoint_version: string; 
 function shouldRunMapping(input: {
   mappingId?: number;
   syncAll?: boolean;
-  mapping: { mapping_id: number; is_product_endpoint: boolean };
+  mapping: { endpoint_mapping_id: number; is_product_endpoint: boolean };
 }): boolean {
-  if (input.mappingId) return input.mapping.mapping_id === input.mappingId;
+  if (input.mappingId) return input.mapping.endpoint_mapping_id === input.mappingId;
   if (input.syncAll) return input.mapping.is_product_endpoint;
   return input.mapping.is_product_endpoint;
 }
@@ -489,7 +488,7 @@ async function persistSyncProgress(input: {
   }>;
 }): Promise<void> {
   await updateSyncRunProgress({
-    sync_run_id: input.syncRunId,
+    etl_sync_run_id: input.syncRunId,
     records_read: input.recordsRead,
     records_written: input.recordsWritten,
     details: buildSyncProgressDetails(input),
@@ -578,21 +577,18 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
   if (!vendor) {
     throw new Error(`Vendor ${input.vendorId} not found`);
   }
-  if (!vendor.vendor_api_url) {
-    throw new Error(`Vendor ${input.vendorId} does not have vendor_api_url configured`);
-  }
 
   const syncRun = await createSyncRun({
     vendor_id: input.vendorId,
-    mapping_id: input.mappingId ?? null,
+    endpoint_mapping_id: input.mappingId ?? null,
     sync_scope: input.syncAll ? 'ALL' : 'MAPPING',
     details: {},
   });
   mergeRequestContext({
     vendorId: input.vendorId,
-    syncRunId: syncRun.sync_run_id,
+    syncRunId: syncRun.etl_sync_run_id,
   });
-  await markSyncRunRunning(syncRun.sync_run_id);
+  await markSyncRunRunning(syncRun.etl_sync_run_id);
   await reconcileStaleCatalogSyncRunsForVendor(input.vendorId);
 
   let endpointResults: SyncRunResult['endpointResults'] = [];
@@ -633,7 +629,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     );
 
     logger.info('vendor sync BigCommerce inventory batch started', {
-      syncRunId: syncRun.sync_run_id,
+      syncRunId: syncRun.etl_sync_run_id,
       vendorId: input.vendorId,
       reason,
       targetCount: targets.length,
@@ -648,7 +644,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     });
 
     logger.info('vendor sync BigCommerce inventory batch completed', {
-      syncRunId: syncRun.sync_run_id,
+      syncRunId: syncRun.etl_sync_run_id,
       vendorId: input.vendorId,
       reason,
       targetCount: targets.length,
@@ -660,7 +656,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
   try {
     const priorSyncRuns = await listSyncRunsForVendor(input.vendorId);
     const lastSuccessfulSync = priorSyncRuns.find(
-      run => run.sync_run_id !== syncRun.sync_run_id && run.status === 'SUCCESS',
+      run => run.etl_sync_run_id !== syncRun.etl_sync_run_id && run.status === 'SUCCESS',
     );
     const lastSuccessfulSyncAt =
       input.continuation?.initial_last_successful_sync_at ??
@@ -674,7 +670,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         mappingId: input.mappingId,
         syncAll: input.syncAll,
         mapping: {
-          mapping_id: item.mapping_id,
+          endpoint_mapping_id: item.endpoint_mapping_id,
           is_product_endpoint: item.mapping?.is_product_endpoint,
         },
       }),
@@ -682,14 +678,14 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
     if (selectedMappings.length === 0) {
       await completeSyncRun({
-        sync_run_id: syncRun.sync_run_id,
+        etl_sync_run_id: syncRun.etl_sync_run_id,
         status: 'SUCCESS',
         records_read: 0,
         records_written: 0,
         details: { endpointResults: [], message: 'No eligible mappings assigned for this vendor' },
       });
       return {
-        syncRunId: syncRun.sync_run_id,
+        syncRunId: syncRun.etl_sync_run_id,
         recordsRead: 0,
         recordsWritten: 0,
         endpointResults: [],
@@ -718,7 +714,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         : [];
 
     logger.info('vendor sync mapping selection completed', {
-      syncRunId: syncRun.sync_run_id,
+      syncRunId: syncRun.etl_sync_run_id,
       vendorId: input.vendorId,
       assignedMappingCount: assignedMappings.length,
       selectedMappingCount: selectedMappings.length,
@@ -742,7 +738,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       discovery.endpointResults.forEach(result => endpointResults.push(result));
 
       logger.info('vendor sync product discovery completed', {
-        syncRunId: syncRun.sync_run_id,
+        syncRunId: syncRun.etl_sync_run_id,
         vendorId: input.vendorId,
         discoveredProductCount: discovery.references.length,
         discoveryEndpointCount: discovery.endpointResults.length,
@@ -761,7 +757,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       const hasMoreReferences = batchingEnabled && nextStartReferenceIndex < totalReferences;
 
       await persistSyncProgress({
-        syncRunId: syncRun.sync_run_id,
+        syncRunId: syncRun.etl_sync_run_id,
         phase: 'DISCOVERY',
         totalReferences,
         processedReferences: 0,
@@ -775,7 +771,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
       if (discovery.getProductConfig && discovery.references.length > 0) {
         logger.info('vendor sync BigCommerce upsert phase started', {
-          syncRunId: syncRun.sync_run_id,
+          syncRunId: syncRun.etl_sync_run_id,
           vendorId: input.vendorId,
           productCount: batchReferences.length,
           markupPercent: pricingContext.markup_percent,
@@ -796,7 +792,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
         if (fetchResult.status >= 400) {
           endpointResults.push({
-            mapping_id: discovery.getProductConfig?.mapping.mapping_id ?? 0,
+            endpoint_mapping_id: discovery.getProductConfig?.mapping.endpoint_mapping_id ?? 0,
             endpoint_name: discovery.getProductConfig?.mapping.endpoint_name ?? 'ProductData',
             endpoint_version: discovery.getProductConfig?.mapping.endpoint_version ?? '',
             operation_name: 'getProduct',
@@ -828,7 +824,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
         if (mergedFetchedProducts.length > 0 && unprocessedFetchedProducts.length === 0) {
           logger.info('vendor sync skipped duplicate product reference', {
-            syncRunId: syncRun.sync_run_id,
+            syncRunId: syncRun.etl_sync_run_id,
             vendorId: input.vendorId,
             productId: reference.productId,
             partId: reference.partId ?? null,
@@ -890,7 +886,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         if (mergedFetchedProducts.length > 0 && assembly.products.length === 0) {
           const blockedSummary = summarizeBlockedProducts(assembly.statuses);
           logger.warn('vendor sync skipped blocked product before BigCommerce write', {
-            syncRunId: syncRun.sync_run_id,
+            syncRunId: syncRun.etl_sync_run_id,
             vendorId: input.vendorId,
             productId: reference.productId,
             blockedProductCount: blockedSummary.blockedCount,
@@ -917,7 +913,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
             if (partialUpsert) {
               await upsertVendorProductMap({
                 vendor_id: input.vendorId,
-                mapping_id: input.mappingId ?? null,
+                endpoint_mapping_id: input.mappingId ?? null,
                 vendor_product_id: product.vendor_product_id ?? product.sku,
                 bigcommerce_product_id: partialUpsert.product.id,
                 sku: partialUpsert.resolvedSku,
@@ -949,7 +945,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
           await upsertVendorProductMap({
             vendor_id: input.vendorId,
-            mapping_id: input.mappingId ?? null,
+            endpoint_mapping_id: input.mappingId ?? null,
             vendor_product_id: product.vendor_product_id ?? product.sku,
             bigcommerce_product_id: upsertResult.product.id,
             sku: upsertResult.resolvedSku,
@@ -998,7 +994,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
           }
 
           logger.info('vendor sync BigCommerce product upsert completed', {
-            syncRunId: syncRun.sync_run_id,
+            syncRunId: syncRun.etl_sync_run_id,
             vendorId: input.vendorId,
             sku: upsertResult.resolvedSku,
             vendorProductId: product.vendor_product_id ?? null,
@@ -1010,7 +1006,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
         if (shouldPersistProgress(getProductCallCount)) {
           await persistSyncProgress({
-            syncRunId: syncRun.sync_run_id,
+            syncRunId: syncRun.etl_sync_run_id,
             phase: 'UPSERT',
             totalReferences,
             processedReferences: startReferenceIndex + getProductCallCount,
@@ -1027,7 +1023,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       }
 
       endpointResults.push({
-        mapping_id: discovery.getProductConfig.mapping.mapping_id,
+        endpoint_mapping_id: discovery.getProductConfig.mapping.endpoint_mapping_id,
         endpoint_name: discovery.getProductConfig.mapping.endpoint_name,
         endpoint_version: discovery.getProductConfig.mapping.endpoint_version,
         operation_name: discovery.getProductConfig.mapping.operation_name,
@@ -1072,14 +1068,11 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
       const mapping = assigned.mapping;
       const runtimeConfig = (assigned.runtime_config ?? {}) as Record<string, unknown>;
-      const endpointUrl = resolveRuntimeEndpointUrl({
-        vendorApiUrl: vendor.vendor_api_url,
-        runtimeConfig,
-      });
+      const endpointUrl = assigned.endpointUrl?.trim() ?? '';
       const operationName = mapping.operation_name || (runtimeConfig.operation_name as string | undefined) || '';
       if (!endpointUrl || !operationName) {
         endpointResults.push({
-          mapping_id: mapping.mapping_id,
+          endpoint_mapping_id: mapping.endpoint_mapping_id,
           endpoint_name: mapping.endpoint_name,
           endpoint_version: mapping.endpoint_version,
           operation_name: mapping.operation_name,
@@ -1115,7 +1108,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       );
       baseProducts.push(...products);
       endpointResults.push({
-        mapping_id: mapping.mapping_id,
+        endpoint_mapping_id: mapping.endpoint_mapping_id,
         endpoint_name: mapping.endpoint_name,
         endpoint_version: mapping.endpoint_version,
         operation_name: operationName,
@@ -1135,7 +1128,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
     mergedBaseProducts = mergeProducts(baseProducts);
     logger.info('vendor sync base product merge completed', {
-      syncRunId: syncRun.sync_run_id,
+      syncRunId: syncRun.etl_sync_run_id,
       vendorId: input.vendorId,
       rawProductCount: baseProducts.length,
       mergedProductCount: mergedBaseProducts.length,
@@ -1156,7 +1149,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
       const blockedSummary = summarizeBlockedProducts(assembly.statuses);
       logger.info('vendor sync product assembly completed', {
-        syncRunId: syncRun.sync_run_id,
+        syncRunId: syncRun.etl_sync_run_id,
         vendorId: input.vendorId,
         baseProductCount: mergedBaseProducts.length,
         assembledProductCount: assembly.products.length,
@@ -1187,7 +1180,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
       if (mergedBaseProducts.length > 0 && assembly.products.length === 0) {
         logger.warn('vendor sync skipped blocked products before BigCommerce write', {
-          syncRunId: syncRun.sync_run_id,
+          syncRunId: syncRun.etl_sync_run_id,
           vendorId: input.vendorId,
           blockedProductCount: blockedSummary.blockedCount,
           topGatingReasons: blockedSummary.topGatingReasons,
@@ -1206,7 +1199,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       }
 
       logger.info('vendor sync BigCommerce upsert phase started', {
-        syncRunId: syncRun.sync_run_id,
+        syncRunId: syncRun.etl_sync_run_id,
         vendorId: input.vendorId,
         productCount: assembly.products.length,
         markupPercent: pricingContext.markup_percent,
@@ -1227,7 +1220,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
         await upsertVendorProductMap({
           vendor_id: input.vendorId,
-          mapping_id: input.mappingId ?? null,
+          endpoint_mapping_id: input.mappingId ?? null,
           vendor_product_id: product.vendor_product_id ?? product.sku,
           bigcommerce_product_id: upsertResult.product.id,
           sku: upsertResult.resolvedSku,
@@ -1280,7 +1273,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         }
 
         logger.info('vendor sync BigCommerce product upsert completed', {
-          syncRunId: syncRun.sync_run_id,
+          syncRunId: syncRun.etl_sync_run_id,
           vendorId: input.vendorId,
           sku: upsertResult.resolvedSku,
           vendorProductId: product.vendor_product_id ?? null,
@@ -1294,7 +1287,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     await flushPendingInventorySyncTargets('finalize', true);
 
     await persistSyncProgress({
-      syncRunId: syncRun.sync_run_id,
+      syncRunId: syncRun.etl_sync_run_id,
       phase: 'FINALIZING',
       recordsRead,
       recordsWritten,
@@ -1332,7 +1325,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     }
 
     await completeSyncRun({
-      sync_run_id: syncRun.sync_run_id,
+      etl_sync_run_id: syncRun.etl_sync_run_id,
       status: 'SUCCESS',
       records_read: recordsRead,
       records_written: recordsWritten,
@@ -1351,7 +1344,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     });
 
     return {
-      syncRunId: syncRun.sync_run_id,
+      syncRunId: syncRun.etl_sync_run_id,
       recordsRead,
       recordsWritten,
       endpointResults,
@@ -1363,7 +1356,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
         await flushPendingInventorySyncTargets('failure', true);
       } catch (inventoryError) {
         logger.error('vendor sync inventory flush failed after sync error', {
-          syncRunId: syncRun.sync_run_id,
+          syncRunId: syncRun.etl_sync_run_id,
           vendorId: input.vendorId,
           pendingTargetCount: pendingInventorySyncTargets.length,
           error: {
@@ -1375,7 +1368,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
     if (error?.name === 'IntegrationJobCancelledError') {
       await persistSyncProgress({
-        syncRunId: syncRun.sync_run_id,
+        syncRunId: syncRun.etl_sync_run_id,
         phase: 'CANCELLED',
         recordsRead,
         recordsWritten,
@@ -1387,7 +1380,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     }
 
     logger.error('vendor sync failed', {
-      syncRunId: syncRun.sync_run_id,
+      syncRunId: syncRun.etl_sync_run_id,
       vendorId: input.vendorId,
       recordsRead,
       recordsWritten,
@@ -1400,7 +1393,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     });
 
     await completeSyncRun({
-      sync_run_id: syncRun.sync_run_id,
+      etl_sync_run_id: syncRun.etl_sync_run_id,
       status: error?.name === 'IntegrationJobCancelledError' ? 'CANCELLED' : 'FAILED',
       error_message: error?.message ?? 'ETL sync failed',
       details: {
@@ -1420,12 +1413,8 @@ export async function testVendorConnection(input: TestConnectionInput): Promise<
   if (!vendor) {
     throw new Error(`Vendor ${input.vendorId} not found`);
   }
-  if (!vendor.vendor_api_url) {
-    throw new Error('Vendor API URL is required');
-  }
-
   return testVendorConnectionConfig({
-    vendorApiUrl: vendor.vendor_api_url,
+    vendorApiUrl: vendor.vendor_api_url ?? '',
     vendorAccountId: vendor.vendor_account_id,
     vendorSecret: vendor.vendor_secret,
     apiProtocol: (vendor.api_protocol ?? 'SOAP') as MappingProtocol,
@@ -1438,10 +1427,7 @@ export async function testVendorConnectionConfig(
   const protocol = input.apiProtocol ?? 'SOAP';
   const adapter = resolveEndpointAdapter(protocol);
   return adapter.testConnection({
-    endpointUrl: resolveRuntimeEndpointUrl({
-      vendorApiUrl: input.vendorApiUrl,
-      runtimeConfig: input.runtimeConfig,
-    }),
+    endpointUrl: input.vendorApiUrl,
     endpointName: input.endpointName ?? 'CompanyData',
     vendorAccountId: input.vendorAccountId,
     vendorSecret: input.vendorSecret,

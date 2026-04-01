@@ -1,4 +1,9 @@
-import { buildSoapEnvelope, resolveSoapEndpointUrl, resolveSoapOperationName } from '../../lib/etl/soapClient';
+import {
+  buildSoapEnvelope,
+  getBuiltInSoapOperationMetadata,
+  resolveSoapEndpointUrl,
+  resolveSoapOperationName,
+} from '../../lib/etl/soapClient';
 
 describe('resolveSoapEndpointUrl', () => {
   it('appends endpoint name and version to a base vendor URL', () => {
@@ -60,6 +65,27 @@ describe('resolveSoapEndpointUrl', () => {
       }),
     ).toBe('https://vendor.example.com/api/promostandards/PPC/1.0.0/soap');
   });
+
+  it('preserves explicit service endpoint URLs that use a vendor-specific version token and trailing svc segment', () => {
+    expect(
+      resolveSoapEndpointUrl({
+        endpointUrl: 'https://wsp.gemline.com/GemlineWebService/Inventory/v2/GemlineInventoryService.svc',
+        endpointName: 'Inventory',
+        endpointVersion: '2.0.0',
+      }),
+    ).toBe('https://wsp.gemline.com/GemlineWebService/Inventory/v2/GemlineInventoryService.svc');
+  });
+
+  it('treats explicit custom endpoint URLs as final when requested by the caller', () => {
+    expect(
+      resolveSoapEndpointUrl({
+        endpointUrl: 'https://wsp.gemline.com/GemlineWebService/ProductData/v2/GemlineProductDataService.svc',
+        endpointUrlIsFinal: true,
+        endpointName: 'ProductData',
+        endpointVersion: '2.0.0',
+      }),
+    ).toBe('https://wsp.gemline.com/GemlineWebService/ProductData/v2/GemlineProductDataService.svc');
+  });
 });
 
 describe('resolveSoapOperationName', () => {
@@ -83,6 +109,46 @@ describe('resolveSoapOperationName', () => {
 });
 
 describe('buildSoapEnvelope', () => {
+  it('ships built-in ProductData metadata for worker-safe document-literal requests', () => {
+    expect(
+      getBuiltInSoapOperationMetadata({
+        endpointName: 'ProductData',
+        endpointVersion: '2.0.0',
+        operationName: 'getProductSellable',
+      }),
+    ).toEqual({
+      requestElementName: 'GetProductSellableRequest',
+      targetNamespace: 'http://www.promostandards.org/WSDL/ProductDataService/2.0.0/',
+      childElementNamespace: 'http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/',
+    });
+  });
+
+  it('ships built-in metadata for other worker-enriched document-literal services', () => {
+    expect(
+      getBuiltInSoapOperationMetadata({
+        endpointName: 'PricingAndConfiguration',
+        endpointVersion: '1.0.0',
+        operationName: 'getAvailableLocations',
+      }),
+    ).toEqual({
+      requestElementName: 'GetAvailableLocationsRequest',
+      targetNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/',
+      childElementNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/',
+    });
+
+    expect(
+      getBuiltInSoapOperationMetadata({
+        endpointName: 'Inventory',
+        endpointVersion: '2.0.0',
+        operationName: 'getInventoryLevels',
+      }),
+    ).toEqual({
+      requestElementName: 'GetInventoryLevelsRequest',
+      targetNamespace: 'http://www.promostandards.org/WSDL/Inventory/2.0.0/',
+      childElementNamespace: 'http://www.promostandards.org/WSDL/Inventory/2.0.0/SharedObjects/',
+    });
+  });
+
   it('does not emit unbound urn-prefixed child elements for document-literal requests', () => {
     const envelope = buildSoapEnvelope(
       {
@@ -96,15 +162,40 @@ describe('buildSoapEnvelope', () => {
       {
         requestElementName: 'GetProductSellableRequest',
         targetNamespace: 'http://www.promostandards.org/WSDL/ProductDataService/2.0.0/',
+        childElementNamespace: 'http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/',
       },
     );
 
     expect(envelope).toContain('<tns:GetProductSellableRequest>');
-    expect(envelope).toContain('<wsVersion>2.0.0</wsVersion>');
-    expect(envelope).toContain('<id>acct-1</id>');
-    expect(envelope).toContain('<password>secret-1</password>');
+    expect(envelope).toContain('xmlns:sh="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/"');
+    expect(envelope).toContain('<sh:wsVersion>2.0.0</sh:wsVersion>');
+    expect(envelope).toContain('<sh:id>acct-1</sh:id>');
+    expect(envelope).toContain('<sh:password>secret-1</sh:password>');
     expect(envelope).not.toContain('<urn:wsVersion>');
     expect(envelope).not.toContain('<urn:id>');
     expect(envelope).not.toContain('<urn:password>');
+  });
+
+  it('keeps child elements in the request namespace when no shared namespace is required', () => {
+    const envelope = buildSoapEnvelope(
+      {
+        endpointUrl: 'https://vendor.example.com',
+        endpointName: 'ProductCompliance',
+        endpointVersion: '1.0.0',
+        operationName: 'getCompliance',
+        vendorAccountId: 'acct-1',
+        vendorSecret: 'secret-1',
+      },
+      {
+        requestElementName: 'GetComplianceRequest',
+        targetNamespace: 'http://www.promostandards.org/WSDL/ProductComplianceService/1.0.0/',
+      },
+    );
+
+    expect(envelope).toContain('<tns:GetComplianceRequest>');
+    expect(envelope).not.toContain('xmlns:sh=');
+    expect(envelope).toContain('<wsVersion>1.0.0</wsVersion>');
+    expect(envelope).toContain('<id>acct-1</id>');
+    expect(envelope).toContain('<password>secret-1</password>');
   });
 });

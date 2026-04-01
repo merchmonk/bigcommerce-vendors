@@ -1,7 +1,6 @@
 import type { IntegrationJob, IntegrationJobKind, OrderIntegrationState, OrderLifecycleStatus } from '../../types';
 import { getVendorById } from '../vendors';
 import { resolveEndpointAdapter } from '../etl/adapters/factory';
-import { resolveRuntimeEndpointUrl } from '../etl/endpointUrl';
 import {
   getOrderIntegrationStateById,
   updateOrderIntegrationState,
@@ -322,16 +321,19 @@ async function invokeCapability(
   requestFields: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const vendor = await getVendorById(context.orderIntegrationState.vendor_id);
-  if (!vendor?.vendor_api_url) {
-    throw makeOrderError(`Vendor ${context.orderIntegrationState.vendor_id} is missing vendor_api_url.`, 409);
+  if (!vendor) {
+    throw makeOrderError(`Vendor ${context.orderIntegrationState.vendor_id} not found.`, 404);
+  }
+  if (!capability.endpointUrl) {
+    throw makeOrderError(
+      `${capability.endpoint_name} ${capability.endpoint_version} is missing a saved endpoint URL.`,
+      409,
+    );
   }
 
   const adapter = resolveEndpointAdapter(capability.protocol);
   const result = await adapter.invokeEndpoint({
-    endpointUrl: resolveRuntimeEndpointUrl({
-      vendorApiUrl: vendor.vendor_api_url,
-      runtimeConfig: capability.runtime_config,
-    }),
+    endpointUrl: capability.endpointUrl,
     endpointName: capability.endpoint_name,
     operationName: capability.operation_name,
     endpointVersion: capability.endpoint_version,

@@ -3,6 +3,7 @@ import type {
   EndpointMappingDraft,
   IntegrationFamily,
   PromostandardsCapabilityMatrix,
+  PromostandardsEndpointCapability,
 } from '../../types';
 
 interface VendorConnectionSections {
@@ -25,11 +26,10 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-interface PromostandardsEndpointRuntimeOverride {
-  endpoint_name?: string;
-  endpoint_version?: string;
-  operation_name?: string;
-  runtime_config?: EndpointMappingDraft['runtime_config'];
+interface PromostandardsEndpointUrlOverride {
+  endpointName?: string;
+  endpointVersion?: string | null;
+  endpointUrl?: string | null;
 }
 
 export function getVendorConnectionSections(connectionConfig: unknown): VendorConnectionSections {
@@ -79,19 +79,19 @@ export function buildVendorConnectionConfig(input: {
   return nextConfig;
 }
 
-export function applyPromostandardsEndpointRuntimeOverrides(input: {
+export function applyPromostandardsEndpointUrlOverrides(input: {
   capabilities?: PromostandardsCapabilityMatrix | null;
-  endpointMappings?: PromostandardsEndpointRuntimeOverride[];
+  endpointUrls?: PromostandardsEndpointUrlOverride[];
 }): PromostandardsCapabilityMatrix | undefined {
   const capabilities = input.capabilities ?? undefined;
-  if (!capabilities || !Array.isArray(input.endpointMappings) || input.endpointMappings.length === 0) {
+  if (!capabilities || !Array.isArray(input.endpointUrls) || input.endpointUrls.length === 0) {
     return capabilities ?? undefined;
   }
 
   const overrideBySelection = new Map(
-    input.endpointMappings.map(mapping => [
-      `${mapping.endpoint_name ?? ''}|${mapping.endpoint_version ?? ''}|${mapping.operation_name ?? ''}`,
-      asRecord(mapping.runtime_config),
+    input.endpointUrls.map(endpoint => [
+      `${endpoint.endpointName ?? ''}|${endpoint.endpointVersion ?? ''}`,
+      readString(endpoint.endpointUrl),
     ]),
   );
 
@@ -99,30 +99,61 @@ export function applyPromostandardsEndpointRuntimeOverrides(input: {
     ...capabilities,
     endpoints: capabilities.endpoints.map(endpoint => {
       const runtimeConfig = overrideBySelection.get(
-        `${endpoint.endpoint_name}|${endpoint.endpoint_version}|${endpoint.operation_name}`,
+        `${endpoint.endpointName}|${endpoint.endpointVersion ?? ''}`,
       );
       if (!runtimeConfig) {
         return endpoint;
       }
 
-      const customEndpointUrl =
-        readString(runtimeConfig.endpoint_path) ||
-        readString(runtimeConfig.endpointPath) ||
-        readString(runtimeConfig.custom_endpoint_path);
-      const resolvedEndpointUrl =
-        readString(runtimeConfig.endpoint_url) ||
-        readString(runtimeConfig.endpointUrl);
-
-      if (!customEndpointUrl && !resolvedEndpointUrl) {
-        return endpoint;
-      }
-
       return {
         ...endpoint,
-        custom_endpoint_url: customEndpointUrl ?? endpoint.custom_endpoint_url ?? null,
-        resolved_endpoint_url: resolvedEndpointUrl ?? endpoint.resolved_endpoint_url ?? null,
+        endpointUrl: runtimeConfig ?? endpoint.endpointUrl,
       };
     }),
+  };
+}
+
+export function buildPromostandardsCapabilitiesFromSavedEndpoints(input: {
+  existingCapabilities?: PromostandardsCapabilityMatrix | null;
+  endpointUrls?: PromostandardsEndpointUrlOverride[];
+}): PromostandardsCapabilityMatrix | null {
+  const existingCapabilities = input.existingCapabilities ?? null;
+  const endpointUrls = input.endpointUrls ?? [];
+
+  if (existingCapabilities) {
+    return applyPromostandardsEndpointUrlOverrides({
+      capabilities: existingCapabilities,
+      endpointUrls,
+    }) ?? existingCapabilities;
+  }
+
+  if (endpointUrls.length === 0) {
+    return null;
+  }
+
+  const endpoints = endpointUrls
+    .filter(endpoint => endpoint.endpointName && endpoint.endpointUrl)
+    .map<PromostandardsEndpointCapability>(endpoint => ({
+      endpointName: endpoint.endpointName!,
+      endpointVersion: endpoint.endpointVersion ?? null,
+      endpointUrl: endpoint.endpointUrl ?? '',
+      available: true,
+      status_code: 200,
+      message: 'Endpoint loaded from saved vendor configuration.',
+      wsdl_available: null,
+      credentials_valid: null,
+      live_probe_message: null,
+      versionDetectionStatus: endpoint.endpointVersion ? 'manual' : 'failed',
+      requiresManualVersionSelection: !endpoint.endpointVersion,
+      availableVersions: [],
+    }));
+
+  return {
+    fingerprint: '',
+    testedAt: new Date(0).toISOString(),
+    availableEndpointCount: endpoints.length,
+    credentialsValid: null,
+    endpoints,
   };
 }
 

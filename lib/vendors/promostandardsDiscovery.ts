@@ -16,6 +16,12 @@ interface DiscoveryInput {
   vendor_account_id?: string | null;
   vendor_secret?: string | null;
   api_protocol?: MappingProtocol;
+  companyDataEndpointUrl?: string | null;
+  endpoints?: Array<{
+    endpointName: string;
+    endpointVersion?: string | null;
+    endpointUrl?: string | null;
+  }>;
 }
 
 interface ProbeClassification {
@@ -129,6 +135,11 @@ function classifyPromostandardsProbe(input: {
     'querytype',
     'invoice',
     'remittance',
+    'unable to process',
+    'InternalServiceFault',
+    'internal error',
+    'a:InternalServiceFault',
+    'request was malformed',
   ];
 
   if (typeof input.status === 'number' && input.status >= 200 && input.status < 400) {
@@ -146,8 +157,7 @@ function classifyPromostandardsProbe(input: {
       credentialsValid: null,
     };
   }
-
-  if (validationPatterns.some(pattern => normalized.includes(pattern))) {
+  if (validationPatterns.some(pattern => normalized.includes(pattern)) || validationPatterns.some(pattern => input.rawPayload?.includes(pattern))) {
     return {
       available: true,
       message,
@@ -256,7 +266,7 @@ function extractVersionCandidates(strings: string[]): string[] {
 function normalizeResolvedEndpointUrl(value: string): string {
   try {
     const url = new URL(value);
-    if (url.search.toLowerCase() === '?wsdl') {
+    if (url.search.toLowerCase().includes('wsdl')) {
       url.search = '';
     }
     return url.toString();
@@ -353,6 +363,7 @@ function mergeResolvedEndpointUrls(target: Map<string, string>, source: Map<stri
 
 async function inspectSoapWsdl(input: {
   endpointUrl: string;
+  endpointUrlIsFinal?: boolean;
   endpointName: string;
   endpointVersion: string;
   operationName: string;
@@ -363,9 +374,10 @@ async function inspectSoapWsdl(input: {
 } | null> {
   const wsdlUrl = `${resolveSoapEndpointUrl({
     endpointUrl: input.endpointUrl,
+    endpointUrlIsFinal: input.endpointUrlIsFinal,
     endpointName: input.endpointName,
     endpointVersion: input.endpointVersion,
-  })}?wsdl`;
+  })}`;
 
   try {
     const response = await fetch(wsdlUrl, {
@@ -394,6 +406,7 @@ async function inspectSoapWsdl(input: {
 
 export async function probePromostandardsEndpoint(input: {
   endpointUrl: string;
+  endpointUrlIsFinal?: boolean;
   endpointName: string;
   endpointVersion: string;
   operationName: string;
@@ -408,6 +421,7 @@ export async function probePromostandardsEndpoint(input: {
 
 async function runPromostandardsEndpointProbe(input: {
   endpointUrl: string;
+  endpointUrlIsFinal?: boolean;
   endpointName: string;
   endpointVersion: string;
   operationName: string;
@@ -424,25 +438,9 @@ async function runPromostandardsEndpointProbe(input: {
   const adapter = resolveEndpointAdapter(protocol);
   const metadata = input.metadata ?? {};
   const baseCapability = {
-    endpoint_name: input.endpointName,
-    endpoint_version: input.endpointVersion,
-    operation_name: input.operationName,
-    capability_scope:
-      typeof metadata.capability_scope === 'string'
-        ? (metadata.capability_scope as 'catalog' | 'order')
-        : (input.endpointName === 'CompanyData' ? 'catalog' : 'catalog'),
-    lifecycle_role:
-      typeof metadata.lifecycle_role === 'string'
-        ? metadata.lifecycle_role
-        : undefined,
-    optional_by_vendor:
-      typeof metadata.optional_by_vendor === 'boolean'
-        ? metadata.optional_by_vendor
-        : undefined,
-    recommended_poll_minutes:
-      typeof metadata.recommended_poll_minutes === 'number'
-        ? metadata.recommended_poll_minutes
-        : null,
+    endpointName: input.endpointName,
+    endpointVersion: input.endpointVersion,
+    endpointUrl: input.endpointUrl,
   };
 
   try {
@@ -455,6 +453,7 @@ async function runPromostandardsEndpointProbe(input: {
     if (protocol === 'SOAP') {
       wsdlInspection = await inspectSoapWsdl({
         endpointUrl: input.endpointUrl,
+        endpointUrlIsFinal: input.endpointUrlIsFinal,
         endpointName: input.endpointName,
         endpointVersion: input.endpointVersion,
         operationName: input.operationName,
@@ -468,7 +467,7 @@ async function runPromostandardsEndpointProbe(input: {
       endpointVersion: input.endpointVersion,
       vendorAccountId: input.vendorAccountId ?? null,
       vendorSecret: input.vendorSecret ?? null,
-      runtimeConfig: {},
+      runtimeConfig: input.endpointUrlIsFinal ? { endpoint_url: input.endpointUrl } : {},
     });
 
     const classified = classifyPromostandardsProbe({
@@ -492,8 +491,9 @@ async function runPromostandardsEndpointProbe(input: {
         wsdl_available: wsdlInspection?.available ?? null,
         credentials_valid: classified.credentialsValid,
         live_probe_message: classified.message,
-        resolved_endpoint_url: input.endpointUrl,
-        custom_endpoint_url: null,
+        versionDetectionStatus: 'detected_from_wsdl' as const,
+        requiresManualVersionSelection: false,
+        availableVersions: [],
       },
       parsedBody: result.parsedBody,
       rawPayload: result.rawPayload,
@@ -509,8 +509,9 @@ async function runPromostandardsEndpointProbe(input: {
         wsdl_available: null,
         credentials_valid: null,
         live_probe_message: null,
-        resolved_endpoint_url: input.endpointUrl,
-        custom_endpoint_url: null,
+        versionDetectionStatus: 'failed' as const,
+        requiresManualVersionSelection: false,
+        availableVersions: [],
       },
       parsedBody: null,
       rawPayload: '',
@@ -545,6 +546,12 @@ export function buildPromostandardsConnectionFingerprint(input: DiscoveryInput):
     vendor_account_id: input.vendor_account_id ?? '',
     vendor_secret: input.vendor_secret ?? '',
     api_protocol: normalizeProtocol(input.api_protocol),
+    company_data_endpoint_url: input.companyDataEndpointUrl ?? '',
+    endpoints: (input.endpoints ?? []).map(endpoint => ({
+      endpointName: endpoint.endpointName,
+      endpointVersion: endpoint.endpointVersion ?? '',
+      endpointUrl: endpoint.endpointUrl ?? '',
+    })),
   }));
   return hash.digest('hex');
 }
@@ -554,10 +561,10 @@ export async function discoverPromostandardsCapabilities(
 ): Promise<{
   ok: boolean;
   message: string;
-  available_endpoint_count: number;
-  credentials_valid: boolean | null;
+  availableEndpointCount: number;
+  credentialsValid: boolean | null;
   fingerprint: string;
-  tested_at: string;
+  testedAt: string;
   endpoints: PromostandardsEndpointCapability[];
 }> {
   const protocol = normalizeProtocol(input.api_protocol);
@@ -571,12 +578,16 @@ export async function discoverPromostandardsCapabilities(
   const resolvedEndpointUrls = new Map<string, string>();
 
   for (const probe of probes) {
+    const resolvedEndpointUrl = resolvedEndpointUrls.get(lookupKey(probe.endpoint_name, probe.endpoint_version));
     const endpointUrl =
-      resolvedEndpointUrls.get(lookupKey(probe.endpoint_name, probe.endpoint_version)) ??
-      input.vendor_api_url ??
-      '';
+      probe.endpoint_name === 'CompanyData'
+        ? input.companyDataEndpointUrl ?? input.vendor_api_url ?? ''
+        : resolvedEndpointUrl ?? input.vendor_api_url ?? '';
     const probeResult = await runPromostandardsEndpointProbe({
       endpointUrl,
+      endpointUrlIsFinal:
+        Boolean(resolvedEndpointUrl) ||
+        (probe.endpoint_name === 'CompanyData' && Boolean(input.companyDataEndpointUrl)),
       endpointName: probe.endpoint_name,
       endpointVersion: probe.endpoint_version,
       operationName: probe.operation_name,
@@ -605,7 +616,7 @@ export async function discoverPromostandardsCapabilities(
 
     endpoints.push({
       ...capability,
-      resolved_endpoint_url: resolvedEndpointUrls.get(lookupKey(probe.endpoint_name, probe.endpoint_version)) ?? capability.resolved_endpoint_url ?? null,
+      endpointUrl: resolvedEndpointUrls.get(lookupKey(probe.endpoint_name, probe.endpoint_version)) ?? capability.endpointUrl,
     });
   }
 
@@ -622,10 +633,10 @@ export async function discoverPromostandardsCapabilities(
             ? `Discovered ${availableEndpointCount} PromoStandards operation${availableEndpointCount === 1 ? '' : 's'} in WSDL, but the live probe rejected the credentials.`
             : `Discovered ${availableEndpointCount} PromoStandards operation${availableEndpointCount === 1 ? '' : 's'} in WSDL. Live probes reached the service but still need endpoint-specific request fields.`
         : 'No supported PromoStandards endpoints were detected for this vendor.',
-    available_endpoint_count: availableEndpointCount,
-    credentials_valid: credentialsValid,
+    availableEndpointCount,
+    credentialsValid,
     fingerprint: buildPromostandardsConnectionFingerprint(input),
-    tested_at: new Date().toISOString(),
+    testedAt: new Date().toISOString(),
     endpoints,
   };
 }
@@ -633,76 +644,36 @@ export async function discoverPromostandardsCapabilities(
 export async function resolvePromostandardsCapabilityMappings(
   capabilities: Pick<PromostandardsCapabilityMatrix, 'endpoints'>,
 ): Promise<number[]> {
-  const hasManualEndpointOverride = (endpoint: Pick<PromostandardsCapabilityMatrix['endpoints'][number], 'custom_endpoint_url'>) =>
-    typeof endpoint.custom_endpoint_url === 'string' && endpoint.custom_endpoint_url.trim().length > 0;
+  const selections = capabilities.endpoints
+    .filter(endpoint => endpoint.available && !!endpoint.endpointVersion)
+    .map(endpoint => ({
+      endpointName: endpoint.endpointName,
+      endpointVersion: endpoint.endpointVersion!,
+    }))
+    .filter(
+      (endpoint, index, values) =>
+        values.findIndex(
+          value =>
+            value.endpointName === endpoint.endpointName &&
+            value.endpointVersion === endpoint.endpointVersion,
+        ) === index,
+    );
 
-  const selectedByOperation = new Map<
-    string,
-    {
-      endpoint_name: string;
-      endpoint_version: string;
-      operation_name: string;
-      custom_endpoint_url?: string | null;
-    }
-  >();
-
-  for (const endpoint of capabilities.endpoints) {
-    if (!endpoint.available) {
-      continue;
-    }
-
-    const selectionKey = `${endpoint.endpoint_name}|${endpoint.operation_name}`;
-    const existingSelection = selectedByOperation.get(selectionKey);
-    if (!existingSelection) {
-      selectedByOperation.set(selectionKey, {
-        endpoint_name: endpoint.endpoint_name,
-        endpoint_version: endpoint.endpoint_version,
-        operation_name: endpoint.operation_name,
-        custom_endpoint_url: endpoint.custom_endpoint_url ?? null,
-      });
-      continue;
-    }
-
-    const nextHasManualOverride = hasManualEndpointOverride(endpoint);
-    const existingHasManualOverride = hasManualEndpointOverride(existingSelection);
-    if (
-      (nextHasManualOverride && !existingHasManualOverride) ||
-      (nextHasManualOverride === existingHasManualOverride &&
-        compareEndpointVersions(endpoint.endpoint_version, existingSelection.endpoint_version) > 0)
-    ) {
-      selectedByOperation.set(selectionKey, {
-        endpoint_name: endpoint.endpoint_name,
-        endpoint_version: endpoint.endpoint_version,
-        operation_name: endpoint.operation_name,
-        custom_endpoint_url: endpoint.custom_endpoint_url ?? null,
-      });
-    }
-  }
-
-  const uniqueSelections = Array.from(selectedByOperation.values()).sort((left, right) => {
-    if (left.endpoint_name !== right.endpoint_name) {
-      return left.endpoint_name.localeCompare(right.endpoint_name);
-    }
-
-    if (left.operation_name !== right.operation_name) {
-      return left.operation_name.localeCompare(right.operation_name);
-    }
-
-    return compareEndpointVersions(left.endpoint_version, right.endpoint_version);
-  });
-
-  if (uniqueSelections.length === 0) {
+  if (selections.length === 0) {
     return [];
   }
 
-  const mappings = await findMappingsByEndpointOperations(
-    uniqueSelections.map(selection => ({
-      endpoint_name: selection.endpoint_name,
-      endpoint_version: selection.endpoint_version,
-      operation_name: selection.operation_name,
-    })),
-  );
-  return mappings.map(mapping => mapping.mapping_id);
+  const mappingIdSet = new Set<number>();
+  for (const selection of selections) {
+    const mappings = await listEndpointMappings({
+      standard_type: 'PROMOSTANDARDS',
+      endpoint_name: selection.endpointName,
+      endpoint_version: selection.endpointVersion,
+    });
+    mappings.forEach(mapping => mappingIdSet.add(mapping.endpoint_mapping_id));
+  }
+
+  return Array.from(mappingIdSet).sort((left, right) => left - right);
 }
 
 export function isPromostandardsCapabilityMatrixCurrent(
@@ -711,4 +682,307 @@ export function isPromostandardsCapabilityMatrixCurrent(
 ): boolean {
   if (!capabilities) return false;
   return capabilities.fingerprint === buildPromostandardsConnectionFingerprint(input);
+}
+
+interface PromostandardsEndpointDefinition {
+  endpointName: string;
+  versions: string[];
+  representativeOperationByVersion: Record<string, string>;
+}
+
+function normalizeEndpointRows(
+  endpoints: PromostandardsEndpointCapability[],
+): PromostandardsEndpointCapability[] {
+  return endpoints.sort((left, right) => left.endpointName.localeCompare(right.endpointName));
+}
+
+export async function listPromostandardsEndpointDefinitions(
+  protocol: MappingProtocol = 'SOAP',
+): Promise<PromostandardsEndpointDefinition[]> {
+  const mappings = await listEndpointMappings({
+    standard_type: 'PROMOSTANDARDS',
+    protocol,
+  });
+  const grouped = new Map<string, { versions: string[]; representativeOperationByVersion: Record<string, string> }>();
+
+  for (const mapping of mappings) {
+    const existing = grouped.get(mapping.endpoint_name) ?? {
+      versions: [],
+      representativeOperationByVersion: {},
+    };
+    if (!existing.versions.includes(mapping.endpoint_version)) {
+      existing.versions.push(mapping.endpoint_version);
+      existing.versions.sort(compareEndpointVersions);
+    }
+    if (!existing.representativeOperationByVersion[mapping.endpoint_version]) {
+      existing.representativeOperationByVersion[mapping.endpoint_version] = mapping.operation_name;
+    }
+    grouped.set(mapping.endpoint_name, existing);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([endpointName, value]) => ({
+      endpointName,
+      versions: value.versions.sort(compareEndpointVersions),
+      representativeOperationByVersion: value.representativeOperationByVersion,
+    }))
+    .sort((left, right) => left.endpointName.localeCompare(right.endpointName));
+}
+
+export function detectPromostandardsEndpointVersionFromUrl(
+  endpointUrl: string,
+  supportedVersions: string[],
+): string | null {
+  const normalizedUrl = endpointUrl.toLowerCase();
+  const matches = supportedVersions.filter(version => normalizedUrl.includes(version.toLowerCase()));
+  if (matches.length === 0) {
+    const versionTokens = Array.from(
+      normalizedUrl.matchAll(/(?:^|[^a-z0-9])v(\d+(?:[._-]\d+){0,2})(?:[^a-z0-9]|$)/g),
+      match => match[1]?.replace(/[._-]/g, '.') ?? '',
+    ).filter(Boolean);
+
+    for (const token of versionTokens) {
+      const exactTokenMatch = supportedVersions.filter(version => version === token);
+      if (exactTokenMatch.length > 0) {
+        return exactTokenMatch.sort(compareEndpointVersions).at(-1) ?? null;
+      }
+
+      const prefixTokenMatch = supportedVersions.filter(version => version.startsWith(`${token}.`));
+      if (prefixTokenMatch.length === 1) {
+        return prefixTokenMatch[0] ?? null;
+      }
+
+      const tokenMajor = token.split('.')[0] ?? '';
+      if (!token.includes('.') && tokenMajor) {
+        const majorMatches = supportedVersions.filter(version => version.split('.')[0] === tokenMajor);
+        if (majorMatches.length === 1) {
+          return majorMatches[0] ?? null;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  return matches.sort(compareEndpointVersions).at(-1) ?? null;
+}
+
+async function detectPromostandardsEndpointVersionFromWsdl(
+  endpointUrl: string,
+  supportedVersions: string[],
+): Promise<string | null> {
+  try {
+    const response = await fetch(`${endpointUrl}?wsdl`, {
+      method: 'GET',
+      headers: {
+        Accept: 'text/xml, application/wsdl+xml, application/xml;q=0.9, */*;q=0.8',
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    const rawXml = await response.text();
+    const matches = extractVersionCandidates([rawXml]).filter(version => supportedVersions.includes(version));
+    if (matches.length === 0) {
+      return null;
+    }
+
+    return matches.sort(compareEndpointVersions).at(-1) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function testPromostandardsEndpointUrls(input: {
+  vendorAccountId?: string | null;
+  vendorSecret?: string | null;
+  protocol?: MappingProtocol;
+  endpoints: Array<{
+    endpointName: string;
+    endpointUrl?: string | null;
+    endpointVersion?: string | null;
+  }>;
+}): Promise<{
+  ok: boolean;
+  message: string;
+  availableEndpointCount: number;
+  credentialsValid: boolean | null;
+  endpoints: PromostandardsEndpointCapability[];
+  endpointMappingIds: number[];
+}> {
+  const protocol = normalizeProtocol(input.protocol);
+  const definitions = await listPromostandardsEndpointDefinitions(protocol);
+  const endpointRows: PromostandardsEndpointCapability[] = [];
+  let credentialsValid: boolean | null = null;
+
+  for (const inputEndpoint of input.endpoints) {
+    const definition = definitions.find(item => item.endpointName === inputEndpoint.endpointName);
+    const availableVersions = definition?.versions ?? [];
+    const endpointUrl = inputEndpoint.endpointUrl?.trim() ?? '';
+
+    if (!endpointUrl || !definition) {
+      endpointRows.push({
+        endpointName: inputEndpoint.endpointName,
+        endpointVersion: inputEndpoint.endpointVersion ?? null,
+        endpointUrl,
+        available: false,
+        status_code: null,
+        message: endpointUrl ? 'Unsupported PromoStandards endpoint.' : 'Endpoint URL is required.',
+        wsdl_available: null,
+        credentials_valid: null,
+        live_probe_message: null,
+        versionDetectionStatus: 'failed',
+        requiresManualVersionSelection: Boolean(endpointUrl),
+        availableVersions,
+      });
+      continue;
+    }
+
+    const detectedVersionFromUrl = detectPromostandardsEndpointVersionFromUrl(endpointUrl, availableVersions);
+    // const detectedVersionFromWsdl = detectedVersionFromUrl ? null : await detectPromostandardsEndpointVersionFromWsdl(endpointUrl, availableVersions);
+    const endpointVersion =
+      inputEndpoint.endpointVersion ??
+      detectedVersionFromUrl ??
+      //detectedVersionFromWsdl ??
+      null;
+
+    if (!endpointVersion) {
+      endpointRows.push({
+        endpointName: inputEndpoint.endpointName,
+        endpointVersion: null,
+        endpointUrl,
+        available: false,
+        status_code: null,
+        message: 'Version detection failed. Select a version and test again.',
+        wsdl_available: null,
+        credentials_valid: null,
+        live_probe_message: null,
+        versionDetectionStatus: 'failed',
+        requiresManualVersionSelection: true,
+        availableVersions,
+      });
+      continue;
+    }
+
+    const representativeOperation = definition.representativeOperationByVersion[endpointVersion];
+    const probeResult = await probePromostandardsEndpoint({
+      endpointUrl,
+      endpointUrlIsFinal: true,
+      endpointName: inputEndpoint.endpointName,
+      endpointVersion,
+      operationName: representativeOperation,
+      vendorAccountId: input.vendorAccountId ?? null,
+      vendorSecret: input.vendorSecret ?? null,
+      protocol,
+    });
+
+    if (probeResult.credentials_valid === true) {
+      credentialsValid = true;
+    } else if (credentialsValid !== true && probeResult.credentials_valid === false) {
+      credentialsValid = false;
+    }
+
+    endpointRows.push({
+      ...probeResult,
+      endpointVersion,
+      endpointUrl,
+      versionDetectionStatus: inputEndpoint.endpointVersion
+        ? 'manual'
+        : detectedVersionFromUrl
+          ? 'detected_from_url'
+          : 'detected_from_wsdl',
+      requiresManualVersionSelection: false,
+      availableVersions,
+    });
+  }
+
+  const endpoints = normalizeEndpointRows(endpointRows);
+  const availableEndpointCount = endpoints.filter(endpoint => endpoint.available).length;
+  const endpointMappingIds = await resolvePromostandardsCapabilityMappings({
+    endpoints,
+  });
+
+  return {
+    ok: availableEndpointCount > 0 && credentialsValid !== false,
+    message:
+      availableEndpointCount > 0
+        ? `Confirmed ${availableEndpointCount} PromoStandards endpoint${availableEndpointCount === 1 ? '' : 's'}.`
+        : 'No supported PromoStandards endpoints were confirmed.',
+    availableEndpointCount,
+    credentialsValid,
+    endpoints,
+    endpointMappingIds,
+  };
+}
+
+export async function discoverPromostandardsEndpointsFromCompanyData(input: {
+  companyDataEndpointUrl: string;
+  vendorAccountId?: string | null;
+  vendorSecret?: string | null;
+  protocol?: MappingProtocol;
+}): Promise<{
+  ok: boolean;
+  message: string;
+  availableEndpointCount: number;
+  credentialsValid: boolean | null;
+  fingerprint: string;
+  testedAt: string;
+  endpoints: PromostandardsEndpointCapability[];
+  endpointMappingIds: number[];
+}> {
+  const discovery = await discoverPromostandardsCapabilities({
+    companyDataEndpointUrl: input.companyDataEndpointUrl,
+    vendor_account_id: input.vendorAccountId ?? null,
+    vendor_secret: input.vendorSecret ?? null,
+    api_protocol: input.protocol,
+  });
+
+  const groupedByEndpoint = new Map<string, PromostandardsEndpointCapability>();
+  for (const endpoint of discovery.endpoints.filter(item => item.available)) {
+    const existing = groupedByEndpoint.get(endpoint.endpointName);
+    if (!existing) {
+      groupedByEndpoint.set(endpoint.endpointName, endpoint);
+      continue;
+    }
+
+    if (
+      endpoint.endpointVersion &&
+      existing.endpointVersion &&
+      compareEndpointVersions(endpoint.endpointVersion, existing.endpointVersion) > 0
+    ) {
+      groupedByEndpoint.set(endpoint.endpointName, endpoint);
+    }
+  }
+
+  groupedByEndpoint.set('CompanyData', {
+    endpointName: 'CompanyData',
+    endpointVersion: '1.0.0',
+    endpointUrl: input.companyDataEndpointUrl,
+    available: true,
+    status_code: 200,
+    message: 'CompanyData endpoint confirmed.',
+    wsdl_available: true,
+    credentials_valid: discovery.credentialsValid ?? null,
+    live_probe_message: null,
+    versionDetectionStatus: 'manual',
+    requiresManualVersionSelection: false,
+    availableVersions: ['1.0.0'],
+  });
+
+  const endpoints = normalizeEndpointRows(Array.from(groupedByEndpoint.values()));
+  const endpointMappingIds = await resolvePromostandardsCapabilityMappings({
+    endpoints,
+  });
+
+  return {
+    ok: endpoints.some(endpoint => endpoint.available),
+    message: discovery.message,
+    availableEndpointCount: endpoints.filter(endpoint => endpoint.available).length,
+    credentialsValid: discovery.credentialsValid,
+    fingerprint: discovery.fingerprint,
+    testedAt: discovery.testedAt,
+    endpoints,
+    endpointMappingIds,
+  };
 }

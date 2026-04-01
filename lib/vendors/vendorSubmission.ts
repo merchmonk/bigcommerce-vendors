@@ -1,11 +1,14 @@
-import type { EndpointMappingDraft, VendorFormData, VendorType } from '../../types';
+import type {
+  EndpointMappingDraft,
+  PromostandardsCapabilityMatrix,
+  PromostandardsEndpointCapability,
+  VendorFormData,
+  VendorType,
+} from '../../types';
 import { resolveMappingDrafts, type ResolvedMappingDraft } from '../etl/mappingDrafts';
 import { listEndpointMappingsByIds } from '../etl/repository';
 import { buildVendorConnectionConfig, getVendorConnectionSections } from './vendorConfig';
-import {
-  isPromostandardsCapabilityMatrixCurrent,
-  resolvePromostandardsCapabilityMappings,
-} from './promostandardsDiscovery';
+import { resolvePromostandardsCapabilityMappings } from './promostandardsDiscovery';
 import type { Vendor, VendorInput } from '../vendors';
 
 export interface VendorSubmissionInput extends Partial<VendorInput> {
@@ -15,7 +18,11 @@ export interface VendorSubmissionInput extends Partial<VendorInput> {
   connection_tested?: boolean;
   custom_api_service_type?: VendorFormData['custom_api_service_type'];
   custom_api_format_data?: VendorFormData['custom_api_format_data'];
-  promostandards_capabilities?: VendorFormData['promostandards_capabilities'];
+  hasCompanyDataEndpoint?: boolean;
+  companyDataEndpointUrl?: string;
+  promostandardsEndpoints?: VendorFormData['promostandardsEndpoints'];
+  promostandardsCapabilities?: VendorFormData['promostandardsCapabilities'];
+  promostandards_capabilities?: VendorFormData['promostandardsCapabilities'];
 }
 
 export interface PreparedVendorSubmission {
@@ -49,80 +56,83 @@ function normalizeEndpointMappingIds(mappingIds: number[] | undefined): number[]
   return mappingIds.filter((mappingId): mappingId is number => Number.isInteger(mappingId) && mappingId > 0);
 }
 
-async function buildStoredPromostandardsCapabilities(input: {
-  capabilities: NonNullable<VendorFormData['promostandards_capabilities']>;
-  mappings: Awaited<ReturnType<typeof listEndpointMappingsByIds>>;
-}): Promise<NonNullable<VendorFormData['promostandards_capabilities']>> {
-  const capabilityBySelection = new Map(
-    input.capabilities.endpoints.map(endpoint => [
-      `${endpoint.endpoint_name}|${endpoint.endpoint_version}|${endpoint.operation_name}`,
-      endpoint,
-    ]),
-  );
+function normalizePromostandardsCapabilities(input: {
+  body: VendorSubmissionInput;
+  existingCapabilities?: PromostandardsCapabilityMatrix;
+}): PromostandardsCapabilityMatrix | null {
+  const explicitCapabilities =
+    input.body.promostandardsCapabilities ??
+    input.body.promostandards_capabilities ??
+    null;
 
-  return {
-    fingerprint: input.capabilities.fingerprint,
-    tested_at: input.capabilities.tested_at,
-    available_endpoint_count: input.mappings.length,
-    credentials_valid: input.capabilities.credentials_valid ?? null,
-    endpoints: input.mappings.map(mapping => {
-      const metadata = (mapping.metadata ?? {}) as Record<string, unknown>;
-      const submittedCapability = capabilityBySelection.get(
-        `${mapping.endpoint_name}|${mapping.endpoint_version}|${mapping.operation_name}`,
-      );
+  if (explicitCapabilities) {
+    return explicitCapabilities;
+  }
 
-      return {
-        endpoint_name: mapping.endpoint_name,
-        endpoint_version: mapping.endpoint_version,
-        operation_name: mapping.operation_name,
-        capability_scope:
-          typeof metadata.capability_scope === 'string'
-            ? (metadata.capability_scope as 'catalog' | 'order')
-            : undefined,
-        lifecycle_role: typeof metadata.lifecycle_role === 'string' ? metadata.lifecycle_role : undefined,
-        optional_by_vendor:
-          typeof metadata.optional_by_vendor === 'boolean' ? metadata.optional_by_vendor : undefined,
-        recommended_poll_minutes:
-          typeof metadata.recommended_poll_minutes === 'number' ? metadata.recommended_poll_minutes : null,
-        available: true,
-        status_code: submittedCapability?.status_code ?? null,
-        message: submittedCapability?.message ?? 'Endpoint selected from PromoStandards discovery.',
-        wsdl_available: submittedCapability?.wsdl_available ?? null,
-        credentials_valid: submittedCapability?.credentials_valid ?? input.capabilities.credentials_valid ?? null,
-        live_probe_message: submittedCapability?.live_probe_message ?? null,
-        resolved_endpoint_url: submittedCapability?.resolved_endpoint_url ?? null,
-        custom_endpoint_url: submittedCapability?.custom_endpoint_url ?? null,
-      };
-    }),
-  };
-}
-
-function resolvePromostandardsRuntimeConfig(input: {
-  mapping: Awaited<ReturnType<typeof listEndpointMappingsByIds>>[number];
-  capabilities: NonNullable<VendorFormData['promostandards_capabilities']>;
-}): Record<string, unknown> {
-  const capability = input.capabilities.endpoints.find(
-    endpoint =>
-      endpoint.endpoint_name === input.mapping.endpoint_name &&
-      endpoint.endpoint_version === input.mapping.endpoint_version &&
-      endpoint.operation_name === input.mapping.operation_name,
-  );
-
-  const customEndpointPath = capability?.custom_endpoint_url?.trim();
-  if (customEndpointPath) {
+  if (Array.isArray(input.body.promostandardsEndpoints)) {
     return {
-      endpoint_path: customEndpointPath,
+      fingerprint: '',
+      testedAt: new Date().toISOString(),
+      availableEndpointCount: input.body.promostandardsEndpoints.filter(endpoint => endpoint.available).length,
+      credentialsValid: null,
+      endpoints: input.body.promostandardsEndpoints,
     };
   }
 
-  const resolvedEndpointUrl = capability?.resolved_endpoint_url?.trim();
-  if (!resolvedEndpointUrl) {
-    return {};
-  }
+  return input.existingCapabilities ?? null;
+}
+
+function buildEndpointSelectionKey(endpointName: string, endpointVersion: string | null | undefined): string {
+  return `${endpointName}|${endpointVersion ?? ''}`;
+}
+
+function buildStoredPromostandardsCapabilities(input: {
+  capabilities: PromostandardsCapabilityMatrix;
+  mappings: Awaited<ReturnType<typeof listEndpointMappingsByIds>>;
+}): PromostandardsCapabilityMatrix {
+  const selectedKeys = new Set(
+    input.mappings.map(mapping => buildEndpointSelectionKey(mapping.endpoint_name, mapping.endpoint_version)),
+  );
+
+  const endpoints = input.capabilities.endpoints
+    .filter(endpoint => endpoint.available && !!endpoint.endpointVersion)
+    .filter(endpoint => selectedKeys.has(buildEndpointSelectionKey(endpoint.endpointName, endpoint.endpointVersion)))
+    .filter(
+      (endpoint, index, values) =>
+        values.findIndex(
+          value =>
+            value.endpointName === endpoint.endpointName &&
+            value.endpointVersion === endpoint.endpointVersion,
+        ) === index,
+    );
 
   return {
-    endpoint_url: resolvedEndpointUrl,
+    fingerprint: input.capabilities.fingerprint,
+    testedAt: input.capabilities.testedAt,
+    availableEndpointCount: endpoints.length,
+    credentialsValid: input.capabilities.credentialsValid ?? null,
+    endpoints,
   };
+}
+
+function resolvePromostandardsEndpointUrl(input: {
+  mapping: Awaited<ReturnType<typeof listEndpointMappingsByIds>>[number];
+  capabilities: PromostandardsCapabilityMatrix;
+}): string {
+  const capability = input.capabilities.endpoints.find(
+    endpoint =>
+      endpoint.endpointName === input.mapping.endpoint_name &&
+      endpoint.endpointVersion === input.mapping.endpoint_version,
+  );
+
+  const endpointUrl = capability?.endpointUrl?.trim();
+  if (!endpointUrl) {
+    throw makeError(
+      `Missing endpoint URL for ${input.mapping.endpoint_name} ${input.mapping.endpoint_version}.`,
+    );
+  }
+
+  return endpointUrl;
 }
 
 export async function prepareVendorSubmission(input: {
@@ -140,8 +150,10 @@ export async function prepareVendorSubmission(input: {
   const vendorSecret = input.body.vendor_secret ?? existingVendor?.vendor_secret ?? undefined;
 
   const existingSections = getVendorConnectionSections(existingVendor?.connection_config ?? {});
-  const promostandardsCapabilities =
-    input.body.promostandards_capabilities ?? existingSections.promostandards_capabilities;
+  const promostandardsCapabilities = normalizePromostandardsCapabilities({
+    body: input.body,
+    existingCapabilities: existingSections.promostandards_capabilities,
+  });
   const customApiServiceType =
     input.body.custom_api_service_type ?? existingSections.custom_api?.service_type;
   const customApiFormatData =
@@ -156,21 +168,12 @@ export async function prepareVendorSubmission(input: {
 
   let mappingAction: PreparedVendorSubmission['mappingAction'] = { type: 'preserve' };
   if (integrationFamily === 'PROMOSTANDARDS') {
-    if (!vendorApiUrl) {
-      throw makeError('vendor_api_url is required for PromoStandards vendors');
-    }
-
     if (
       !promostandardsCapabilities ||
-      promostandardsCapabilities.available_endpoint_count < 1 ||
-      !isPromostandardsCapabilityMatrixCurrent(promostandardsCapabilities, {
-        vendor_api_url: vendorApiUrl,
-        vendor_account_id: vendorAccountId ?? null,
-        vendor_secret: vendorSecret ?? null,
-        api_protocol: apiProtocol ?? undefined,
-      })
+      promostandardsCapabilities.availableEndpointCount < 1 ||
+      input.body.connection_tested !== true
     ) {
-      throw makeError('Please run Test Vendor again so PromoStandards capabilities can be rediscovered.');
+      throw makeError('Please run Test Vendor successfully before saving this PromoStandards vendor.');
     }
 
     const submittedMappingIds = normalizeEndpointMappingIds(input.body.endpoint_mapping_ids);
@@ -183,7 +186,7 @@ export async function prepareVendorSubmission(input: {
     }
 
     const selectedMappings = await listEndpointMappingsByIds(mappingIds);
-    const storedCapabilities = await buildStoredPromostandardsCapabilities({
+    const storedCapabilities = buildStoredPromostandardsCapabilities({
       capabilities: promostandardsCapabilities,
       mappings: selectedMappings,
     });
@@ -198,9 +201,10 @@ export async function prepareVendorSubmission(input: {
     mappingAction = {
       type: 'apply',
       resolvedDrafts: selectedMappings.map(mapping => ({
-        mappingId: mapping.mapping_id,
+        mappingId: mapping.endpoint_mapping_id,
         enabled: true,
-        runtimeConfig: resolvePromostandardsRuntimeConfig({
+        runtimeConfig: {},
+        endpointUrl: resolvePromostandardsEndpointUrl({
           mapping,
           capabilities: promostandardsCapabilities,
         }),

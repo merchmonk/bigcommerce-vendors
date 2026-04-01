@@ -1,7 +1,6 @@
 import type { EndpointMapping, MappingProtocol, VendorEndpointMapping } from '../../types';
 import type { Vendor } from '../vendors';
 import { resolveEndpointAdapter } from './adapters/factory';
-import { resolveRuntimeEndpointUrl } from './endpointUrl';
 import {
   applyPricingConfigurationToProduct,
   buildProductPricingConfiguration,
@@ -18,7 +17,7 @@ type AssignedMapping = VendorEndpointMapping & { mapping: EndpointMapping };
 type AnyRecord = Record<string, unknown>;
 
 export interface ProductEndpointResult {
-  mapping_id: number;
+  endpoint_mapping_id: number;
   endpoint_name: string;
   endpoint_version: string;
   operation_name: string;
@@ -221,11 +220,8 @@ function dedupeBulkRules(rules: NormalizedBulkPricingRule[]): NormalizedBulkPric
   );
 }
 
-function getEndpointUrl(vendor: Vendor, runtimeConfig: Record<string, unknown>): string {
-  return resolveRuntimeEndpointUrl({
-    vendorApiUrl: vendor.vendor_api_url,
-    runtimeConfig,
-  });
+function getEndpointUrl(endpointUrl?: string | null): string {
+  return endpointUrl?.trim() ?? '';
 }
 
 interface PricingRequestContext {
@@ -253,17 +249,57 @@ function mergeRequestFields(
 function buildBaseRequestFields(
   product: NormalizedProduct,
   options?: {
+    endpointName?: string;
+    operationName?: string;
     includePartId?: boolean;
   },
 ): Record<string, unknown> {
+  const productId = product.vendor_product_id ?? product.sku;
+  const partId = product.source_sku ?? product.sku;
+
+  if (options?.endpointName === 'Inventory') {
+    return {
+      productId,
+    };
+  }
+
+  if (options?.endpointName === 'PricingAndConfiguration') {
+    const fields: Record<string, unknown> = {
+      productId,
+      localizationCountry: DEFAULT_LOCALIZATION_COUNTRY,
+      localizationLanguage: DEFAULT_LOCALIZATION_LANGUAGE,
+    };
+
+    if (
+      options.operationName === 'getConfigurationAndPricing' &&
+      options.includePartId !== false
+    ) {
+      fields.partId = partId;
+    }
+
+    return fields;
+  }
+
+  if (options?.endpointName === 'ProductMedia' || options?.endpointName === 'MediaContent') {
+    const fields: Record<string, unknown> = {
+      productId,
+    };
+
+    if (options.includePartId !== false) {
+      fields.partId = partId;
+    }
+
+    return fields;
+  }
+
   const fields: Record<string, unknown> = {
-    productId: product.vendor_product_id ?? product.sku,
+    productId,
     localizationCountry: DEFAULT_LOCALIZATION_COUNTRY,
     localizationLanguage: DEFAULT_LOCALIZATION_LANGUAGE,
   };
 
   if (options?.includePartId !== false) {
-    fields.partId = product.source_sku ?? product.sku;
+    fields.partId = partId;
   }
 
   return fields;
@@ -309,7 +345,7 @@ function buildEndpointSpecificRequestFields(input: {
     DEFAULT_PRICING_CONFIGURATION_TYPE;
 
   const fields: Record<string, unknown> = {};
-  if (currency) {
+  if (input.operationName === 'getConfigurationAndPricing' && currency) {
     fields.currency = currency;
   }
 
@@ -985,7 +1021,7 @@ async function runProductOperation(input: {
 }): Promise<{ status: number; parsedBody: Record<string, unknown> | null; message?: string; rawPayload: string }> {
   const mapping = input.mapping.mapping;
   const runtimeConfig = asRecord(input.mapping.runtime_config) ?? {};
-  const endpointUrl = getEndpointUrl(input.vendor, runtimeConfig);
+  const endpointUrl = getEndpointUrl(input.mapping.endpointUrl);
   if (!endpointUrl) {
     return {
       status: 400,
@@ -1017,6 +1053,8 @@ async function runProductOperation(input: {
     runtimeConfig,
     {
       ...buildBaseRequestFields(input.product, {
+        endpointName: mapping.endpoint_name,
+        operationName,
         includePartId: !shouldOmitPartId,
       }),
       ...buildEndpointSpecificRequestFields({
@@ -1086,7 +1124,7 @@ function addEndpointResult(
   message?: string,
 ): void {
   results.push({
-    mapping_id: mapping.mapping_id,
+    endpoint_mapping_id: mapping.endpoint_mapping_id,
     endpoint_name: mapping.endpoint_name,
     endpoint_version: mapping.endpoint_version,
     operation_name: mapping.operation_name,

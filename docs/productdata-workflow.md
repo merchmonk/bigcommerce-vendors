@@ -34,8 +34,7 @@ These are seeded in:
 
 Per vendor mapping (`vendor_endpoint_mappings.runtime_config`) supports:
 
-- `endpoint_path` (manual endpoint suffix override stored relative to `vendor_api_url`)
-- `endpoint_url` (resolved full URL from discovery/runtime composition)
+- Endpoint URLs are no longer stored in mapping runtime config. PromoStandards runtime reads the full endpoint URL from `vendor_endpoint_url.endpoint_url`.
 - `localization_country` / `localizationCountry` (default `US`)
 - `localization_language` / `localizationLanguage` (default `en`)
 - `is_sellable` / `isSellable` (for `getProductSellable`, default `true`)
