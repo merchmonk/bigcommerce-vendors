@@ -147,7 +147,7 @@ describe('integration job dispatcher', () => {
     expect(mockCreateIntegrationJob).toHaveBeenCalledWith(
       expect.objectContaining({
         vendor_id: 9,
-        mapping_id: 22,
+        endpoint_mapping_id: 22,
         sync_scope: 'MAPPING',
         source_action: 'manual_sync',
       }),
@@ -197,6 +197,74 @@ describe('integration job dispatcher', () => {
         },
       }),
     ).toBe('catalog_sync:9:ALL:all:manual_sync:50');
+  });
+
+  test('delays continuation catalog sync jobs so the prior batch can release the vendor lock', async () => {
+    mockFindActiveIntegrationJobByDedupeKey.mockResolvedValue(null);
+    mockCreateIntegrationJob.mockResolvedValue({
+      integration_job_id: 92,
+      job_kind: 'CATALOG_SYNC',
+      vendor_id: 10,
+      mapping_id: null,
+      sync_scope: 'ALL',
+      source_action: 'manual_sync',
+      dedupe_key: 'catalog_sync:10:ALL:all:manual_sync:15',
+      correlation_id: 'corr-10',
+      request_payload: {
+        continuation: {
+          start_reference_index: 15,
+          max_references_per_run: 15,
+        },
+      },
+      status: 'PENDING',
+      attempt_count: 0,
+      queue_message_id: null,
+      last_error: null,
+      submitted_at: new Date().toISOString(),
+      started_at: null,
+      ended_at: null,
+    });
+    mockSqsSend.mockResolvedValue({ MessageId: 'message-92' });
+    mockMarkIntegrationJobEnqueued.mockResolvedValue({
+      integration_job_id: 92,
+      job_kind: 'CATALOG_SYNC',
+      vendor_id: 10,
+      mapping_id: null,
+      sync_scope: 'ALL',
+      source_action: 'manual_sync',
+      dedupe_key: 'catalog_sync:10:ALL:all:manual_sync:15',
+      correlation_id: 'corr-10',
+      request_payload: {
+        continuation: {
+          start_reference_index: 15,
+          max_references_per_run: 15,
+        },
+      },
+      status: 'ENQUEUED',
+      attempt_count: 0,
+      queue_message_id: 'message-92',
+      last_error: null,
+      submitted_at: new Date().toISOString(),
+      started_at: null,
+      ended_at: null,
+    });
+
+    const { submitCatalogSyncJob } = await import('@lib/integrationJobs');
+    await submitCatalogSyncJob({
+      vendorId: 10,
+      syncAll: true,
+      sourceAction: 'manual_sync',
+      correlationId: 'corr-10',
+      requestPayload: {
+        continuation: {
+          start_reference_index: 15,
+          max_references_per_run: 15,
+        },
+      },
+    });
+
+    const [command] = mockSqsSend.mock.calls[0];
+    expect(command.input.DelaySeconds).toBe(2);
   });
 
   test('finalizes the job as failed when queue submission throws', async () => {

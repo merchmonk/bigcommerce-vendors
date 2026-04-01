@@ -29,6 +29,8 @@ jest.mock('@lib/etl/productContractProjector', () => ({
 
 import { syncBigCommerceInventoryBatch, upsertBigCommerceProduct } from '@lib/etl/bigcommerceCatalog';
 
+const originalFetch = globalThis.fetch;
+
 describe('upsertBigCommerceProduct media sync', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -36,6 +38,26 @@ describe('upsertBigCommerceProduct media sync', () => {
       missing_variant_ids: [],
       extra_variant_ids: [],
     });
+    (globalThis as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: {
+        get: (name: string) => {
+          if (name.toLowerCase() === 'content-type') {
+            return 'image/jpeg';
+          }
+          return null;
+        },
+      },
+      body: {
+        cancel: jest.fn().mockResolvedValue(undefined),
+      },
+      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(0)),
+    } as unknown as Response);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
   });
 
   test('replaces only vendor-managed images and does not call the BigCommerce video API', async () => {
@@ -193,7 +215,7 @@ describe('upsertBigCommerceProduct media sync', () => {
   test('skips oversized BigCommerce product images without failing the product sync', async () => {
     const imageBodies: Array<Record<string, unknown>> = [];
     const originalFetch = (globalThis as { fetch?: typeof fetch }).fetch;
-    (globalThis as { fetch?: jest.Mock }).fetch = jest.fn().mockResolvedValue({
+    (globalThis as unknown as { fetch?: jest.Mock }).fetch = jest.fn().mockResolvedValue({
       ok: true,
       headers: {
         get: () => null,
@@ -504,6 +526,7 @@ describe('upsertBigCommerceProduct media sync', () => {
 
   test('creates new products with visibility disabled initially', async () => {
     let productPayload: Record<string, unknown> | undefined;
+    const modifierPostBodies: Array<Record<string, unknown>> = [];
 
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
@@ -541,7 +564,8 @@ describe('upsertBigCommerceProduct media sync', () => {
       }
 
       if (url.endsWith('/modifiers') && method === 'POST') {
-        return { data: { id: 1 } };
+        modifierPostBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: modifierPostBodies.length } };
       }
 
       if (url.endsWith('/images?limit=250') && method === 'GET') {
@@ -559,6 +583,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       accessToken: 'token',
       storeHash: 'abc123',
       vendorId: 22,
+      vendorName: 'PCNA',
       defaultMarkupPercent: 30,
       product: {
         sku: 'SKU-NEW',
@@ -573,6 +598,18 @@ describe('upsertBigCommerceProduct media sync', () => {
 
     expect(result.action).toBe('create');
     expect(productPayload?.is_visible).toBe(false);
+    expect(modifierPostBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          display_name: 'vendor_name',
+          option_values: expect.arrayContaining([
+            expect.objectContaining({
+              label: 'PCNA',
+            }),
+          ]),
+        }),
+      ]),
+    );
   });
 
   test('sends quantity_max as 0 for open-ended BigCommerce bulk pricing rules', async () => {
@@ -1044,6 +1081,7 @@ describe('upsertBigCommerceProduct media sync', () => {
     const inventoryAdjustmentBodies: Array<Record<string, unknown>> = [];
     const imageBodies: Array<Record<string, unknown>> = [];
     const variantImageBodies: Array<Record<string, unknown>> = [];
+    const modifierPostBodies: Array<Record<string, unknown>> = [];
     let productPutBody: Record<string, unknown> | undefined;
 
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
@@ -1119,6 +1157,15 @@ describe('upsertBigCommerceProduct media sync', () => {
         return { data: [] };
       }
 
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        modifierPostBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 5000 + modifierPostBodies.length } };
+      }
+
       if (url.endsWith('/images') && method === 'POST') {
         imageBodies.push(JSON.parse(String(options.body)));
         return { data: { id: 3301 } };
@@ -1136,6 +1183,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       accessToken: 'token',
       storeHash: 'abc123',
       vendorId: 22,
+      vendorName: 'PCNA',
       defaultMarkupPercent: 30,
       product: {
         sku: 'SKU-INV-ONLY',
@@ -1200,6 +1248,18 @@ describe('upsertBigCommerceProduct media sync', () => {
         { variant_id: 2302, quantity: 7 },
       ],
     });
+    expect(modifierPostBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          display_name: 'vendor_name',
+          option_values: expect.arrayContaining([
+            expect.objectContaining({
+              label: 'PCNA',
+            }),
+          ]),
+        }),
+      ]),
+    );
     expect(mockUpsertPriceListRecords).not.toHaveBeenCalled();
     expect(mockSyncProjectedProductContract).not.toHaveBeenCalled();
 
@@ -1303,6 +1363,373 @@ describe('upsertBigCommerceProduct media sync', () => {
         }),
       }),
     );
+  });
+
+  test('skips unreachable remote image URLs instead of failing the sync', async () => {
+    const imageBodies: Array<Record<string, unknown>> = [];
+    const variantImageBodies: Array<Record<string, unknown>> = [];
+
+    (globalThis as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockImplementation(
+      async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('missing-part.jpg')) {
+          return {
+            ok: false,
+            status: 404,
+            headers: {
+              get: (name: string) => {
+                if (name.toLowerCase() === 'content-type') {
+                  return 'image/gif';
+                }
+                return null;
+              },
+            },
+            body: {
+              cancel: jest.fn().mockResolvedValue(undefined),
+            },
+          } as unknown as Response;
+        }
+
+        return {
+          ok: true,
+          status: 200,
+          headers: {
+            get: (name: string) => {
+              if (name.toLowerCase() === 'content-type') {
+                return 'image/jpeg';
+              }
+              return null;
+            },
+          },
+          body: {
+            cancel: jest.fn().mockResolvedValue(undefined),
+          },
+        } as unknown as Response;
+      },
+    );
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-BAD-REMOTE')) {
+        return {
+          data: [
+            {
+              id: 2701,
+              sku: 'SKU-BAD-REMOTE',
+              name: 'Bad Remote Image Product',
+              custom_fields: [{ name: 'vendor_id', value: '22' }],
+            },
+          ],
+        };
+      }
+
+      if (url.includes('/catalog/products?name=Bad%20Remote%20Image%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products/2701') && method === 'PUT') {
+        return {
+          data: {
+            id: 2701,
+            sku: 'SKU-BAD-REMOTE',
+            name: 'Bad Remote Image Product',
+          },
+        };
+      }
+
+      if (url.endsWith('/catalog/products/2701/variants?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 2702,
+              sku: 'SKU-BAD-REMOTE-BLK',
+              option_values: [{ option_display_name: 'Color', label: 'Black' }],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/images') && method === 'POST') {
+        imageBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 3701 } };
+      }
+
+      if (url.endsWith('/variants/2702/image') && method === 'POST') {
+        variantImageBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 4701 } };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await expect(
+      upsertBigCommerceProduct({
+        accessToken: 'token',
+        storeHash: 'abc123',
+        vendorId: 22,
+        defaultMarkupPercent: 30,
+        product: {
+          sku: 'SKU-BAD-REMOTE',
+          source_sku: 'SKU-BAD-REMOTE',
+          vendor_product_id: 'P-BAD-REMOTE',
+          name: 'Bad Remote Image Product',
+          media_assets: [
+            {
+              url: 'https://cdn.example.com/products/hero.jpg',
+              media_type: 'Image',
+              description: 'Hero image',
+            },
+            {
+              url: 'https://cdn.example.com/products/missing-part.jpg',
+              media_type: 'Image',
+              description: 'Missing variant image',
+              part_id: 'SKU-BAD-REMOTE-BLK',
+              class_types: ['Primary'],
+            },
+          ],
+          variants: [
+            {
+              sku: 'SKU-BAD-REMOTE-BLK',
+              source_sku: 'SKU-BAD-REMOTE-BLK',
+              part_id: 'SKU-BAD-REMOTE-BLK',
+              option_values: [{ option_display_name: 'Color', label: 'Black' }],
+            },
+          ],
+        },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        action: 'update',
+      }),
+    );
+
+    expect(imageBodies).toEqual([
+      expect.objectContaining({
+        image_url: 'https://cdn.example.com/products/hero.jpg',
+      }),
+    ]);
+    expect(variantImageBodies).toEqual([]);
+  });
+
+  test('does not delete or recreate unchanged vendor-managed product images on rerun', async () => {
+    const imageBodies: Array<Record<string, unknown>> = [];
+    const deletedImageIds: number[] = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-IDEMPOTENT-IMG')) {
+        return {
+          data: [
+            {
+              id: 2801,
+              sku: 'SKU-IDEMPOTENT-IMG',
+              name: 'Idempotent Image Product',
+              custom_fields: [{ name: 'vendor_id', value: '22' }],
+            },
+          ],
+        };
+      }
+
+      if (url.includes('/catalog/products?name=Idempotent%20Image%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products/2801') && method === 'PUT') {
+        return {
+          data: {
+            id: 2801,
+            sku: 'SKU-IDEMPOTENT-IMG',
+            name: 'Idempotent Image Product',
+          },
+        };
+      }
+
+      if (url.endsWith('/catalog/products/2801/variants?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 3801,
+              description:
+                'Hero image | mm_media:{"mediaType":"Image","url":"https://cdn.example.com/products/hero.jpg"}',
+              is_thumbnail: true,
+            },
+            {
+              id: 3802,
+              description:
+                'Alt image | mm_media:{"mediaType":"Image","url":"https://cdn.example.com/products/alt.jpg"}',
+              is_thumbnail: false,
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/images') && method === 'POST') {
+        imageBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 3900 + imageBodies.length } };
+      }
+
+      if (url.match(/\/images\/\d+$/) && method === 'DELETE') {
+        deletedImageIds.push(Number(url.split('/').pop()));
+        return {};
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await expect(
+      upsertBigCommerceProduct({
+        accessToken: 'token',
+        storeHash: 'abc123',
+        vendorId: 22,
+        defaultMarkupPercent: 30,
+        product: {
+          sku: 'SKU-IDEMPOTENT-IMG',
+          source_sku: 'SKU-IDEMPOTENT-IMG',
+          vendor_product_id: 'P-IDEMPOTENT-IMG',
+          name: 'Idempotent Image Product',
+          media_assets: [
+            {
+              url: 'https://cdn.example.com/products/hero.jpg',
+              media_type: 'Image',
+              description: 'Hero image',
+              class_types: ['Primary'],
+            },
+            {
+              url: 'https://cdn.example.com/products/alt.jpg',
+              media_type: 'Image',
+              description: 'Alt image',
+            },
+          ],
+        },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        action: 'update',
+      }),
+    );
+
+    expect(imageBodies).toEqual([]);
+    expect(deletedImageIds).toEqual([]);
+  });
+
+  test('deletes only stale vendor-managed product images and creates only missing ones', async () => {
+    const imageBodies: Array<Record<string, unknown>> = [];
+    const deletedImageIds: number[] = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-DIFF-IMG')) {
+        return {
+          data: [
+            {
+              id: 2901,
+              sku: 'SKU-DIFF-IMG',
+              name: 'Diff Image Product',
+              custom_fields: [{ name: 'vendor_id', value: '22' }],
+            },
+          ],
+        };
+      }
+
+      if (url.includes('/catalog/products?name=Diff%20Image%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products/2901') && method === 'PUT') {
+        return {
+          data: {
+            id: 2901,
+            sku: 'SKU-DIFF-IMG',
+            name: 'Diff Image Product',
+          },
+        };
+      }
+
+      if (url.endsWith('/catalog/products/2901/variants?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 3901,
+              description:
+                'Hero image | mm_media:{"mediaType":"Image","url":"https://cdn.example.com/products/hero.jpg"}',
+              is_thumbnail: true,
+            },
+            {
+              id: 3902,
+              description:
+                'Retired image | mm_media:{"mediaType":"Image","url":"https://cdn.example.com/products/retired.jpg"}',
+              is_thumbnail: false,
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/images') && method === 'POST') {
+        imageBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 4900 + imageBodies.length } };
+      }
+
+      if (url.match(/\/images\/\d+$/) && method === 'DELETE') {
+        deletedImageIds.push(Number(url.split('/').pop()));
+        return {};
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await expect(
+      upsertBigCommerceProduct({
+        accessToken: 'token',
+        storeHash: 'abc123',
+        vendorId: 22,
+        defaultMarkupPercent: 30,
+        product: {
+          sku: 'SKU-DIFF-IMG',
+          source_sku: 'SKU-DIFF-IMG',
+          vendor_product_id: 'P-DIFF-IMG',
+          name: 'Diff Image Product',
+          media_assets: [
+            {
+              url: 'https://cdn.example.com/products/hero.jpg',
+              media_type: 'Image',
+              description: 'Hero image',
+              class_types: ['Primary'],
+            },
+            {
+              url: 'https://cdn.example.com/products/new.jpg',
+              media_type: 'Image',
+              description: 'New image',
+            },
+          ],
+        },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        action: 'update',
+      }),
+    );
+
+    expect(imageBodies).toEqual([
+      expect.objectContaining({
+        image_url: 'https://cdn.example.com/products/new.jpg',
+      }),
+    ]);
+    expect(deletedImageIds).toEqual([3902]);
   });
 
   test('creates inventory sync targets instead of sending quantity through the catalog product payload', async () => {
@@ -1720,8 +2147,9 @@ describe('upsertBigCommerceProduct media sync', () => {
         return {
           data: [
             { id: 5001, display_name: 'vendor_id' },
-            { id: 5002, display_name: 'duplicate' },
-            { id: 5003, display_name: 'product_cost_markup' },
+            { id: 5002, display_name: 'vendor_name' },
+            { id: 5003, display_name: 'duplicate' },
+            { id: 5004, display_name: 'product_cost_markup' },
           ],
         };
       }
@@ -1746,6 +2174,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       accessToken: 'token',
       storeHash: 'abc123',
       vendorId: 22,
+      vendorName: 'PCNA',
       defaultMarkupPercent: 30,
       product: {
         sku: 'SKU-MOD',
@@ -1759,9 +2188,17 @@ describe('upsertBigCommerceProduct media sync', () => {
     });
 
     expect(result.action).toBe('update');
-    expect(modifierUpdateBodies).toHaveLength(3);
+    expect(modifierUpdateBodies).toHaveLength(4);
     expect(modifierUpdateBodies).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          display_name: 'vendor_name',
+          option_values: expect.arrayContaining([
+            expect.objectContaining({
+              label: 'PCNA',
+            }),
+          ]),
+        }),
         expect.objectContaining({
           option_values: expect.arrayContaining([
             expect.not.objectContaining({
@@ -1820,8 +2257,9 @@ describe('upsertBigCommerceProduct media sync', () => {
         return {
           data: [
             { id: 6001, display_name: 'vendor_id' },
-            { id: 6002, display_name: 'duplicate' },
-            { id: 6003, display_name: 'product_cost_markup' },
+            { id: 6002, display_name: 'vendor_name' },
+            { id: 6003, display_name: 'duplicate' },
+            { id: 6004, display_name: 'product_cost_markup' },
           ],
         };
       }
@@ -1857,6 +2295,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       accessToken: 'token',
       storeHash: 'abc123',
       vendorId: 22,
+      vendorName: 'PCNA',
       defaultMarkupPercent: 30,
       product: {
         sku: 'SKU-MOD-DUPE',
@@ -1875,9 +2314,22 @@ describe('upsertBigCommerceProduct media sync', () => {
         expect.stringContaining('/modifiers/6001'),
         expect.stringContaining('/modifiers/6002'),
         expect.stringContaining('/modifiers/6003'),
+        expect.stringContaining('/modifiers/6004'),
       ]),
     );
-    expect(modifierPostBodies).toHaveLength(3);
+    expect(modifierPostBodies).toHaveLength(4);
+    expect(modifierPostBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          display_name: 'vendor_name',
+          option_values: expect.arrayContaining([
+            expect.objectContaining({
+              label: 'PCNA',
+            }),
+          ]),
+        }),
+      ]),
+    );
   });
 
   test('skips invalid vendor brand names instead of failing the product sync', async () => {

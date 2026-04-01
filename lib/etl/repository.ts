@@ -1354,6 +1354,46 @@ export async function findDueOrderIntegrationStates(input: {
   return rows.map(serializeOrderIntegrationState);
 }
 
+export async function listSyncRunsPendingCatalogContinuation(limit = 100): Promise<EtlSyncRun[]> {
+  const take = Math.max(1, Math.floor(limit));
+  const rows = await prisma.$queryRaw<Array<{
+    etl_sync_run_id: bigint;
+    vendor_id: number;
+    endpoint_mapping_id: number | null;
+    sync_scope: SyncScope;
+    status: SyncRunStatus;
+    started_at: Date;
+    ended_at: Date | null;
+    records_read: number;
+    records_written: number;
+    error_message: string | null;
+    details: unknown;
+  }>>(Prisma.sql`
+    SELECT
+      "etl_sync_run_id",
+      "vendor_id",
+      "endpoint_mapping_id",
+      "sync_scope",
+      "status",
+      "started_at",
+      "ended_at",
+      "records_read",
+      "records_written",
+      "error_message",
+      "details"
+    FROM "etl_sync_run"
+    WHERE "status" = 'SUCCESS'
+      AND jsonb_typeof("details") = 'object'
+      AND jsonb_typeof("details"->'continuation') = 'object'
+      AND COALESCE(("details"->'continuation'->>'enqueued')::boolean, false) = false
+      AND ("details"->'continuation'->>'next_start_reference_index') IS NOT NULL
+    ORDER BY "etl_sync_run_id" ASC
+    LIMIT ${take}
+  `);
+
+  return rows.map(serializeSyncRun);
+}
+
 export async function markSyncRunRunning(syncRunId: number): Promise<EtlSyncRun | null> {
   const row = await prisma.etlSyncRun.update({
     where: { etl_sync_run_id: BigInt(syncRunId) },

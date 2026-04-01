@@ -22,7 +22,7 @@ API handlers submit jobs and return control-plane status information rather than
 
 Core execution continues to use the existing domain-specific runners, but those runners execute inside worker-owned lifecycle management instead of directly in user requests.
 
-For large catalog imports, the runner may intentionally stop after a bounded number of ProductData references, persist sync progress, and enqueue a continuation job with the next reference offset. This keeps catalog syncs within Lambda execution limits while preserving one logical sync chain.
+For large catalog imports, the runner may intentionally stop after a bounded number of ProductData references and persist continuation state with the next reference offset. A separate scheduler Lambda evaluates those completed sync runs and submits the next continuation job onto the integration queue. This keeps catalog syncs within Lambda execution limits while avoiding worker self-enqueue recursion on the same SQS-triggered Lambda.
 
 ## Consequences
 

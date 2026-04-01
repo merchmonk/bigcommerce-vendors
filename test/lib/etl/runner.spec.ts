@@ -1,4 +1,5 @@
 import { runVendorSync } from '@lib/etl/runner';
+import { getRequestContext } from '@lib/requestContext';
 
 const mockGetVendorById = jest.fn();
 const mockCreateSyncRun = jest.fn();
@@ -22,7 +23,6 @@ const mockUpdateSyncRunProgress = jest.fn();
 const mockUpsertRelatedProducts = jest.fn();
 const mockResolveBigCommercePricingContext = jest.fn();
 const mockReconcileStaleCatalogSyncRunsForVendor = jest.fn();
-const mockSubmitCatalogSyncJob = jest.fn();
 const mockLoggerInfo = jest.fn();
 const mockLoggerWarn = jest.fn();
 const mockLoggerError = jest.fn();
@@ -58,10 +58,6 @@ jest.mock('@lib/etl/bigcommercePricingContext', () => ({
   resolveBigCommercePricingContext: (...args: unknown[]) => mockResolveBigCommercePricingContext(...args),
 }));
 
-jest.mock('@lib/integrationJobs', () => ({
-  submitCatalogSyncJob: (...args: unknown[]) => mockSubmitCatalogSyncJob(...args),
-}));
-
 jest.mock('@lib/etl/adapters/factory', () => ({
   resolveEndpointAdapter: () => ({
     protocol: 'SOAP',
@@ -91,11 +87,12 @@ jest.mock('@lib/logger', () => ({
 describe('runVendorSync', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockCreateSyncRun.mockResolvedValue({ sync_run_id: 11 });
-    mockMarkSyncRunRunning.mockResolvedValue({ sync_run_id: 11 });
-    mockCompleteSyncRun.mockResolvedValue({ sync_run_id: 11, status: 'SUCCESS' });
+    mockCreateSyncRun.mockResolvedValue({ etl_sync_run_id: 11 });
+    mockMarkSyncRunRunning.mockResolvedValue({ etl_sync_run_id: 11 });
+    mockCompleteSyncRun.mockResolvedValue({ etl_sync_run_id: 11, status: 'SUCCESS' });
     mockGetVendorById.mockResolvedValue({
       vendor_id: 7,
+      vendor_name: 'PCNA',
       vendor_api_url: 'https://vendor.example.com',
       vendor_account_id: 'acct',
       vendor_secret: 'secret',
@@ -219,12 +216,6 @@ describe('runVendorSync', () => {
       markup_namespace: 'merchmonk',
       markup_key: 'product_markup',
     });
-    mockSubmitCatalogSyncJob.mockResolvedValue({
-      job: {
-        integration_job_id: 999,
-      },
-      deduplicated: false,
-    });
     mockSyncBigCommerceInventoryBatch.mockResolvedValue(undefined);
   });
 
@@ -249,6 +240,12 @@ describe('runVendorSync', () => {
     expect(mockFetchProductDataReference).toHaveBeenCalledTimes(1);
     expect(mockBuildProductAssembly).toHaveBeenCalledTimes(1);
     expect(mockUpsertBigCommerceProduct).toHaveBeenCalledTimes(1);
+    expect(mockUpsertBigCommerceProduct).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vendorId: 7,
+        vendorName: 'PCNA',
+      }),
+    );
     expect(mockSyncBigCommerceInventoryBatch).toHaveBeenCalledWith({
       accessToken: 'token',
       storeHash: 'storehash',
@@ -263,7 +260,7 @@ describe('runVendorSync', () => {
     expect(result.recordsWritten).toBe(1);
     expect(mockUpdateSyncRunProgress).toHaveBeenCalledWith(
       expect.objectContaining({
-        sync_run_id: 11,
+        etl_sync_run_id: 11,
         details: expect.objectContaining({
           endpointResults: expect.arrayContaining([
             expect.objectContaining({
@@ -278,10 +275,39 @@ describe('runVendorSync', () => {
     );
     expect(mockCompleteSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sync_run_id: 11,
+        etl_sync_run_id: 11,
         status: 'SUCCESS',
       }),
     );
+  });
+
+  test('uses a product-scoped correlation id during BigCommerce product upserts', async () => {
+    const seenCorrelationIds: string[] = [];
+    mockUpsertBigCommerceProduct.mockImplementation(async () => {
+      seenCorrelationIds.push(getRequestContext()?.correlationId ?? 'missing');
+      return {
+        product: { id: 999, sku: 'SKU-1', name: 'Example' },
+        duplicate: false,
+        action: 'create',
+        resolvedSku: 'SKU-1',
+        markupPercent: 30,
+      };
+    });
+
+    await runVendorSync({
+      vendorId: 7,
+      session: {
+        accessToken: 'token',
+        storeHash: 'storehash',
+        user: { id: 1, email: 'test@example.com' },
+      },
+      syncAll: true,
+      integrationJobId: 90,
+      sourceAction: 'manual_sync',
+      correlationId: 'corr-ctx',
+    });
+
+    expect(seenCorrelationIds).toEqual(['corr-ctx:PROD-1:SKU-1']);
   });
 
   test('flushes pending inventory updates before failing a later product in the same run', async () => {
@@ -397,7 +423,7 @@ describe('runVendorSync', () => {
   test('passes the previous successful sync completion time into ProductData discovery', async () => {
     mockListSyncRunsForVendor.mockResolvedValue([
       {
-        sync_run_id: 10,
+        etl_sync_run_id: 10,
         status: 'SUCCESS',
         started_at: '2026-03-20T18:00:00.000Z',
         ended_at: '2026-03-20T18:45:00.000Z',
@@ -411,7 +437,7 @@ describe('runVendorSync', () => {
         storeHash: 'storehash',
         user: { id: 1, email: 'test@example.com' },
       },
-      syncAll: true,
+      syncAll: false,
     });
 
     expect(mockDiscoverProductDataReferences).toHaveBeenCalledWith(
@@ -565,7 +591,7 @@ describe('runVendorSync', () => {
     expect(mockUpsertBigCommerceProduct).not.toHaveBeenCalled();
     expect(mockCompleteSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sync_run_id: 11,
+        etl_sync_run_id: 11,
         status: 'FAILED',
         details: expect.objectContaining({
           productStatuses: expect.arrayContaining([
@@ -725,7 +751,7 @@ describe('runVendorSync', () => {
     expect(mockUpsertBigCommerceProduct).toHaveBeenCalledTimes(1);
     expect(mockCompleteSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sync_run_id: 11,
+        etl_sync_run_id: 11,
         status: 'SUCCESS',
         records_read: 2,
         records_written: 1,
@@ -818,7 +844,7 @@ describe('runVendorSync', () => {
     expect(mockUpsertVendorProductMap).toHaveBeenCalledTimes(1);
   });
 
-  test('enqueues a continuation job after processing one batch of ProductData references', async () => {
+  test('persists continuation state after processing one batch of ProductData references', async () => {
     mockDiscoverProductDataReferences.mockResolvedValue({
       endpointResults: [
         {
@@ -920,35 +946,30 @@ describe('runVendorSync', () => {
         reference: expect.objectContaining({ productId: 'PROD-2' }),
       }),
     );
-    expect(mockSubmitCatalogSyncJob).toHaveBeenCalledWith({
-      vendorId: 7,
-      syncAll: true,
-      sourceAction: 'manual_sync',
-      correlationId: 'corr-90',
-      requestPayload: {
-        continuation: {
-          start_reference_index: 2,
-          max_references_per_run: 2,
-          initial_last_successful_sync_at: '2026-03-20T18:45:00.000Z',
-        },
-      },
-    });
     expect(mockCompleteSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
         status: 'SUCCESS',
         details: expect.objectContaining({
           continuation: expect.objectContaining({
-            enqueued: true,
+            enqueued: false,
             next_start_reference_index: 2,
             total_references: 3,
+            max_references_per_run: 2,
+            initial_last_successful_sync_at: '2026-03-20T18:45:00.000Z',
+            source_action: 'manual_sync',
+            correlation_id: 'corr-90',
           }),
         }),
       }),
     );
     expect(result.continuation).toEqual({
-      enqueued: true,
+      enqueued: false,
       nextStartReferenceIndex: 2,
       totalReferences: 3,
+      maxReferencesPerRun: 2,
+      initialLastSuccessfulSyncAt: '2026-03-20T18:45:00.000Z',
+      sourceAction: 'manual_sync',
+      correlationId: 'corr-90',
     });
   });
 
@@ -1041,23 +1062,89 @@ describe('runVendorSync', () => {
         reference: expect.objectContaining({ productId: 'PROD-15' }),
       }),
     );
-    expect(mockSubmitCatalogSyncJob).toHaveBeenCalledWith({
-      vendorId: 7,
-      syncAll: true,
+    expect(result.continuation).toEqual({
+      enqueued: false,
+      nextStartReferenceIndex: 15,
+      totalReferences: 16,
+      maxReferencesPerRun: 15,
+      initialLastSuccessfulSyncAt: null,
       sourceAction: 'manual_sync',
       correlationId: 'corr-91',
-      requestPayload: {
+    });
+  });
+
+  test('keeps full-sync continuations on ProductSellable discovery instead of falling back to incremental discovery', async () => {
+    mockListSyncRunsForVendor.mockResolvedValue([
+      {
+        etl_sync_run_id: 10,
+        status: 'SUCCESS',
+        started_at: '2026-03-31T00:00:00.000Z',
+        ended_at: '2026-03-31T01:00:00.000Z',
+      },
+    ]);
+
+    await runVendorSync({
+      vendorId: 7,
+      session: {
+        accessToken: 'token',
+        storeHash: 'storehash',
+        user: { id: 1, email: 'test@example.com' },
+      },
+      syncAll: true,
+      integrationJobId: 92,
+      sourceAction: 'manual_sync',
+      correlationId: 'corr-92',
+      continuation: {
+        start_reference_index: 15,
+        max_references_per_run: 15,
+        initial_last_successful_sync_at: null,
+      },
+    });
+
+    expect(mockDiscoverProductDataReferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lastSuccessfulSyncAt: null,
+      }),
+    );
+  });
+
+  test('does not crash when ProductData discovery returns no references and no getProduct config', async () => {
+    mockDiscoverProductDataReferences.mockResolvedValue({
+      endpointResults: [
+        {
+          mapping_id: 100,
+          endpoint_name: 'ProductData',
+          endpoint_version: '2.0.0',
+          operation_name: 'getProductDateModified',
+          status: 200,
+          products_found: 0,
+        },
+      ],
+      references: [],
+      getProductConfig: null,
+    });
+
+    await expect(
+      runVendorSync({
+        vendorId: 7,
+        session: {
+          accessToken: 'token',
+          storeHash: 'storehash',
+          user: { id: 1, email: 'test@example.com' },
+        },
+        syncAll: true,
+        integrationJobId: 93,
+        sourceAction: 'manual_sync',
+        correlationId: 'corr-93',
         continuation: {
           start_reference_index: 15,
           max_references_per_run: 15,
           initial_last_successful_sync_at: null,
         },
-      },
-    });
-    expect(result.continuation).toEqual({
-      enqueued: true,
-      nextStartReferenceIndex: 15,
-      totalReferences: 16,
+      }),
+    ).resolves.toMatchObject({
+      recordsRead: 0,
+      recordsWritten: 0,
     });
   });
 
@@ -1073,11 +1160,10 @@ describe('runVendorSync', () => {
           products_found: 3,
         },
       ],
-      references: [
-        { productId: 'BLOCK-1', partId: 'BLOCK-1-BLK' },
-        { productId: 'BLOCK-2', partId: 'BLOCK-2-BLK' },
-        { productId: 'PASS-3', partId: 'PASS-3-BLK' },
-      ],
+      references: Array.from({ length: 5 }, (_, index) => ({
+        productId: `BLOCK-${index + 1}`,
+        partId: `BLOCK-${index + 1}-BLK`,
+      })),
       getProductConfig: {
         mapping: {
           mapping_id: 101,
@@ -1100,6 +1186,18 @@ describe('runVendorSync', () => {
       .mockResolvedValueOnce({
         status: 200,
         products: [{ sku: 'BLOCK-2', vendor_product_id: 'BLOCK-2', name: 'Blocked Two' }],
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [{ sku: 'BLOCK-3', vendor_product_id: 'BLOCK-3', name: 'Blocked Three' }],
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [{ sku: 'BLOCK-4', vendor_product_id: 'BLOCK-4', name: 'Blocked Four' }],
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        products: [{ sku: 'BLOCK-5', vendor_product_id: 'BLOCK-5', name: 'Blocked Five' }],
       });
 
     mockBuildProductAssembly
@@ -1140,6 +1238,63 @@ describe('runVendorSync', () => {
           },
         ],
         mediaRetries: [],
+      })
+      .mockResolvedValueOnce({
+        endpointResults: [],
+        products: [],
+        statuses: [
+          {
+            sku: 'BLOCK-3',
+            vendor_product_id: 'BLOCK-3',
+            blocked: true,
+            gating_reasons: ['No pricing data available for product.'],
+            enrichment_status: {
+              pricing: 'FAILED',
+              inventory: 'SUCCESS',
+              media: 'SUCCESS',
+              gating_reasons: ['No pricing data available for product.'],
+            },
+          },
+        ],
+        mediaRetries: [],
+      })
+      .mockResolvedValueOnce({
+        endpointResults: [],
+        products: [],
+        statuses: [
+          {
+            sku: 'BLOCK-4',
+            vendor_product_id: 'BLOCK-4',
+            blocked: true,
+            gating_reasons: ['No pricing data available for product.'],
+            enrichment_status: {
+              pricing: 'FAILED',
+              inventory: 'SUCCESS',
+              media: 'SUCCESS',
+              gating_reasons: ['No pricing data available for product.'],
+            },
+          },
+        ],
+        mediaRetries: [],
+      })
+      .mockResolvedValueOnce({
+        endpointResults: [],
+        products: [],
+        statuses: [
+          {
+            sku: 'BLOCK-5',
+            vendor_product_id: 'BLOCK-5',
+            blocked: true,
+            gating_reasons: ['No pricing data available for product.'],
+            enrichment_status: {
+              pricing: 'FAILED',
+              inventory: 'SUCCESS',
+              media: 'SUCCESS',
+              gating_reasons: ['No pricing data available for product.'],
+            },
+          },
+        ],
+        mediaRetries: [],
       });
 
     await expect(
@@ -1154,13 +1309,13 @@ describe('runVendorSync', () => {
       }),
     ).rejects.toThrow('Vendor sync halted during early product validation');
 
-    expect(mockFetchProductDataReference).toHaveBeenCalledTimes(2);
+    expect(mockFetchProductDataReference).toHaveBeenCalledTimes(5);
     expect(mockUpsertBigCommerceProduct).not.toHaveBeenCalled();
     expect(mockCompleteSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sync_run_id: 11,
+        etl_sync_run_id: 11,
         status: 'FAILED',
-        error_message: expect.stringContaining('0 of first 2 products passed enrichment'),
+        error_message: expect.stringContaining('0 of first 5 products passed enrichment'),
       }),
     );
   });
@@ -1266,7 +1421,7 @@ describe('runVendorSync', () => {
     expect(mockUpsertBigCommerceProduct).not.toHaveBeenCalled();
     expect(mockCompleteSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sync_run_id: 11,
+        etl_sync_run_id: 11,
         status: 'FAILED',
         error_message: expect.stringContaining('99 products (99%) failed enrichment'),
       }),
@@ -1310,7 +1465,7 @@ describe('runVendorSync', () => {
     );
     expect(mockCompleteSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sync_run_id: 11,
+        etl_sync_run_id: 11,
         status: 'FAILED',
         details: expect.objectContaining({
           recordsWritten: 1,

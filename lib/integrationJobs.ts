@@ -29,6 +29,8 @@ export interface IntegrationJobMessage {
   integrationJobId: number;
 }
 
+const CATALOG_SYNC_CONTINUATION_DELAY_SECONDS = 2;
+
 export interface OrderLifecycleJobRequest {
   vendorId: number;
   orderIntegrationStateId: number;
@@ -103,6 +105,7 @@ async function enqueueIntegrationJob(input: {
   correlationId: string;
   dedupeKey: string;
   requestPayload?: Record<string, unknown>;
+  queueDelaySeconds?: number;
   jobSubmittedEventName: string;
   queueEnqueuedEventName: string;
   platformDetailType: string;
@@ -163,6 +166,7 @@ async function enqueueIntegrationJob(input: {
         MessageBody: JSON.stringify({
           integrationJobId: job.integration_job_id,
         } satisfies IntegrationJobMessage),
+        DelaySeconds: input.queueDelaySeconds,
       }),
     );
   } catch (error) {
@@ -225,6 +229,7 @@ export async function submitCatalogSyncJob(input: CatalogSyncJobRequest): Promis
   deduplicated: boolean;
 }> {
   const dedupeKey = buildCatalogSyncDedupeKey(input);
+  const continuationStartIndex = readContinuationStartIndex(input.requestPayload);
   return enqueueIntegrationJob({
     jobKind: 'CATALOG_SYNC',
     vendorId: input.vendorId,
@@ -234,6 +239,8 @@ export async function submitCatalogSyncJob(input: CatalogSyncJobRequest): Promis
     correlationId: input.correlationId,
     dedupeKey,
     requestPayload: input.requestPayload,
+    queueDelaySeconds:
+      continuationStartIndex === null ? undefined : CATALOG_SYNC_CONTINUATION_DELAY_SECONDS,
     jobSubmittedEventName: 'job_submitted',
     queueEnqueuedEventName: 'job_enqueued',
     platformDetailType: 'product.sync.submitted',

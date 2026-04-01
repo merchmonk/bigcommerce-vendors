@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "next",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && npm run sharp && next build",
     "start": "next start -p $PORT",
     "postinstall": "prisma generate",
     "test": "jest --runInBand --watchman=false",
@@ -15,7 +15,8 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:migrate": "node scripts/migrations/001_init_auth_and_vendors.js --seed",
-    "store:markup:set": "tsx scripts/setStoreMarkupPercent.ts"
+    "store:markup:set": "tsx scripts/setStoreMarkupPercent.ts",
+    "sharp": "npm uninstall sharp && rm -rf node_modules/sharp && npm cache clean --force && npm install --cpu=x64 --os=linux --libc=glibc --include=optional sharp"
   },
   "keywords": [],
   "author": "",
@@ -32,6 +33,7 @@
     "@aws-sdk/client-s3": "^3.1012.0",
     "@aws-sdk/client-secrets-manager": "^3.1008.0",
     "@aws-sdk/client-sqs": "^3.1012.0",
+    "@aws-sdk/s3-request-presigner": "^3.1021.0",
     "@prisma/client": "^6.19.2",
     "aws-rum-web": "^2.0.0",
     "cdk-nextjs": "^0.5.0-beta.2",
@@ -42,6 +44,7 @@
     "node-bigcommerce": "github:bigcommerce/node-bigcommerce",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "sharp": "^0.34.5",
     "swr": "^2.4.1",
     "tsx": "^4.21.0"
   },

@@ -1,8 +1,8 @@
 import type { MappingProtocol, SessionContextProps } from '../../types';
 import logger from '../logger';
 import { getVendorById } from '../vendors';
-import { getRequestContext, mergeRequestContext } from '../requestContext';
-import { submitCatalogSyncJob, type CatalogSyncJobRequest } from '../integrationJobs';
+import { getRequestContext, mergeRequestContext, runWithRequestContext } from '../requestContext';
+import type { CatalogSyncJobRequest } from '../integrationJobs';
 import {
   resolveBigCommercePricingContext,
 } from './bigcommercePricingContext';
@@ -83,6 +83,10 @@ export interface SyncRunResult {
     enqueued: boolean;
     nextStartReferenceIndex: number;
     totalReferences: number;
+    maxReferencesPerRun: number;
+    initialLastSuccessfulSyncAt: string | null;
+    sourceAction: CatalogSyncJobRequest['sourceAction'];
+    correlationId: string;
   };
 }
 
@@ -103,6 +107,53 @@ interface ProductAssemblyStatusSummary {
 interface ProductDataReference {
   productId: string;
   partId?: string | null;
+}
+
+function sanitizeCorrelationSegment(value: string | undefined | null): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const sanitized = trimmed.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '');
+  return sanitized || undefined;
+}
+
+function buildScopedCorrelationId(
+  baseCorrelationId: string | undefined,
+  ...segments: Array<string | undefined | null>
+): string | undefined {
+  const normalizedSegments = segments
+    .map(segment => sanitizeCorrelationSegment(segment))
+    .filter((segment): segment is string => !!segment);
+
+  if (normalizedSegments.length === 0) {
+    return baseCorrelationId;
+  }
+
+  if (!baseCorrelationId?.trim()) {
+    return normalizedSegments.join(':');
+  }
+
+  return `${baseCorrelationId}:${normalizedSegments.join(':')}`;
+}
+
+async function runWithScopedCorrelation<T>(
+  correlationId: string | undefined,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const context = getRequestContext();
+  if (!correlationId || !context) {
+    return callback();
+  }
+
+  return runWithRequestContext(
+    {
+      ...context,
+      correlationId,
+    },
+    callback,
+  );
 }
 
 function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
@@ -331,6 +382,26 @@ function normalizeContinuationStartIndex(startReferenceIndex?: number): number {
   }
 
   return Math.floor(startReferenceIndex);
+}
+
+function resolveLastSuccessfulSyncAt(input: {
+  syncAll?: boolean;
+  continuation?: RunVendorSyncInput['continuation'];
+  lastSuccessfulSync?: {
+    ended_at?: string | null;
+    started_at?: string | null;
+  } | null;
+}): string | null {
+  if (input.syncAll) {
+    return input.continuation?.initial_last_successful_sync_at ?? null;
+  }
+
+  return (
+    input.continuation?.initial_last_successful_sync_at ??
+    input.lastSuccessfulSync?.ended_at ??
+    input.lastSuccessfulSync?.started_at ??
+    null
+  );
 }
 
 function sortProductDataReferences(references: ProductDataReference[]): ProductDataReference[] {
@@ -658,11 +729,11 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     const lastSuccessfulSync = priorSyncRuns.find(
       run => run.etl_sync_run_id !== syncRun.etl_sync_run_id && run.status === 'SUCCESS',
     );
-    const lastSuccessfulSyncAt =
-      input.continuation?.initial_last_successful_sync_at ??
-      lastSuccessfulSync?.ended_at ??
-      lastSuccessfulSync?.started_at ??
-      null;
+    const lastSuccessfulSyncAt = resolveLastSuccessfulSyncAt({
+      syncAll: input.syncAll,
+      continuation: input.continuation,
+      lastSuccessfulSync,
+    });
 
     const assignedMappings = await listEnabledVendorEndpointMappings(input.vendorId);
     const selectedMappings = assignedMappings.filter(item =>
@@ -701,7 +772,6 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     let canaryEvaluatedProductCount = 0;
     let canarySuccessfulProductCount = 0;
     let continuationResult: SyncRunResult['continuation'] | undefined;
-    let pendingContinuationRequest: CatalogSyncJobRequest | null = null;
 
     const selectedKeys = new Set(selectedMappings.map(item => mappingKey(item.mapping)));
     const productDataMappings = assignedMappings.filter(item => item.mapping.endpoint_name === 'ProductData');
@@ -783,282 +853,285 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       for (const reference of batchReferences) {
         await throwIfSyncCancelled(input.integrationJobId);
         getProductCallCount += 1;
+        const referenceCorrelationId = buildScopedCorrelationId(
+          input.correlationId ?? getRequestContext()?.correlationId,
+          reference.productId,
+          reference.partId,
+        );
 
-        const fetchResult = await fetchProductDataReference({
-          vendor,
-          discovery,
-          reference,
-        });
-
-        if (fetchResult.status >= 400) {
-          endpointResults.push({
-            endpoint_mapping_id: discovery.getProductConfig?.mapping.endpoint_mapping_id ?? 0,
-            endpoint_name: discovery.getProductConfig?.mapping.endpoint_name ?? 'ProductData',
-            endpoint_version: discovery.getProductConfig?.mapping.endpoint_version ?? '',
-            operation_name: 'getProduct',
-            status: fetchResult.status,
-            products_found: 0,
-            message: fetchResult.message,
+        await runWithScopedCorrelation(referenceCorrelationId, async () => {
+          const fetchResult = await fetchProductDataReference({
+            vendor,
+            discovery,
+            reference,
           });
-          throw new Error(fetchResult.message ?? `getProduct failed for ${reference.productId}.`);
-        }
 
-        const mergedFetchedProducts = mergeProducts(fetchResult.products);
-        for (const product of mergedFetchedProducts) {
-          const readKey = product.vendor_product_id ?? product.sku;
-          if (!seenReadProductKeys.has(readKey)) {
-            seenReadProductKeys.add(readKey);
-            recordsRead += 1;
-          }
-        }
-
-        const unprocessedFetchedProducts = mergedFetchedProducts.filter(product => {
-          const productKey = product.vendor_product_id ?? product.sku;
-          if (processedProductKeys.has(productKey)) {
-            return false;
+          if (fetchResult.status >= 400) {
+            endpointResults.push({
+              endpoint_mapping_id: discovery.getProductConfig?.mapping.endpoint_mapping_id ?? 0,
+              endpoint_name: discovery.getProductConfig?.mapping.endpoint_name ?? 'ProductData',
+              endpoint_version: discovery.getProductConfig?.mapping.endpoint_version ?? '',
+              operation_name: 'getProduct',
+              status: fetchResult.status,
+              products_found: 0,
+              message: fetchResult.message,
+            });
+            throw new Error(fetchResult.message ?? `getProduct failed for ${reference.productId}.`);
           }
 
-          processedProductKeys.add(productKey);
-          return true;
-        });
-
-        if (mergedFetchedProducts.length > 0 && unprocessedFetchedProducts.length === 0) {
-          logger.info('vendor sync skipped duplicate product reference', {
-            syncRunId: syncRun.etl_sync_run_id,
-            vendorId: input.vendorId,
-            productId: reference.productId,
-            partId: reference.partId ?? null,
-          });
-          continue;
-        }
-
-        const assembly = await buildProductAssembly({
-          vendor,
-          assignedMappings: assignedMappings.filter(item => {
-            if (item.mapping.endpoint_name === 'ProductData') return false;
-            if (!['Inventory', 'PricingAndConfiguration', 'ProductMedia'].includes(item.mapping.endpoint_name)) return false;
-            if (input.mappingId && selectedKeys.size > 0) {
-              return selectedKeys.has(mappingKey(item.mapping));
+          const mergedFetchedProducts = mergeProducts(fetchResult.products);
+          for (const product of mergedFetchedProducts) {
+            const readKey = product.vendor_product_id ?? product.sku;
+            if (!seenReadProductKeys.has(readKey)) {
+              seenReadProductKeys.add(readKey);
+              recordsRead += 1;
             }
+          }
+
+          const unprocessedFetchedProducts = mergedFetchedProducts.filter(product => {
+            const productKey = product.vendor_product_id ?? product.sku;
+            if (processedProductKeys.has(productKey)) {
+              return false;
+            }
+
+            processedProductKeys.add(productKey);
             return true;
-          }),
-          baseProducts: unprocessedFetchedProducts,
-        });
-
-        assembly.endpointResults.forEach(result => endpointResults.push(result));
-        assemblyStatuses.push(...assembly.statuses);
-        mediaRetries.push(...assembly.mediaRetries);
-        blockedProductCount += assembly.statuses.filter(status => status.blocked).length;
-        canaryEvaluatedProductCount += assembly.statuses.length;
-        canarySuccessfulProductCount += assembly.products.length;
-
-        for (const retry of assembly.mediaRetries) {
-          await upsertProductEnrichmentRetry({
-            vendor_id: input.vendorId,
-            vendor_product_id: retry.vendor_product_id,
-            source: 'MEDIA',
-            status: 'PENDING',
-            last_error: retry.message,
-            metadata: { sku: retry.sku },
           });
-        }
 
-        if (shouldFailSyncDuringCanaryWindow({
-          evaluatedProductCount: canaryEvaluatedProductCount,
-          successfulProductCount: canarySuccessfulProductCount,
-        })) {
-          const blockedSummary = summarizeBlockedProducts(assemblyStatuses);
-          throw new Error(
-            `Vendor sync halted during early product validation: 0 of first ${canaryEvaluatedProductCount} products passed enrichment. ${formatGatingReasonSummary(blockedSummary)}`,
-          );
-        }
-
-        if (shouldFailSyncBecauseBlockedRateTooHigh({
-          evaluatedProductCount: assemblyStatuses.length,
-          blockedProductCount,
-        })) {
-          const blockedSummary = summarizeBlockedProducts(assemblyStatuses);
-          throw new Error(
-            `Vendor sync halted after ${assemblyStatuses.length} attempted products because ${blockedProductCount} products (${Math.round((blockedProductCount / assemblyStatuses.length) * 100)}%) failed enrichment, exceeding the ${Math.round(BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO * 100)}% threshold. ${formatGatingReasonSummary(blockedSummary)}`,
-          );
-        }
-
-        if (mergedFetchedProducts.length > 0 && assembly.products.length === 0) {
-          const blockedSummary = summarizeBlockedProducts(assembly.statuses);
-          logger.warn('vendor sync skipped blocked product before BigCommerce write', {
-            syncRunId: syncRun.etl_sync_run_id,
-            vendorId: input.vendorId,
-            productId: reference.productId,
-            blockedProductCount: blockedSummary.blockedCount,
-            topGatingReasons: blockedSummary.topGatingReasons,
-          });
-          continue;
-        }
-
-        for (const product of assembly.products) {
-          await throwIfSyncCancelled(input.integrationJobId);
-
-          let upsertResult;
-          try {
-            upsertResult = await upsertBigCommerceProduct({
-              accessToken: input.session.accessToken,
-              storeHash: input.session.storeHash,
+          if (mergedFetchedProducts.length > 0 && unprocessedFetchedProducts.length === 0) {
+            logger.info('vendor sync skipped duplicate product reference', {
+              syncRunId: syncRun.etl_sync_run_id,
               vendorId: input.vendorId,
-              product,
-              defaultMarkupPercent: 30,
-              pricingContext,
+              productId: reference.productId,
+              partId: reference.partId ?? null,
             });
-          } catch (error) {
-            const partialUpsert = readPartialBigCommerceUpsertResult(error);
-            if (partialUpsert) {
-              await upsertVendorProductMap({
-                vendor_id: input.vendorId,
-                endpoint_mapping_id: input.mappingId ?? null,
-                vendor_product_id: product.vendor_product_id ?? product.sku,
-                bigcommerce_product_id: partialUpsert.product.id,
-                sku: partialUpsert.resolvedSku,
-                product_name: product.name,
-                metadata: {
-                  source: 'etl-sync',
-                  duplicate: partialUpsert.duplicate,
-                  action: partialUpsert.action,
-                  markup_percent: partialUpsert.markupPercent,
-                  pricing_reconciliation: partialUpsert.pricingReconciliation ?? null,
-                  enrichment: product.enrichment_status ?? {},
-                  partial_failure: true,
-                  partial_error: error instanceof Error ? error.message : 'Partial BigCommerce upsert failed.',
-                },
+            return;
+          }
+
+          const assembly = await buildProductAssembly({
+            vendor,
+            assignedMappings: assignedMappings.filter(item => {
+              if (item.mapping.endpoint_name === 'ProductData') return false;
+              if (!['Inventory', 'PricingAndConfiguration', 'ProductMedia'].includes(item.mapping.endpoint_name)) return false;
+              if (input.mappingId && selectedKeys.size > 0) {
+                return selectedKeys.has(mappingKey(item.mapping));
+              }
+              return true;
+            }),
+            baseProducts: unprocessedFetchedProducts,
+          });
+
+          assembly.endpointResults.forEach(result => endpointResults.push(result));
+          assemblyStatuses.push(...assembly.statuses);
+          mediaRetries.push(...assembly.mediaRetries);
+          blockedProductCount += assembly.statuses.filter(status => status.blocked).length;
+          canaryEvaluatedProductCount += assembly.statuses.length;
+          canarySuccessfulProductCount += assembly.products.length;
+
+          for (const retry of assembly.mediaRetries) {
+            await upsertProductEnrichmentRetry({
+              vendor_id: input.vendorId,
+              vendor_product_id: retry.vendor_product_id,
+              source: 'MEDIA',
+              status: 'PENDING',
+              last_error: retry.message,
+              metadata: { sku: retry.sku },
+            });
+          }
+
+          if (shouldFailSyncDuringCanaryWindow({
+            evaluatedProductCount: canaryEvaluatedProductCount,
+            successfulProductCount: canarySuccessfulProductCount,
+          })) {
+            const blockedSummary = summarizeBlockedProducts(assemblyStatuses);
+            throw new Error(
+              `Vendor sync halted during early product validation: 0 of first ${canaryEvaluatedProductCount} products passed enrichment. ${formatGatingReasonSummary(blockedSummary)}`,
+            );
+          }
+
+          if (shouldFailSyncBecauseBlockedRateTooHigh({
+            evaluatedProductCount: assemblyStatuses.length,
+            blockedProductCount,
+          })) {
+            const blockedSummary = summarizeBlockedProducts(assemblyStatuses);
+            throw new Error(
+              `Vendor sync halted after ${assemblyStatuses.length} attempted products because ${blockedProductCount} products (${Math.round((blockedProductCount / assemblyStatuses.length) * 100)}%) failed enrichment, exceeding the ${Math.round(BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO * 100)}% threshold. ${formatGatingReasonSummary(blockedSummary)}`,
+            );
+          }
+
+          if (mergedFetchedProducts.length > 0 && assembly.products.length === 0) {
+            const blockedSummary = summarizeBlockedProducts(assembly.statuses);
+            logger.warn('vendor sync skipped blocked product before BigCommerce write', {
+              syncRunId: syncRun.etl_sync_run_id,
+              vendorId: input.vendorId,
+              productId: reference.productId,
+              blockedProductCount: blockedSummary.blockedCount,
+              topGatingReasons: blockedSummary.topGatingReasons,
+            });
+            return;
+          }
+
+          for (const product of assembly.products) {
+            await throwIfSyncCancelled(input.integrationJobId);
+
+            let upsertResult;
+            try {
+              upsertResult = await upsertBigCommerceProduct({
+                accessToken: input.session.accessToken,
+                storeHash: input.session.storeHash,
+                vendorId: input.vendorId,
+                vendorName: vendor.vendor_name,
+                product,
+                defaultMarkupPercent: 30,
+                pricingContext,
               });
+            } catch (error) {
+              const partialUpsert = readPartialBigCommerceUpsertResult(error);
+              if (partialUpsert) {
+                await upsertVendorProductMap({
+                  vendor_id: input.vendorId,
+                  endpoint_mapping_id: input.mappingId ?? null,
+                  vendor_product_id: product.vendor_product_id ?? product.sku,
+                  bigcommerce_product_id: partialUpsert.product.id,
+                  sku: partialUpsert.resolvedSku,
+                  product_name: product.name,
+                  metadata: {
+                    source: 'etl-sync',
+                    duplicate: partialUpsert.duplicate,
+                    action: partialUpsert.action,
+                    markup_percent: partialUpsert.markupPercent,
+                    pricing_reconciliation: partialUpsert.pricingReconciliation ?? null,
+                    enrichment: product.enrichment_status ?? {},
+                    partial_failure: true,
+                    partial_error: error instanceof Error ? error.message : 'Partial BigCommerce upsert failed.',
+                  },
+                });
 
-              if (!writtenProductKeys.has(partialUpsert.resolvedSku)) {
-                writtenProductKeys.add(partialUpsert.resolvedSku);
-                recordsWritten += 1;
+                if (!writtenProductKeys.has(partialUpsert.resolvedSku)) {
+                  writtenProductKeys.add(partialUpsert.resolvedSku);
+                  recordsWritten += 1;
+                }
+
+                if (partialUpsert.inventory_sync_target) {
+                  pendingInventorySyncTargets.push(partialUpsert.inventory_sync_target);
+                }
               }
 
-              if (partialUpsert.inventory_sync_target) {
-                pendingInventorySyncTargets.push(partialUpsert.inventory_sync_target);
-              }
+              throw error;
             }
 
-            throw error;
-          }
-
-          await upsertVendorProductMap({
-            vendor_id: input.vendorId,
-            endpoint_mapping_id: input.mappingId ?? null,
-            vendor_product_id: product.vendor_product_id ?? product.sku,
-            bigcommerce_product_id: upsertResult.product.id,
-            sku: upsertResult.resolvedSku,
-            product_name: product.name,
-            metadata: {
-              source: 'etl-sync',
-              duplicate: upsertResult.duplicate,
-              action: upsertResult.action,
-              markup_percent: upsertResult.markupPercent,
-              pricing_reconciliation: upsertResult.pricingReconciliation,
-              enrichment: product.enrichment_status ?? {},
-            },
-          });
-
-          if (product.vendor_product_id) {
-            await clearProductEnrichmentRetry({
+            await upsertVendorProductMap({
               vendor_id: input.vendorId,
-              vendor_product_id: product.vendor_product_id,
-              source: 'MEDIA',
-            });
-          }
-
-          const related = product.related_vendor_product_ids ?? [];
-          for (const targetVendorProductId of related) {
-            if (!product.vendor_product_id) continue;
-            await upsertPendingRelatedProductLink({
-              vendor_id: input.vendorId,
-              source_vendor_product_id: product.vendor_product_id,
-              target_vendor_product_id: targetVendorProductId,
-              source_bigcommerce_product_id: upsertResult.product.id,
-              status: 'PENDING',
+              endpoint_mapping_id: input.mappingId ?? null,
+              vendor_product_id: product.vendor_product_id ?? product.sku,
+              bigcommerce_product_id: upsertResult.product.id,
+              sku: upsertResult.resolvedSku,
+              product_name: product.name,
               metadata: {
-                source_sku: upsertResult.resolvedSku,
+                source: 'etl-sync',
+                duplicate: upsertResult.duplicate,
+                action: upsertResult.action,
+                markup_percent: upsertResult.markupPercent,
+                pricing_reconciliation: upsertResult.pricingReconciliation,
+                enrichment: product.enrichment_status ?? {},
               },
             });
+
+            if (product.vendor_product_id) {
+              await clearProductEnrichmentRetry({
+                vendor_id: input.vendorId,
+                vendor_product_id: product.vendor_product_id,
+                source: 'MEDIA',
+              });
+            }
+
+            const related = product.related_vendor_product_ids ?? [];
+            for (const targetVendorProductId of related) {
+              if (!product.vendor_product_id) continue;
+              await upsertPendingRelatedProductLink({
+                vendor_id: input.vendorId,
+                source_vendor_product_id: product.vendor_product_id,
+                target_vendor_product_id: targetVendorProductId,
+                source_bigcommerce_product_id: upsertResult.product.id,
+                status: 'PENDING',
+                metadata: {
+                  source_sku: upsertResult.resolvedSku,
+                },
+              });
+            }
+
+            if (!writtenProductKeys.has(upsertResult.resolvedSku)) {
+              writtenProductKeys.add(upsertResult.resolvedSku);
+              recordsWritten += 1;
+            }
+
+            if (upsertResult.inventory_sync_target) {
+              pendingInventorySyncTargets.push(upsertResult.inventory_sync_target);
+              await flushPendingInventorySyncTargets('productdata_batch_progress');
+            }
+
+            logger.info('vendor sync BigCommerce product upsert completed', {
+              syncRunId: syncRun.etl_sync_run_id,
+              vendorId: input.vendorId,
+              sku: upsertResult.resolvedSku,
+              vendorProductId: product.vendor_product_id ?? null,
+              bigcommerceProductId: upsertResult.product.id,
+              action: upsertResult.action,
+              recordsWritten,
+            });
           }
 
-          if (!writtenProductKeys.has(upsertResult.resolvedSku)) {
-            writtenProductKeys.add(upsertResult.resolvedSku);
-            recordsWritten += 1;
+          if (shouldPersistProgress(getProductCallCount)) {
+            await persistSyncProgress({
+              syncRunId: syncRun.etl_sync_run_id,
+              phase: 'UPSERT',
+              totalReferences,
+              processedReferences: startReferenceIndex + getProductCallCount,
+              recordsRead,
+              recordsWritten,
+              blockedProductCount,
+              currentProductId: reference.productId,
+              currentSku: mergedFetchedProducts[0]?.sku ?? null,
+              endpointResults,
+              productStatuses: assemblyStatuses,
+              mediaRetries,
+            });
           }
-
-          if (upsertResult.inventory_sync_target) {
-            pendingInventorySyncTargets.push(upsertResult.inventory_sync_target);
-            await flushPendingInventorySyncTargets('productdata_batch_progress');
-          }
-
-          logger.info('vendor sync BigCommerce product upsert completed', {
-            syncRunId: syncRun.etl_sync_run_id,
-            vendorId: input.vendorId,
-            sku: upsertResult.resolvedSku,
-            vendorProductId: product.vendor_product_id ?? null,
-            bigcommerceProductId: upsertResult.product.id,
-            action: upsertResult.action,
-            recordsWritten,
-          });
-        }
-
-        if (shouldPersistProgress(getProductCallCount)) {
-          await persistSyncProgress({
-            syncRunId: syncRun.etl_sync_run_id,
-            phase: 'UPSERT',
-            totalReferences,
-            processedReferences: startReferenceIndex + getProductCallCount,
-            recordsRead,
-            recordsWritten,
-            blockedProductCount,
-            currentProductId: reference.productId,
-            currentSku: mergedFetchedProducts[0]?.sku ?? null,
-            endpointResults,
-            productStatuses: assemblyStatuses,
-            mediaRetries,
-          });
-        }
+        });
       }
 
-      endpointResults.push({
-        endpoint_mapping_id: discovery.getProductConfig.mapping.endpoint_mapping_id,
-        endpoint_name: discovery.getProductConfig.mapping.endpoint_name,
-        endpoint_version: discovery.getProductConfig.mapping.endpoint_version,
-        operation_name: discovery.getProductConfig.mapping.operation_name,
-        status: 200,
-        products_found: recordsRead,
-        message: hasMoreReferences
-          ? `getProduct completed for ${batchReferences.length} of ${totalReferences} product references in this batch.`
-          : `getProduct completed for ${totalReferences} product references.`,
-      });
+      if (!discovery.getProductConfig && totalReferences > 0 && batchReferences.length > 0) {
+        throw new Error('ProductData discovery returned references without a getProduct configuration.');
+      }
+
+      if (discovery.getProductConfig) {
+        endpointResults.push({
+          endpoint_mapping_id: discovery.getProductConfig.mapping.endpoint_mapping_id,
+          endpoint_name: discovery.getProductConfig.mapping.endpoint_name,
+          endpoint_version: discovery.getProductConfig.mapping.endpoint_version,
+          operation_name: discovery.getProductConfig.mapping.operation_name,
+          status: 200,
+          products_found: recordsRead,
+          message: hasMoreReferences
+            ? `getProduct completed for ${batchReferences.length} of ${totalReferences} product references in this batch.`
+            : `getProduct completed for ${totalReferences} product references.`,
+        });
+      }
 
       if (hasMoreReferences && isCatalogSyncSourceAction(input.sourceAction)) {
-        continuationResult = {
-          enqueued: false,
-          nextStartReferenceIndex,
-          totalReferences,
-        };
-
         const correlationId = input.correlationId ?? getRequestContext()?.correlationId;
         if (!correlationId) {
           throw new Error('Catalog sync continuation requires a correlation ID.');
         }
 
-        pendingContinuationRequest = {
-          vendorId: input.vendorId,
-          mappingId: input.mappingId,
-          syncAll: input.syncAll,
+        continuationResult = {
+          enqueued: false,
+          nextStartReferenceIndex,
+          totalReferences,
+          maxReferencesPerRun: maxReferencesPerRun,
+          initialLastSuccessfulSyncAt: lastSuccessfulSyncAt,
           sourceAction: input.sourceAction,
           correlationId,
-          requestPayload: {
-            continuation: {
-              start_reference_index: nextStartReferenceIndex,
-              max_references_per_run: maxReferencesPerRun,
-              initial_last_successful_sync_at: lastSuccessfulSyncAt,
-            },
-          },
         };
       }
     }
@@ -1208,78 +1281,85 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
 
       for (const product of assembly.products) {
         await throwIfSyncCancelled(input.integrationJobId);
+        const productCorrelationId = buildScopedCorrelationId(
+          input.correlationId ?? getRequestContext()?.correlationId,
+          product.vendor_product_id ?? product.sku,
+        );
 
-        const upsertResult = await upsertBigCommerceProduct({
-          accessToken: input.session.accessToken,
-          storeHash: input.session.storeHash,
-          vendorId: input.vendorId,
-          product,
-          defaultMarkupPercent: 30,
-          pricingContext,
-        });
-
-        await upsertVendorProductMap({
-          vendor_id: input.vendorId,
-          endpoint_mapping_id: input.mappingId ?? null,
-          vendor_product_id: product.vendor_product_id ?? product.sku,
-          bigcommerce_product_id: upsertResult.product.id,
-          sku: upsertResult.resolvedSku,
-          product_name: product.name,
-          metadata: {
-            source: 'etl-sync',
-            duplicate: upsertResult.duplicate,
-            action: upsertResult.action,
-            markup_percent: upsertResult.markupPercent,
-            pricing_reconciliation: upsertResult.pricingReconciliation,
-            enrichment: product.enrichment_status ?? {},
-          },
-        });
-
-        if (product.vendor_product_id) {
-          await clearProductEnrichmentRetry({
-            vendor_id: input.vendorId,
-            vendor_product_id: product.vendor_product_id,
-            source: 'MEDIA',
+        await runWithScopedCorrelation(productCorrelationId, async () => {
+          const upsertResult = await upsertBigCommerceProduct({
+            accessToken: input.session.accessToken,
+            storeHash: input.session.storeHash,
+            vendorId: input.vendorId,
+            vendorName: vendor.vendor_name,
+            product,
+            defaultMarkupPercent: 30,
+            pricingContext,
           });
-        }
 
-        const related = product.related_vendor_product_ids ?? [];
-        for (const targetVendorProductId of related) {
-          if (!product.vendor_product_id) continue;
-          await upsertPendingRelatedProductLink({
+          await upsertVendorProductMap({
             vendor_id: input.vendorId,
-            source_vendor_product_id: product.vendor_product_id,
-            target_vendor_product_id: targetVendorProductId,
-            source_bigcommerce_product_id: upsertResult.product.id,
-            status: 'PENDING',
+            endpoint_mapping_id: input.mappingId ?? null,
+            vendor_product_id: product.vendor_product_id ?? product.sku,
+            bigcommerce_product_id: upsertResult.product.id,
+            sku: upsertResult.resolvedSku,
+            product_name: product.name,
             metadata: {
-              source_sku: upsertResult.resolvedSku,
+              source: 'etl-sync',
+              duplicate: upsertResult.duplicate,
+              action: upsertResult.action,
+              markup_percent: upsertResult.markupPercent,
+              pricing_reconciliation: upsertResult.pricingReconciliation,
+              enrichment: product.enrichment_status ?? {},
             },
           });
-        }
 
-        if (!seenReadProductKeys.has(product.vendor_product_id ?? product.sku)) {
-          seenReadProductKeys.add(product.vendor_product_id ?? product.sku);
-          recordsRead += 1;
-        }
-        if (!writtenProductKeys.has(upsertResult.resolvedSku)) {
-          writtenProductKeys.add(upsertResult.resolvedSku);
-          recordsWritten += 1;
-        }
+          if (product.vendor_product_id) {
+            await clearProductEnrichmentRetry({
+              vendor_id: input.vendorId,
+              vendor_product_id: product.vendor_product_id,
+              source: 'MEDIA',
+            });
+          }
 
-        if (upsertResult.inventory_sync_target) {
-          pendingInventorySyncTargets.push(upsertResult.inventory_sync_target);
-          await flushPendingInventorySyncTargets('endpoint_batch_progress');
-        }
+          const related = product.related_vendor_product_ids ?? [];
+          for (const targetVendorProductId of related) {
+            if (!product.vendor_product_id) continue;
+            await upsertPendingRelatedProductLink({
+              vendor_id: input.vendorId,
+              source_vendor_product_id: product.vendor_product_id,
+              target_vendor_product_id: targetVendorProductId,
+              source_bigcommerce_product_id: upsertResult.product.id,
+              status: 'PENDING',
+              metadata: {
+                source_sku: upsertResult.resolvedSku,
+              },
+            });
+          }
 
-        logger.info('vendor sync BigCommerce product upsert completed', {
-          syncRunId: syncRun.etl_sync_run_id,
-          vendorId: input.vendorId,
-          sku: upsertResult.resolvedSku,
-          vendorProductId: product.vendor_product_id ?? null,
-          bigcommerceProductId: upsertResult.product.id,
-          action: upsertResult.action,
-          recordsWritten,
+          if (!seenReadProductKeys.has(product.vendor_product_id ?? product.sku)) {
+            seenReadProductKeys.add(product.vendor_product_id ?? product.sku);
+            recordsRead += 1;
+          }
+          if (!writtenProductKeys.has(upsertResult.resolvedSku)) {
+            writtenProductKeys.add(upsertResult.resolvedSku);
+            recordsWritten += 1;
+          }
+
+          if (upsertResult.inventory_sync_target) {
+            pendingInventorySyncTargets.push(upsertResult.inventory_sync_target);
+            await flushPendingInventorySyncTargets('endpoint_batch_progress');
+          }
+
+          logger.info('vendor sync BigCommerce product upsert completed', {
+            syncRunId: syncRun.etl_sync_run_id,
+            vendorId: input.vendorId,
+            sku: upsertResult.resolvedSku,
+            vendorProductId: product.vendor_product_id ?? null,
+            bigcommerceProductId: upsertResult.product.id,
+            action: upsertResult.action,
+            recordsWritten,
+          });
         });
       }
     }
@@ -1314,16 +1394,6 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       );
     }
 
-    if (pendingContinuationRequest) {
-      await submitCatalogSyncJob(pendingContinuationRequest);
-      continuationResult = continuationResult
-        ? {
-            ...continuationResult,
-            enqueued: true,
-          }
-        : continuationResult;
-    }
-
     await completeSyncRun({
       etl_sync_run_id: syncRun.etl_sync_run_id,
       status: 'SUCCESS',
@@ -1338,6 +1408,10 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
               enqueued: continuationResult.enqueued,
               next_start_reference_index: continuationResult.nextStartReferenceIndex,
               total_references: continuationResult.totalReferences,
+              max_references_per_run: continuationResult.maxReferencesPerRun,
+              initial_last_successful_sync_at: continuationResult.initialLastSuccessfulSyncAt,
+              source_action: continuationResult.sourceAction,
+              correlation_id: continuationResult.correlationId,
             }
           : null,
       },

@@ -22,6 +22,7 @@ import {
   classifyDuplicateDecision,
   type ProductCandidate,
 } from './syncSemantics';
+import { encodeWebpUnderMaxBytes, stageWebpBufferForRemoteImageUrl } from './bigcommerceImageStaging';
 
 interface BigCommerceCatalogProduct {
   id: number;
@@ -84,6 +85,7 @@ interface BigCommerceModifier {
 interface BigCommerceImage {
   id: number;
   description?: string;
+  is_thumbnail?: boolean;
 }
 
 interface BigCommerceVideo {
@@ -231,6 +233,7 @@ export interface UpsertBigCommerceProductInput {
   accessToken: string;
   storeHash: string;
   vendorId: number;
+  vendorName?: string;
   product: NormalizedProduct;
   defaultMarkupPercent?: number;
   pricingContext?: BigCommercePricingContext;
@@ -1184,6 +1187,7 @@ async function ensureSharedOptionModifiers(
   productId: number,
   input: {
     vendorId: number;
+    vendorName?: string;
     duplicate: boolean;
     size?: string;
     markupPercent: number;
@@ -1193,6 +1197,12 @@ async function ensureSharedOptionModifiers(
     display_name: 'vendor_id',
     option_values: [{ label: String(input.vendorId) }],
   });
+  if (input.vendorName?.trim()) {
+    await ensureModifier(accessToken, storeHash, productId, {
+      display_name: 'vendor_name',
+      option_values: [{ label: input.vendorName.trim() }],
+    });
+  }
   await ensureModifier(accessToken, storeHash, productId, {
     display_name: 'duplicate',
     option_values: [{ label: input.duplicate ? 'true' : 'false' }],
@@ -1369,6 +1379,67 @@ function isVendorManagedDescription(description: string | undefined): boolean {
   return !!parseVendorManagedMarker(description);
 }
 
+function serializeVendorManagedImageSignature(input: {
+  marker: VendorManagedMediaMetadata;
+  isThumbnail: boolean;
+}): string {
+  return JSON.stringify({
+    mediaType: input.marker.mediaType,
+    url: input.marker.url,
+    partId: input.marker.partId,
+    locationIds: input.marker.locationIds ?? [],
+    locationNames: input.marker.locationNames ?? [],
+    decorationIds: input.marker.decorationIds ?? [],
+    decorationNames: input.marker.decorationNames ?? [],
+    isThumbnail: input.isThumbnail,
+  });
+}
+
+function buildVendorManagedImageSignature(input: {
+  description?: string;
+  is_thumbnail?: boolean;
+}): string | null {
+  const marker = parseVendorManagedMarker(input.description);
+  if (!marker || marker.mediaType !== 'Image') {
+    return null;
+  }
+
+  return serializeVendorManagedImageSignature({
+    marker,
+    isThumbnail: !!input.is_thumbnail,
+  });
+}
+
+function buildDesiredImageSignature(image: DesiredBigCommerceImage): string {
+  const marker = parseVendorManagedMarker(image.description);
+  if (!marker || marker.mediaType !== 'Image') {
+    return JSON.stringify({
+      mediaType: 'Image',
+      url: image.image_url,
+      isThumbnail: !!image.is_thumbnail,
+    });
+  }
+
+  return serializeVendorManagedImageSignature({
+    marker,
+    isThumbnail: !!image.is_thumbnail,
+  });
+}
+
+function incrementCount(counts: Map<string, number>, key: string): void {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+function decrementCount(counts: Map<string, number>, key: string): void {
+  const current = counts.get(key) ?? 0;
+  if (current <= 1) {
+    counts.delete(key);
+    return;
+  }
+
+  counts.set(key, current - 1);
+}
+
 function rankMediaAsset(asset: NormalizedMediaAsset): number {
   const classes = (asset.class_types ?? []).map(value => value.toLowerCase());
   if (classes.includes('primary')) return 400;
@@ -1495,26 +1566,137 @@ function isOversizedBigCommerceImageError(error: unknown): boolean {
   return error instanceof Error && /maximum of 8 MB size limit for upload image is exceeded/i.test(error.message);
 }
 
-async function getRemoteContentLength(url: string): Promise<number | undefined> {
-  try {
-    const response = await fetch(url, {
-      method: 'HEAD',
-      redirect: 'follow',
-    });
-    if (!response.ok) {
-      return undefined;
-    }
+interface RemoteImageProbeResult {
+  ok: boolean;
+  contentLength?: number;
+  status?: number;
+  contentType?: string;
+}
 
-    const header = response.headers.get('content-length');
-    if (!header) {
-      return undefined;
-    }
-
-    const parsed = Number(header);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
-  } catch {
+function parseRemoteContentLength(response: Response): number | undefined {
+  const header = response.headers.get('content-length');
+  if (!header) {
     return undefined;
   }
+
+  const parsed = Number(header);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function readRemoteContentType(response: Response): string | undefined {
+  const contentType = response.headers.get('content-type')?.trim().toLowerCase();
+  return contentType || undefined;
+}
+
+function isAcceptedRemoteImageContentType(contentType: string | undefined): boolean {
+  if (!contentType) {
+    return true;
+  }
+
+  return contentType.startsWith('image/');
+}
+
+async function fetchRemoteImageProbe(
+  url: string,
+  options: RequestInit,
+): Promise<RemoteImageProbeResult> {
+  try {
+    const response = await fetch(url, {
+      ...options,
+      redirect: 'follow',
+    });
+
+    const contentType = readRemoteContentType(response);
+    const contentLength = parseRemoteContentLength(response);
+
+    if (options.method !== 'HEAD') {
+      await response.body?.cancel();
+    }
+
+    return {
+      ok: response.ok && isAcceptedRemoteImageContentType(contentType),
+      status: response.status,
+      contentType,
+      contentLength,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+async function probeRemoteImageUrl(url: string): Promise<RemoteImageProbeResult> {
+  const headProbe = await fetchRemoteImageProbe(url, { method: 'HEAD' });
+  if (headProbe.ok) {
+    return headProbe;
+  }
+
+  return fetchRemoteImageProbe(url, { method: 'GET' });
+}
+
+function buildRemoteImageLogContext(input: { productId: number; variantId?: number }): string {
+  if (input.variantId) {
+    return `product ${input.productId} variant ${input.variantId}`;
+  }
+
+  return `product ${input.productId}`;
+}
+
+function describeRemoteImageFailure(probe: RemoteImageProbeResult): string {
+  if (probe.contentType && !isAcceptedRemoteImageContentType(probe.contentType)) {
+    return `remote asset returned non-image content-type ${probe.contentType}`;
+  }
+
+  if (probe.status) {
+    return `remote asset returned HTTP ${probe.status}`;
+  }
+
+  return 'remote asset could not be reached';
+}
+
+async function resolveUploadableRemoteImageUrl(input: {
+  productId: number;
+  imageUrl: string;
+  variantId?: number;
+}): Promise<string | null> {
+  const probe = await probeRemoteImageUrl(input.imageUrl);
+  const logContext = buildRemoteImageLogContext(input);
+  if (!probe.ok) {
+    console.warn(
+      `Skipping BigCommerce image for ${logContext}; ${describeRemoteImageFailure(probe)}: ${input.imageUrl}`,
+    );
+    return null;
+  }
+
+  if (
+    typeof probe.contentLength === 'number' &&
+    probe.contentLength > BIGCOMMERCE_MAX_REMOTE_IMAGE_BYTES
+  ) {
+    const response = await fetch(input.imageUrl);
+    if (!response.ok) {
+      console.warn(
+        `Failed to fetch BigCommerce image for ${logContext}: ${input.imageUrl}`,
+      );
+      return null;
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const optimized = await encodeWebpUnderMaxBytes(buffer, BIGCOMMERCE_MAX_REMOTE_IMAGE_BYTES);
+    if (!optimized) {
+      console.warn(
+        `Skipping BigCommerce image for ${logContext}; could not compress under 8 MB: ${input.imageUrl}`,
+      );
+      return null;
+    }
+    const stagedUrl = await stageWebpBufferForRemoteImageUrl(optimized);
+    if (!stagedUrl) {
+      console.warn(
+        `Skipping BigCommerce image for ${logContext}; set BIGCOMMERCE_IMAGE_STAGING_BUCKET (and optional BIGCOMMERCE_IMAGE_STAGING_PUBLIC_BASE_URL) to stage oversized images. Source: ${input.imageUrl}`,
+      );
+      return null;
+    }
+    return stagedUrl;
+  }
+
+  return input.imageUrl;
 }
 
 async function filterUploadableProductImages(
@@ -1524,15 +1706,15 @@ async function filterUploadableProductImages(
   const uploadable: DesiredBigCommerceImage[] = [];
 
   for (const image of images) {
-    const contentLength = await getRemoteContentLength(image.image_url);
-    if (typeof contentLength === 'number' && contentLength > BIGCOMMERCE_MAX_REMOTE_IMAGE_BYTES) {
-      console.warn(
-        `Skipping BigCommerce product image for product ${productId} because ${image.image_url} is ${contentLength} bytes and exceeds the 8 MB upload limit.`,
-      );
+    const uploadableUrl = await resolveUploadableRemoteImageUrl({
+      productId,
+      imageUrl: image.image_url,
+    });
+    if (!uploadableUrl) {
       continue;
     }
 
-    uploadable.push(image);
+    uploadable.push({ ...image, image_url: uploadableUrl });
   }
 
   return uploadable;
@@ -1718,33 +1900,68 @@ async function replaceVendorManagedImages(input: {
     return;
   }
 
-  try {
-    let createdAny = false;
-    for (const image of uploadableImages) {
-      createdAny =
-        (await tryCreateProductImage(input.accessToken, input.storeHash, input.productId, image)) ||
-        createdAny;
+  const missingDesiredCounts = new Map<string, number>();
+  for (const image of input.desiredImages) {
+    incrementCount(missingDesiredCounts, buildDesiredImageSignature(image));
+  }
+
+  const imagesToDelete: BigCommerceImage[] = [];
+  for (const image of vendorManaged) {
+    const signature = buildVendorManagedImageSignature(image);
+    if (signature && (missingDesiredCounts.get(signature) ?? 0) > 0) {
+      decrementCount(missingDesiredCounts, signature);
+      continue;
     }
-    if (!createdAny) {
-      return;
+
+    imagesToDelete.push(image);
+  }
+
+  const availableUploadCounts = new Map<string, number>();
+  for (const image of uploadableImages) {
+    const signature = buildDesiredImageSignature(image);
+    if ((missingDesiredCounts.get(signature) ?? 0) > 0) {
+      incrementCount(availableUploadCounts, signature);
     }
-    for (const image of vendorManaged) {
-      await deleteProductImage(input.accessToken, input.storeHash, input.productId, image.id);
+  }
+
+  const canReachDesiredState = Array.from(missingDesiredCounts.entries()).every(
+    ([signature, count]) => (availableUploadCounts.get(signature) ?? 0) >= count,
+  );
+
+  const imagesToCreate: DesiredBigCommerceImage[] = [];
+  const pendingCreateCounts = new Map(missingDesiredCounts);
+  for (const image of uploadableImages) {
+    const signature = buildDesiredImageSignature(image);
+    if ((pendingCreateCounts.get(signature) ?? 0) <= 0) {
+      continue;
     }
-  } catch (error) {
-    if (!isDuplicateOrValidationError(error)) {
-      throw error;
+
+    imagesToCreate.push(image);
+    decrementCount(pendingCreateCounts, signature);
+  }
+
+  if (imagesToCreate.length === 0 && imagesToDelete.length === 0) {
+    return;
+  }
+
+  const createdCounts = new Map<string, number>();
+  for (const image of imagesToCreate) {
+    const created = await tryCreateProductImage(input.accessToken, input.storeHash, input.productId, image);
+    if (created) {
+      incrementCount(createdCounts, buildDesiredImageSignature(image));
     }
-    await deleteExisting();
-    let recreatedAny = false;
-    for (const image of uploadableImages) {
-      recreatedAny =
-        (await tryCreateProductImage(input.accessToken, input.storeHash, input.productId, image)) ||
-        recreatedAny;
-    }
-    if (!recreatedAny) {
-      return;
-    }
+  }
+
+  const createdAllMissingImages = Array.from(missingDesiredCounts.entries()).every(
+    ([signature, count]) => (createdCounts.get(signature) ?? 0) >= count,
+  );
+
+  if (!canReachDesiredState || !createdAllMissingImages) {
+    return;
+  }
+
+  for (const image of imagesToDelete) {
+    await deleteProductImage(input.accessToken, input.storeHash, input.productId, image.id);
   }
 }
 
@@ -1864,12 +2081,21 @@ async function syncVariantImages(input: {
       continue;
     }
 
+    const uploadableUrl = await resolveUploadableRemoteImageUrl({
+      productId: input.productId,
+      variantId,
+      imageUrl,
+    });
+    if (!uploadableUrl) {
+      continue;
+    }
+
     await tryCreateProductVariantImage(
       input.accessToken,
       input.storeHash,
       input.productId,
       variantId,
-      imageUrl,
+      uploadableUrl,
     );
   }
 }
@@ -1915,6 +2141,13 @@ export async function upsertBigCommerceProduct(
         storeHash: input.storeHash,
         productId: decision.target_product_id,
         product: input.product,
+      });
+      await ensureSharedOptionModifiers(input.accessToken, input.storeHash, decision.target_product_id, {
+        vendorId: input.vendorId,
+        vendorName: input.vendorName,
+        duplicate: decision.duplicate,
+        size: input.product.shared_option_values?.size,
+        markupPercent,
       });
       await syncVendorManagedProductMedia({
         accessToken: input.accessToken,
@@ -2053,6 +2286,7 @@ export async function upsertBigCommerceProduct(
 
     await ensureSharedOptionModifiers(input.accessToken, input.storeHash, productRecord.id, {
       vendorId: input.vendorId,
+      vendorName: input.vendorName,
       duplicate: decision.duplicate,
       size: input.product.shared_option_values?.size,
       markupPercent,
