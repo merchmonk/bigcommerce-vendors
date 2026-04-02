@@ -329,19 +329,6 @@ describe('upsertBigCommerceProduct media sync', () => {
       const method = options.method ?? 'GET';
 
       if (url.includes('/catalog/products?sku=SKU-2')) {
-        return {
-          data: [
-            {
-              id: 901,
-              sku: 'SKU-2',
-              name: 'Category Product',
-              custom_fields: [{ name: 'vendor_id', value: '22' }],
-            },
-          ],
-        };
-      }
-
-      if (url.includes('/catalog/products?name=Category%20Product')) {
         return { data: [] };
       }
 
@@ -361,7 +348,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         };
       }
 
-      if (url.endsWith('/catalog/products/901') && method === 'PUT') {
+      if (url.endsWith('/catalog/products') && method === 'POST') {
         productPayload = JSON.parse(String(options.body));
         return {
           data: {
@@ -423,7 +410,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       },
     });
 
-    expect(result.action).toBe('update');
+    expect(result.action).toBe('create');
     expect(createdCategories).toEqual([
       { name: 'Business accessories', parent_id: 0 },
       { name: 'Key rings', parent_id: 1001 },
@@ -437,13 +424,14 @@ describe('upsertBigCommerceProduct media sync', () => {
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-CF')) {
+      if (url.includes('/catalog/products?upc=00011122233353')) {
         return {
           data: [
             {
               id: 990,
               sku: 'SKU-CF',
               name: 'Custom Field Product',
+              upc: '00011122233353',
               custom_fields: [
                 { name: 'vendor_id', value: '22' },
                 { name: 'vendor_endpoint', value: 'ProductData' },
@@ -451,10 +439,6 @@ describe('upsertBigCommerceProduct media sync', () => {
             },
           ],
         };
-      }
-
-      if (url.includes('/catalog/products?name=Custom%20Field%20Product')) {
-        return { data: [] };
       }
 
       if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
@@ -506,6 +490,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         source_sku: 'SKU-CF',
         vendor_product_id: 'P-CF',
         name: 'Custom Field Product',
+        gtin: '00011122233353',
         description: 'Updated',
         price: 12,
         cost_price: 9,
@@ -522,6 +507,99 @@ describe('upsertBigCommerceProduct media sync', () => {
         custom_fields: expect.anything(),
       }),
     );
+  });
+
+  test('syncs related vendor product ids into a dedicated custom field on existing products', async () => {
+    let customFieldBody: Record<string, unknown> | undefined;
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?upc=00011122233364')) {
+        return {
+          data: [
+            {
+              id: 992,
+              sku: 'SKU-RELATED-CF',
+              name: 'Related Custom Field Product',
+              upc: '00011122233364',
+              custom_fields: [{ name: 'vendor_id', value: '22' }],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/catalog/products/992') && method === 'PUT') {
+        return {
+          data: {
+            id: 992,
+            sku: 'SKU-RELATED-CF',
+            name: 'Related Custom Field Product',
+            base_variant_id: 993,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/custom-fields?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/custom-fields') && method === 'POST') {
+        customFieldBody = JSON.parse(String(options.body));
+        return {
+          data: {
+            id: 7001,
+            ...customFieldBody,
+          },
+        };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-RELATED-CF',
+        source_sku: 'SKU-RELATED-CF',
+        vendor_product_id: 'P-RELATED-CF',
+        name: 'Related Custom Field Product',
+        gtin: '00011122233364',
+        description: 'Updated',
+        price: 12,
+        cost_price: 9,
+        related_vendor_product_ids: ['PROD-2', 'PROD-3', 'PROD-2'],
+      },
+    });
+
+    expect(result.action).toBe('update');
+    expect(customFieldBody).toEqual({
+      name: 'related_vendor_product_ids',
+      value: 'PROD-2,PROD-3',
+    });
   });
 
   test('creates new products with visibility disabled initially', async () => {
@@ -620,19 +698,6 @@ describe('upsertBigCommerceProduct media sync', () => {
       const method = options.method ?? 'GET';
 
       if (url.includes('/catalog/products?sku=SKU-BULK-OPEN')) {
-        return {
-          data: [
-            {
-              id: 1290,
-              sku: 'SKU-BULK-OPEN',
-              name: 'Bulk Product',
-              custom_fields: [{ name: 'vendor_id', value: '22' }],
-            },
-          ],
-        };
-      }
-
-      if (url.includes('/catalog/products?name=Bulk%20Product')) {
         return { data: [] };
       }
 
@@ -640,7 +705,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         return { data: [] };
       }
 
-      if (url.endsWith('/catalog/products/1290') && method === 'PUT') {
+      if (url.endsWith('/catalog/products') && method === 'POST') {
         productPayload = JSON.parse(String(options.body));
         return {
           data: {
@@ -915,7 +980,7 @@ describe('upsertBigCommerceProduct media sync', () => {
     ]);
   });
 
-  test('uses created variant ids for price list records and includes the product base variant price', async () => {
+  test('uses created variant ids for price list records without sending a stale base variant for option-bearing products', async () => {
     const createdVariantBodies: Array<Record<string, unknown>> = [];
     const priceListInputs: Array<Record<string, unknown>> = [];
     let productPayload: Record<string, unknown> | undefined;
@@ -924,19 +989,6 @@ describe('upsertBigCommerceProduct media sync', () => {
       const method = options.method ?? 'GET';
 
       if (url.includes('/catalog/products?sku=SKU-PRICE')) {
-        return {
-          data: [
-            {
-              id: 1300,
-              sku: 'SKU-PRICE',
-              name: 'Priced Product',
-              custom_fields: [{ name: 'vendor_id', value: '22' }],
-            },
-          ],
-        };
-      }
-
-      if (url.includes('/catalog/products?name=Priced%20Product')) {
         return { data: [] };
       }
 
@@ -944,7 +996,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         return { data: [] };
       }
 
-      if (url.endsWith('/catalog/products/1300') && method === 'PUT') {
+      if (url.endsWith('/catalog/products') && method === 'POST') {
         productPayload = JSON.parse(String(options.body));
         return {
           data: {
@@ -1045,7 +1097,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       },
     });
 
-    expect(result.action).toBe('update');
+    expect(result.action).toBe('create');
     expect(productPayload).toEqual(
       expect.objectContaining({
         cost_price: 10,
@@ -1056,12 +1108,7 @@ describe('upsertBigCommerceProduct media sync', () => {
     expect(mockUpsertPriceListRecords).toHaveBeenCalledTimes(1);
     expect(priceListInputs[0]).toEqual(
       expect.objectContaining({
-        records: expect.arrayContaining([
-          expect.objectContaining({
-            variant_id: 1301,
-            price: 13,
-            currency: 'USD',
-          }),
+        records: [
           expect.objectContaining({
             variant_id: 2101,
             price: 13,
@@ -1072,7 +1119,7 @@ describe('upsertBigCommerceProduct media sync', () => {
             price: 15.6,
             currency: 'USD',
           }),
-        ]),
+        ],
       }),
     );
   });
@@ -1087,21 +1134,18 @@ describe('upsertBigCommerceProduct media sync', () => {
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-INV-ONLY')) {
+      if (url.includes('/catalog/products?upc=00011122233345')) {
         return {
           data: [
             {
               id: 1305,
               sku: 'SKU-INV-ONLY',
               name: 'Inventory Only Product',
+              upc: '00011122233345',
               custom_fields: [{ name: 'vendor_id', value: '22' }],
             },
           ],
         };
-      }
-
-      if (url.includes('/catalog/products?name=Inventory%20Only%20Product')) {
-        return { data: [] };
       }
 
       if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
@@ -1132,17 +1176,6 @@ describe('upsertBigCommerceProduct media sync', () => {
               id: 2302,
               sku: 'SKU-INV-ONLY-BLU',
               option_values: [],
-            },
-          ],
-        };
-      }
-
-      if (url.endsWith('/inventory/locations') && method === 'GET') {
-        return {
-          data: [
-            {
-              id: 2,
-              enabled: true,
             },
           ],
         };
@@ -1190,6 +1223,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         source_sku: 'SKU-INV-ONLY',
         vendor_product_id: 'P-INV-ONLY',
         name: 'Inventory Only Product',
+        gtin: '00011122233345',
         inventory_level: 19,
         media_assets: [
           {
@@ -1272,11 +1306,188 @@ describe('upsertBigCommerceProduct media sync', () => {
     expect(inventoryAdjustmentBodies).toEqual([
       {
         items: [
-          { location_id: 2, variant_id: 2301, quantity: 12 },
-          { location_id: 2, variant_id: 2302, quantity: 7 },
+          { location_id: 1, variant_id: 2301, quantity: 12 },
+          { location_id: 1, variant_id: 2302, quantity: 7 },
         ],
       },
     ]);
+    expect(mockRequestJson).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('/inventory/locations'),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  test('prefers GTIN lookup when checking for duplicate products', async () => {
+    let productPutUrl: string | undefined;
+    let gtinLookupCount = 0;
+    let nameLookupCount = 0;
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?upc=00011122233344')) {
+        gtinLookupCount += 1;
+        return {
+          data: [
+            {
+              id: 1315,
+              sku: 'OTHER-VENDOR-SKU',
+              name: 'Storefront Product Title',
+              upc: '00011122233344',
+              custom_fields: [{ name: 'vendor_id', value: '22' }],
+            },
+          ],
+        };
+      }
+
+      if (url.includes('/catalog/products?sku=SKU-GTIN-ONLY')) {
+        throw new Error('SKU duplicate lookup should not run when GTIN is present.');
+      }
+
+      if (url.endsWith('/catalog/products/1315') && method === 'PUT') {
+        productPutUrl = url;
+        return {
+          data: {
+            id: 1315,
+            sku: 'OTHER-VENDOR-SKU',
+            name: 'Storefront Product Title',
+            upc: '00011122233344',
+            base_variant_id: 1316,
+          },
+        };
+      }
+
+      if (url.endsWith('/catalog/products/1315/variants?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 5315,
+              display_name: 'vendor_id',
+              option_values: [{ label: '22', sort_order: 0 }],
+            },
+            {
+              id: 5316,
+              display_name: 'duplicate',
+              option_values: [{ label: 'false', sort_order: 0 }],
+            },
+            {
+              id: 5317,
+              display_name: 'product_cost_markup',
+              option_values: [{ label: '30', sort_order: 0 }],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-GTIN-ONLY',
+        source_sku: 'SKU-GTIN-ONLY',
+        vendor_product_id: 'P-GTIN-ONLY',
+        name: 'GTIN Lookup Product',
+        gtin: '00011122233344',
+        price: 12,
+        cost_price: 9,
+      },
+    });
+
+    expect(result.action).toBe('update');
+    expect(productPutUrl).toContain('/catalog/products/1315');
+    expect(gtinLookupCount).toBe(1);
+    expect(nameLookupCount).toBe(0);
+  });
+
+  test('skips duplicate lookup entirely when GTIN is missing', async () => {
+    let productPostBody: Record<string, unknown> | undefined;
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-NO-GTIN')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=No%20GTIN%20Lookup%20Product')) {
+        throw new Error('Name duplicate lookup should not run when GTIN is missing.');
+      }
+
+      if (url.includes('/catalog/products?upc=')) {
+        throw new Error('GTIN duplicate lookup should not run when GTIN is missing.');
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        productPostBody = JSON.parse(String(options.body));
+        return {
+          data: {
+            id: 1316,
+            sku: 'SKU-NO-GTIN',
+            name: 'No GTIN Lookup Product',
+            base_variant_id: 1317,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 5400 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-NO-GTIN',
+        source_sku: 'SKU-NO-GTIN',
+        vendor_product_id: 'P-NO-GTIN',
+        name: 'No GTIN Lookup Product',
+        price: 12,
+        cost_price: 9,
+      },
+    });
+
+    expect(result.action).toBe('create');
+    expect(productPostBody).toEqual(expect.objectContaining({ sku: 'SKU-NO-GTIN' }));
   });
 
   test('throws a partial upsert error when BigCommerce image sync fails', async () => {
@@ -1411,21 +1622,18 @@ describe('upsertBigCommerceProduct media sync', () => {
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-BAD-REMOTE')) {
+      if (url.includes('/catalog/products?upc=00011122233356')) {
         return {
           data: [
             {
               id: 2701,
               sku: 'SKU-BAD-REMOTE',
               name: 'Bad Remote Image Product',
+              upc: '00011122233356',
               custom_fields: [{ name: 'vendor_id', value: '22' }],
             },
           ],
         };
-      }
-
-      if (url.includes('/catalog/products?name=Bad%20Remote%20Image%20Product')) {
-        return { data: [] };
       }
 
       if (url.endsWith('/catalog/products/2701') && method === 'PUT') {
@@ -1445,6 +1653,28 @@ describe('upsertBigCommerceProduct media sync', () => {
               id: 2702,
               sku: 'SKU-BAD-REMOTE-BLK',
               option_values: [{ option_display_name: 'Color', label: 'Black' }],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 5701,
+              display_name: 'vendor_id',
+              option_values: [{ label: '22', sort_order: 0 }],
+            },
+            {
+              id: 5703,
+              display_name: 'duplicate',
+              option_values: [{ label: 'false', sort_order: 0 }],
+            },
+            {
+              id: 5704,
+              display_name: 'product_cost_markup',
+              option_values: [{ label: '30', sort_order: 0 }],
             },
           ],
         };
@@ -1478,6 +1708,7 @@ describe('upsertBigCommerceProduct media sync', () => {
           source_sku: 'SKU-BAD-REMOTE',
           vendor_product_id: 'P-BAD-REMOTE',
           name: 'Bad Remote Image Product',
+          gtin: '00011122233356',
           media_assets: [
             {
               url: 'https://cdn.example.com/products/hero.jpg',
@@ -1523,21 +1754,18 @@ describe('upsertBigCommerceProduct media sync', () => {
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-IDEMPOTENT-IMG')) {
+      if (url.includes('/catalog/products?upc=00011122233357')) {
         return {
           data: [
             {
               id: 2801,
               sku: 'SKU-IDEMPOTENT-IMG',
               name: 'Idempotent Image Product',
+              upc: '00011122233357',
               custom_fields: [{ name: 'vendor_id', value: '22' }],
             },
           ],
         };
-      }
-
-      if (url.includes('/catalog/products?name=Idempotent%20Image%20Product')) {
-        return { data: [] };
       }
 
       if (url.endsWith('/catalog/products/2801') && method === 'PUT') {
@@ -1552,6 +1780,28 @@ describe('upsertBigCommerceProduct media sync', () => {
 
       if (url.endsWith('/catalog/products/2801/variants?limit=250') && method === 'GET') {
         return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 5801,
+              display_name: 'vendor_id',
+              option_values: [{ label: '22', sort_order: 0 }],
+            },
+            {
+              id: 5803,
+              display_name: 'duplicate',
+              option_values: [{ label: 'false', sort_order: 0 }],
+            },
+            {
+              id: 5804,
+              display_name: 'product_cost_markup',
+              option_values: [{ label: '30', sort_order: 0 }],
+            },
+          ],
+        };
       }
 
       if (url.endsWith('/images?limit=250') && method === 'GET') {
@@ -1597,6 +1847,7 @@ describe('upsertBigCommerceProduct media sync', () => {
           source_sku: 'SKU-IDEMPOTENT-IMG',
           vendor_product_id: 'P-IDEMPOTENT-IMG',
           name: 'Idempotent Image Product',
+          gtin: '00011122233357',
           media_assets: [
             {
               url: 'https://cdn.example.com/products/hero.jpg',
@@ -1622,6 +1873,133 @@ describe('upsertBigCommerceProduct media sync', () => {
     expect(deletedImageIds).toEqual([]);
   });
 
+  test('does not churn vendor-managed images when legacy markers are missing resolved location names', async () => {
+    const imageBodies: Array<Record<string, unknown>> = [];
+    const deletedImageIds: number[] = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?upc=00011122233346')) {
+        return {
+          data: [
+            {
+              id: 2851,
+              sku: 'SKU-LEGACY-IMG',
+              name: 'Legacy Image Product',
+              upc: '00011122233346',
+              custom_fields: [{ name: 'vendor_id', value: '22' }],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/catalog/products/2851') && method === 'PUT') {
+        return {
+          data: {
+            id: 2851,
+            sku: 'SKU-LEGACY-IMG',
+            name: 'Legacy Image Product',
+          },
+        };
+      }
+
+      if (url.endsWith('/catalog/products/2851/variants?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 5851,
+              display_name: 'vendor_id',
+              option_values: [{ label: '22', sort_order: 0 }],
+            },
+            {
+              id: 5853,
+              display_name: 'duplicate',
+              option_values: [{ label: 'false', sort_order: 0 }],
+            },
+            {
+              id: 5854,
+              display_name: 'product_cost_markup',
+              option_values: [{ label: '30', sort_order: 0 }],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 3851,
+              description:
+                'Hero image | mm_media:{"mediaType":"Image","url":"https://cdn.example.com/products/legacy-hero.jpg","locationIds":["LOC-FRONT"]}',
+              is_thumbnail: true,
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/images') && method === 'POST') {
+        imageBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 3950 + imageBodies.length } };
+      }
+
+      if (url.match(/\/images\/\d+$/) && method === 'DELETE') {
+        deletedImageIds.push(Number(url.split('/').pop()));
+        return {};
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await expect(
+      upsertBigCommerceProduct({
+        accessToken: 'token',
+        storeHash: 'abc123',
+        vendorId: 22,
+        defaultMarkupPercent: 30,
+        product: {
+          sku: 'SKU-LEGACY-IMG',
+          source_sku: 'SKU-LEGACY-IMG',
+          vendor_product_id: 'P-LEGACY-IMG',
+          name: 'Legacy Image Product',
+          gtin: '00011122233346',
+          pricing_configuration: {
+            locations: [
+              {
+                location_id: 'LOC-FRONT',
+                location_name: 'Front',
+                decorations: [],
+              },
+            ],
+            fob_points: [],
+            parts: [],
+          },
+          media_assets: [
+            {
+              url: 'https://cdn.example.com/products/legacy-hero.jpg',
+              media_type: 'Image',
+              description: 'Hero image',
+              location_ids: ['LOC-FRONT'],
+              class_types: ['Primary'],
+            },
+          ],
+        },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        action: 'update',
+      }),
+    );
+
+    expect(imageBodies).toEqual([]);
+    expect(deletedImageIds).toEqual([]);
+  });
+
   test('deletes only stale vendor-managed product images and creates only missing ones', async () => {
     const imageBodies: Array<Record<string, unknown>> = [];
     const deletedImageIds: number[] = [];
@@ -1629,21 +2007,18 @@ describe('upsertBigCommerceProduct media sync', () => {
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-DIFF-IMG')) {
+      if (url.includes('/catalog/products?upc=00011122233358')) {
         return {
           data: [
             {
               id: 2901,
               sku: 'SKU-DIFF-IMG',
               name: 'Diff Image Product',
+              upc: '00011122233358',
               custom_fields: [{ name: 'vendor_id', value: '22' }],
             },
           ],
         };
-      }
-
-      if (url.includes('/catalog/products?name=Diff%20Image%20Product')) {
-        return { data: [] };
       }
 
       if (url.endsWith('/catalog/products/2901') && method === 'PUT') {
@@ -1658,6 +2033,28 @@ describe('upsertBigCommerceProduct media sync', () => {
 
       if (url.endsWith('/catalog/products/2901/variants?limit=250') && method === 'GET') {
         return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 5901,
+              display_name: 'vendor_id',
+              option_values: [{ label: '22', sort_order: 0 }],
+            },
+            {
+              id: 5903,
+              display_name: 'duplicate',
+              option_values: [{ label: 'false', sort_order: 0 }],
+            },
+            {
+              id: 5904,
+              display_name: 'product_cost_markup',
+              option_values: [{ label: '30', sort_order: 0 }],
+            },
+          ],
+        };
       }
 
       if (url.endsWith('/images?limit=250') && method === 'GET') {
@@ -1703,6 +2100,7 @@ describe('upsertBigCommerceProduct media sync', () => {
           source_sku: 'SKU-DIFF-IMG',
           vendor_product_id: 'P-DIFF-IMG',
           name: 'Diff Image Product',
+          gtin: '00011122233358',
           media_assets: [
             {
               url: 'https://cdn.example.com/products/hero.jpg',
@@ -1739,6 +2137,10 @@ describe('upsertBigCommerceProduct media sync', () => {
       const method = options.method ?? 'GET';
 
       if (url.includes('/catalog/products?sku=SKU-INV-CREATE')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?upc=00011122233344')) {
         return { data: [] };
       }
 
@@ -1966,19 +2368,6 @@ describe('upsertBigCommerceProduct media sync', () => {
       const method = options.method ?? 'GET';
 
       if (url.includes('/catalog/products?sku=SKU-VARIANT-CONFLICT')) {
-        return {
-          data: [
-            {
-              id: 1320,
-              sku: 'SKU-VARIANT-CONFLICT',
-              name: 'Variant Conflict Product',
-              custom_fields: [{ name: 'vendor_id', value: '22' }],
-            },
-          ],
-        };
-      }
-
-      if (url.includes('/catalog/products?name=Variant%20Conflict%20Product')) {
         return { data: [] };
       }
 
@@ -1986,7 +2375,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         return { data: [] };
       }
 
-      if (url.endsWith('/catalog/products/1320') && method === 'PUT') {
+      if (url.endsWith('/catalog/products') && method === 'POST') {
         return {
           data: {
             id: 1320,
@@ -2092,7 +2481,7 @@ describe('upsertBigCommerceProduct media sync', () => {
       },
     });
 
-    expect(result.action).toBe('update');
+    expect(result.action).toBe('create');
     expect(variantPutBodies).toEqual([
       expect.objectContaining({
         sku: 'SKU-VARIANT-CONFLICT-BLK',
@@ -2101,27 +2490,25 @@ describe('upsertBigCommerceProduct media sync', () => {
     ]);
   });
 
-  test('does not send modifier defaults on update', async () => {
-    const modifierUpdateBodies: Array<Record<string, unknown>> = [];
+  test('updates modifier values through dedicated modifier-value endpoints', async () => {
+    const modifierValueUpdateBodies: Array<Record<string, unknown>> = [];
+    const modifierValueUpdateUrls: string[] = [];
 
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-MOD')) {
+      if (url.includes('/catalog/products?upc=00011122233360')) {
         return {
           data: [
             {
               id: 1400,
               sku: 'SKU-MOD',
               name: 'Modifier Product',
+              upc: '00011122233360',
               custom_fields: [{ name: 'vendor_id', value: '22' }],
             },
           ],
         };
-      }
-
-      if (url.includes('/catalog/products?name=Modifier%20Product')) {
-        return { data: [] };
       }
 
       if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
@@ -2154,8 +2541,25 @@ describe('upsertBigCommerceProduct media sync', () => {
         };
       }
 
-      if (url.match(/\/modifiers\/\d+$/) && method === 'PUT') {
-        modifierUpdateBodies.push(JSON.parse(String(options.body)));
+      if (url.endsWith('/modifiers/5001/values?limit=250') && method === 'GET') {
+        return { data: [{ id: 5101, label: '21', sort_order: 0, is_default: true }] };
+      }
+
+      if (url.endsWith('/modifiers/5002/values?limit=250') && method === 'GET') {
+        return { data: [{ id: 5102, label: 'Gemline', sort_order: 0, is_default: true }] };
+      }
+
+      if (url.endsWith('/modifiers/5003/values?limit=250') && method === 'GET') {
+        return { data: [{ id: 5103, label: 'true', sort_order: 0, is_default: true }] };
+      }
+
+      if (url.endsWith('/modifiers/5004/values?limit=250') && method === 'GET') {
+        return { data: [{ id: 5104, label: '25', sort_order: 0, is_default: true }] };
+      }
+
+      if (url.match(/\/modifiers\/\d+\/values\/\d+$/) && method === 'PUT') {
+        modifierValueUpdateUrls.push(url);
+        modifierValueUpdateBodies.push(JSON.parse(String(options.body)));
         return { data: { id: Number(url.split('/').pop()) } };
       }
 
@@ -2181,6 +2585,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         source_sku: 'SKU-MOD',
         vendor_product_id: 'P-MOD',
         name: 'Modifier Product',
+        gtin: '00011122233360',
         description: 'Updated',
         price: 12,
         cost_price: 9,
@@ -2188,50 +2593,457 @@ describe('upsertBigCommerceProduct media sync', () => {
     });
 
     expect(result.action).toBe('update');
-    expect(modifierUpdateBodies).toHaveLength(4);
-    expect(modifierUpdateBodies).toEqual(
+    expect(modifierValueUpdateUrls).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('/modifiers/5001/values/5101'),
+        expect.stringContaining('/modifiers/5002/values/5102'),
+        expect.stringContaining('/modifiers/5003/values/5103'),
+        expect.stringContaining('/modifiers/5004/values/5104'),
+      ]),
+    );
+    expect(modifierValueUpdateBodies).toHaveLength(4);
+    expect(modifierValueUpdateBodies).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          display_name: 'vendor_name',
-          option_values: expect.arrayContaining([
-            expect.objectContaining({
-              label: 'PCNA',
-            }),
-          ]),
+          label: 'PCNA',
+          is_default: true,
         }),
         expect.objectContaining({
-          option_values: expect.arrayContaining([
-            expect.not.objectContaining({
-              is_default: expect.anything(),
-            }),
-          ]),
+          label: '30',
+          is_default: true,
         }),
       ]),
     );
   });
 
-  test('recreates modifiers when BigCommerce rejects update payloads as duplicate labels', async () => {
-    const modifierDeleteUrls: string[] = [];
-    const modifierPostBodies: Array<Record<string, unknown>> = [];
+  test('creates products without embedded variants and retries conflicting variant skus with a vendor suffix', async () => {
+    let productCreateBody: Record<string, unknown> | undefined;
+    const variantCreateBodies: Array<Record<string, unknown>> = [];
+    let optionListCallCount = 0;
+    let variantListCallCount = 0;
 
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-MOD-DUPE')) {
+      if (url.includes('/catalog/products?upc=00011122233370')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        productCreateBody = JSON.parse(String(options.body));
+        return {
+          data: {
+            id: 1700,
+            sku: String(productCreateBody?.sku ?? 'SKU-PARENT'),
+            name: 'Variant Conflict Parent',
+            base_variant_id: 1701,
+          },
+        };
+      }
+
+      if (url.endsWith('/catalog/products/1700/options?limit=250') && method === 'GET') {
+        optionListCallCount += 1;
+        if (optionListCallCount === 1) {
+          return { data: [] };
+        }
+
         return {
           data: [
             {
-              id: 1500,
-              sku: 'SKU-MOD-DUPE',
-              name: 'Modifier Duplicate Product',
+              id: 610,
+              display_name: 'Color',
+              option_values: [{ id: 611, label: 'Blue' }],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/catalog/products/1700/options') && method === 'POST') {
+        return { data: { id: 610 } };
+      }
+
+      if (url.endsWith('/catalog/products/1700/variants?limit=250') && method === 'GET') {
+        variantListCallCount += 1;
+        if (variantListCallCount === 1) {
+          return { data: [] };
+        }
+
+        return {
+          data: [
+            {
+              id: 1702,
+              sku: 'SKU-PARENT-001__v22',
+              option_values: [{ option_id: 610, id: 611 }],
+            },
+          ],
+        };
+      }
+
+      if (url.endsWith('/catalog/products/1700/variants') && method === 'POST') {
+        const body = JSON.parse(String(options.body));
+        variantCreateBodies.push(body);
+
+        if (body.sku === 'SKU-PARENT-001') {
+          throw new Error(
+            'Failed to create BigCommerce variant (409): {"status":409,"code":22003,"title":"Sku SKU-PARENT-001 is not unique","errors":{"sku":"Sku SKU-PARENT-001 is not unique"}}',
+          );
+        }
+
+        if (body.sku === 'SKU-PARENT-001__v22') {
+          return {
+            data: {
+              id: 1702,
+              sku: 'SKU-PARENT-001__v22',
+            },
+          };
+        }
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-PARENT',
+        source_sku: 'SKU-PARENT',
+        vendor_product_id: 'PARENT-1',
+        name: 'Variant Conflict Parent',
+        gtin: '00011122233370',
+        price: 12,
+        cost_price: 9,
+        variants: [
+          {
+            sku: 'SKU-PARENT-001',
+            source_sku: 'SKU-PARENT-001',
+            part_id: 'SKU-PARENT-001',
+            price: 12,
+            cost_price: 9,
+            option_values: [{ option_display_name: 'Color', label: 'Blue' }],
+          },
+        ],
+      },
+    });
+
+    expect(result.action).toBe('create');
+    expect(productCreateBody).toEqual(
+      expect.not.objectContaining({
+        variants: expect.anything(),
+      }),
+    );
+    expect(variantCreateBodies.map(body => body.sku)).toEqual([
+      'SKU-PARENT-001',
+      'SKU-PARENT-001__v22',
+    ]);
+  });
+
+  test('retries conflicting product skus when BigCommerce returns the duplicate sku wording', async () => {
+    const productCreateBodies: Array<Record<string, unknown>> = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?upc=00011122233371')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/brands?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        const body = JSON.parse(String(options.body));
+        productCreateBodies.push(body);
+
+        if (body.sku === 'SKU-DUPLICATE') {
+          throw new Error(
+            'Failed to create BigCommerce product (409): {"status":409,"title":"The product sku is a duplicate","type":"https://developer.bigcommerce.com/api-docs/getting-started/api-status-codes","errors":{"sku":"The product sku is a duplicate"}}',
+          );
+        }
+
+        if (body.sku === 'SKU-DUPLICATE__v22') {
+          return {
+            data: {
+              id: 1750,
+              sku: 'SKU-DUPLICATE__v22',
+              name: 'Duplicate Retry Product',
+              base_variant_id: 1751,
+            },
+          };
+        }
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-DUPLICATE',
+        source_sku: 'SKU-DUPLICATE',
+        vendor_product_id: 'PARENT-DUPLICATE',
+        name: 'Duplicate Retry Product',
+        gtin: '00011122233371',
+        price: 12,
+        cost_price: 9,
+      },
+    });
+
+    expect(result.action).toBe('create');
+    expect(result.resolvedSku).toBe('SKU-DUPLICATE__v22');
+    expect(productCreateBodies.map(body => body.sku)).toEqual([
+      'SKU-DUPLICATE',
+      'SKU-DUPLICATE__v22',
+    ]);
+  });
+
+  test('updates the mapped BigCommerce product when GTIN is missing', async () => {
+    const putUrls: string[] = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?upc=')) {
+        throw new Error('GTIN lookup should not run when GTIN is missing');
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products/1800') && method === 'PUT') {
+        putUrls.push(url);
+        return {
+          data: {
+            id: 1800,
+            sku: 'SKU-MAPPED',
+            name: 'Mapped Product',
+            base_variant_id: 1801,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        return { data: { id: 1 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      existingBigCommerceProductId: 1800,
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-MAPPED',
+        source_sku: 'SKU-MAPPED',
+        vendor_product_id: 'P-MAPPED',
+        name: 'Mapped Product',
+        price: 12,
+        cost_price: 9,
+      },
+    });
+
+    expect(result.action).toBe('update');
+    expect(putUrls).toEqual(['https://api.bigcommerce.com/stores/abc123/v3/catalog/products/1800']);
+  });
+
+  test('skips modifier writes when the existing modifier already matches the desired values', async () => {
+    let modifierWriteCount = 0;
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?upc=00011122233347')) {
+        return {
+          data: [
+            {
+              id: 1450,
+              sku: 'SKU-MOD-STABLE',
+              name: 'Modifier Stable Product',
+              upc: '00011122233347',
               custom_fields: [{ name: 'vendor_id', value: '22' }],
             },
           ],
         };
       }
 
-      if (url.includes('/catalog/products?name=Modifier%20Duplicate%20Product')) {
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
         return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products/1450') && method === 'PUT') {
+        return {
+          data: {
+            id: 1450,
+            sku: 'SKU-MOD-STABLE',
+            name: 'Modifier Stable Product',
+            base_variant_id: 1451,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return {
+          data: [
+            {
+              id: 5101,
+              display_name: 'vendor_id',
+              option_values: [{ label: '22', sort_order: 0 }],
+            },
+            {
+              id: 5102,
+              display_name: 'vendor_name',
+              option_values: [{ label: 'PCNA', sort_order: 0 }],
+            },
+            {
+              id: 5103,
+              display_name: 'duplicate',
+              option_values: [{ label: 'false', sort_order: 0 }],
+            },
+            {
+              id: 5104,
+              display_name: 'product_cost_markup',
+              option_values: [{ label: '30', sort_order: 0 }],
+            },
+          ],
+        };
+      }
+
+      if ((url.match(/\/modifiers\/\d+$/) && (method === 'PUT' || method === 'DELETE')) || (url.endsWith('/modifiers') && method === 'POST')) {
+        modifierWriteCount += 1;
+        return { data: { id: 9999 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      vendorName: 'PCNA',
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-MOD-STABLE',
+        source_sku: 'SKU-MOD-STABLE',
+        vendor_product_id: 'P-MOD-STABLE',
+        name: 'Modifier Stable Product',
+        gtin: '00011122233347',
+        description: 'Updated',
+        price: 12,
+        cost_price: 9,
+      },
+    });
+
+    expect(result.action).toBe('update');
+    expect(modifierWriteCount).toBe(0);
+  });
+
+  test('does not recreate shared modifiers when values change on existing products', async () => {
+    const modifierDeleteUrls: string[] = [];
+    const modifierPostBodies: Array<Record<string, unknown>> = [];
+    const modifierValueUpdateBodies: Array<Record<string, unknown>> = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?upc=00011122233361')) {
+        return {
+          data: [
+            {
+              id: 1500,
+              sku: 'SKU-MOD-DUPE',
+              name: 'Modifier Duplicate Product',
+              upc: '00011122233361',
+              custom_fields: [{ name: 'vendor_id', value: '22' }],
+            },
+          ],
+        };
       }
 
       if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
@@ -2256,18 +3068,44 @@ describe('upsertBigCommerceProduct media sync', () => {
       if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
         return {
           data: [
-            { id: 6001, display_name: 'vendor_id' },
-            { id: 6002, display_name: 'vendor_name' },
-            { id: 6003, display_name: 'duplicate' },
-            { id: 6004, display_name: 'product_cost_markup' },
+            {
+              id: 6001,
+              display_name: 'vendor_id',
+              option_values: [{ label: '21', sort_order: 0 }],
+            },
+            {
+              id: 6002,
+              display_name: 'vendor_name',
+              option_values: [{ label: 'Gemline', sort_order: 0 }],
+            },
+            {
+              id: 6003,
+              display_name: 'duplicate',
+              option_values: [{ label: 'true', sort_order: 0 }],
+            },
+            {
+              id: 6004,
+              display_name: 'product_cost_markup',
+              option_values: [{ label: '25', sort_order: 0 }],
+            },
           ],
         };
       }
 
-      if (url.match(/\/modifiers\/\d+$/) && method === 'PUT') {
-        throw new Error(
-          'Failed to update product modifier (422): {"status":422,"title":"The option label: \\"6\\" value is already used on this option."}',
-        );
+      if (url.endsWith('/modifiers/6001/values?limit=250') && method === 'GET') {
+        return { data: [{ id: 6101, label: '21', sort_order: 0, is_default: true }] };
+      }
+
+      if (url.endsWith('/modifiers/6002/values?limit=250') && method === 'GET') {
+        return { data: [{ id: 6102, label: 'Gemline', sort_order: 0, is_default: true }] };
+      }
+
+      if (url.endsWith('/modifiers/6003/values?limit=250') && method === 'GET') {
+        return { data: [{ id: 6103, label: 'true', sort_order: 0, is_default: true }] };
+      }
+
+      if (url.endsWith('/modifiers/6004/values?limit=250') && method === 'GET') {
+        return { data: [{ id: 6104, label: '25', sort_order: 0, is_default: true }] };
       }
 
       if (url.match(/\/modifiers\/\d+$/) && method === 'DELETE') {
@@ -2275,9 +3113,14 @@ describe('upsertBigCommerceProduct media sync', () => {
         return {};
       }
 
+      if (url.match(/\/modifiers\/\d+\/values\/\d+$/) && method === 'PUT') {
+        modifierValueUpdateBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: Number(url.split('/').pop()) } };
+      }
+
       if (url.endsWith('/modifiers') && method === 'POST') {
         modifierPostBodies.push(JSON.parse(String(options.body)));
-        return { data: { id: 7000 + modifierPostBodies.length } };
+        return { data: { id: 6200 + modifierPostBodies.length } };
       }
 
       if (url.endsWith('/images?limit=250') && method === 'GET') {
@@ -2302,6 +3145,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         source_sku: 'SKU-MOD-DUPE',
         vendor_product_id: 'P-MOD-DUPE',
         name: 'Modifier Duplicate Product',
+        gtin: '00011122233361',
         description: 'Updated',
         price: 12,
         cost_price: 9,
@@ -2309,27 +3153,344 @@ describe('upsertBigCommerceProduct media sync', () => {
     });
 
     expect(result.action).toBe('update');
-    expect(modifierDeleteUrls).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('/modifiers/6001'),
-        expect.stringContaining('/modifiers/6002'),
-        expect.stringContaining('/modifiers/6003'),
-        expect.stringContaining('/modifiers/6004'),
-      ]),
-    );
-    expect(modifierPostBodies).toHaveLength(4);
-    expect(modifierPostBodies).toEqual(
+    expect(modifierDeleteUrls).toEqual([]);
+    expect(modifierPostBodies).toEqual([]);
+    expect(modifierValueUpdateBodies).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          display_name: 'vendor_name',
-          option_values: expect.arrayContaining([
-            expect.objectContaining({
-              label: 'PCNA',
-            }),
-          ]),
+          label: '22',
+          sort_order: 0,
+          is_default: true,
+        }),
+        expect.objectContaining({
+          label: 'PCNA',
+          sort_order: 0,
+          is_default: true,
         }),
       ]),
     );
+  });
+
+  test('dedupes modifier create values when labels only differ by casing', async () => {
+    const modifierPostBodies: Array<Record<string, unknown>> = [];
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-MOD-CASE')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=Modifier%20Case%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        return {
+          data: {
+            id: 1600,
+            sku: 'SKU-MOD-CASE',
+            name: 'Modifier Case Product',
+            base_variant_id: 1601,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        modifierPostBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 8000 + modifierPostBodies.length } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      vendorName: 'PCNA',
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-MOD-CASE',
+        source_sku: 'SKU-MOD-CASE',
+        vendor_product_id: 'P-MOD-CASE',
+        name: 'Modifier Case Product',
+        description: 'Modifier case test',
+        price: 12,
+        cost_price: 9,
+        modifier_blueprint: {
+          locations: [
+            {
+              location: 'Clip top left, - Centered On Body',
+              methods: [],
+            },
+            {
+              location: 'Clip top left, - Centered on Body',
+              methods: [],
+            },
+            {
+              location: 'Clip Right - Centered opposite clip on body',
+              methods: [],
+            },
+            {
+              location: 'Clip top RIGHT - Centered On Body',
+              methods: [],
+            },
+            {
+              location: 'Clip top RIGHT - Centered on Body',
+              methods: [],
+            },
+          ],
+          charges: [],
+        },
+      },
+    });
+
+    expect(modifierPostBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          display_name: 'Decoration Location',
+          option_values: [
+            {
+              label: 'Clip top left, - Centered On Body',
+              sort_order: 0,
+              is_default: true,
+            },
+            {
+              label: 'Clip Right - Centered opposite clip on body',
+              sort_order: 1,
+              is_default: false,
+            },
+            {
+              label: 'Clip top RIGHT - Centered On Body',
+              sort_order: 2,
+              is_default: false,
+            },
+          ],
+        }),
+      ]),
+    );
+  });
+
+  test('recovers when BigCommerce returns 500 creating a modifier but the modifier now exists', async () => {
+    const modifierPostBodies: Array<Record<string, unknown>> = [];
+    const modifierValuePutBodies: Array<Record<string, unknown>> = [];
+    let modifierListCallCount = 0;
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-MOD-500-RECOVER')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=Modifier%20500%20Recover%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        return {
+          data: {
+            id: 1700,
+            sku: 'SKU-MOD-500-RECOVER',
+            name: 'Modifier 500 Recover Product',
+            base_variant_id: 1701,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        modifierListCallCount += 1;
+        if (modifierListCallCount === 4) {
+          return {
+            data: [{ id: 9103, display_name: 'duplicate' }],
+          };
+        }
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers/9103/values?limit=250') && method === 'GET') {
+        return {
+          data: [{ id: 9203, label: 'true', sort_order: 0, is_default: true }],
+        };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        const payload = JSON.parse(String(options.body));
+        modifierPostBodies.push(payload);
+        if (payload.display_name === 'duplicate') {
+          throw new Error('Failed to create product modifier (500): ');
+        }
+        return { data: { id: 9000 + modifierPostBodies.length } };
+      }
+
+      if (url.endsWith('/modifiers/9103/values/9203') && method === 'PUT') {
+        modifierValuePutBodies.push(JSON.parse(String(options.body)));
+        return { data: { id: 9203 } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      vendorName: 'PCNA',
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-MOD-500-RECOVER',
+        source_sku: 'SKU-MOD-500-RECOVER',
+        vendor_product_id: 'P-MOD-500-RECOVER',
+        name: 'Modifier 500 Recover Product',
+        description: 'Modifier 500 recovery test',
+        price: 12,
+        cost_price: 9,
+      },
+    });
+
+    expect(result.action).toBe('create');
+    expect(modifierPostBodies.map(body => body.display_name)).toEqual([
+      'vendor_id',
+      'vendor_name',
+      'duplicate',
+      'product_cost_markup',
+    ]);
+    expect(modifierValuePutBodies).toEqual([
+      {
+        label: 'false',
+        sort_order: 0,
+        is_default: true,
+      },
+    ]);
+  });
+
+  test('retries modifier create after retryable BigCommerce 500 when the modifier is still absent', async () => {
+    const modifierPostBodies: Array<Record<string, unknown>> = [];
+    let modifierListCallCount = 0;
+    let duplicatePostAttemptCount = 0;
+
+    mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
+      const method = options.method ?? 'GET';
+
+      if (url.includes('/catalog/products?sku=SKU-MOD-500-RETRY')) {
+        return { data: [] };
+      }
+
+      if (url.includes('/catalog/products?name=Modifier%20500%20Retry%20Product')) {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/catalog/products') && method === 'POST') {
+        return {
+          data: {
+            id: 1750,
+            sku: 'SKU-MOD-500-RETRY',
+            name: 'Modifier 500 Retry Product',
+            base_variant_id: 1751,
+          },
+        };
+      }
+
+      if (url.endsWith('/bulk-pricing-rules') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers?limit=250') && method === 'GET') {
+        modifierListCallCount += 1;
+        return { data: [] };
+      }
+
+      if (url.endsWith('/modifiers') && method === 'POST') {
+        const payload = JSON.parse(String(options.body));
+        modifierPostBodies.push(payload);
+        if (payload.display_name === 'duplicate') {
+          duplicatePostAttemptCount += 1;
+          if (duplicatePostAttemptCount === 1) {
+            throw new Error('Failed to create product modifier (500): ');
+          }
+        }
+        return { data: { id: 9500 + modifierPostBodies.length } };
+      }
+
+      if (url.endsWith('/images?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      if (url.endsWith('/videos?limit=250') && method === 'GET') {
+        return { data: [] };
+      }
+
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+
+    const result = await upsertBigCommerceProduct({
+      accessToken: 'token',
+      storeHash: 'abc123',
+      vendorId: 22,
+      vendorName: 'PCNA',
+      defaultMarkupPercent: 30,
+      product: {
+        sku: 'SKU-MOD-500-RETRY',
+        source_sku: 'SKU-MOD-500-RETRY',
+        vendor_product_id: 'P-MOD-500-RETRY',
+        name: 'Modifier 500 Retry Product',
+        description: 'Modifier 500 retry test',
+        price: 12,
+        cost_price: 9,
+      },
+    });
+
+    expect(result.action).toBe('create');
+    expect(duplicatePostAttemptCount).toBe(2);
+    expect(modifierPostBodies.map(body => body.display_name)).toEqual([
+      'vendor_id',
+      'vendor_name',
+      'duplicate',
+      'duplicate',
+      'product_cost_markup',
+    ]);
+    expect(modifierListCallCount).toBe(5);
   });
 
   test('skips invalid vendor brand names instead of failing the product sync', async () => {
@@ -2338,21 +3499,18 @@ describe('upsertBigCommerceProduct media sync', () => {
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-3')) {
+      if (url.includes('/catalog/products?upc=00011122233362')) {
         return {
           data: [
             {
               id: 903,
               sku: 'SKU-3',
               name: 'Brand Product',
+              upc: '00011122233362',
               custom_fields: [{ name: 'vendor_id', value: '22' }],
             },
           ],
         };
-      }
-
-      if (url.includes('/catalog/products?name=Brand%20Product')) {
-        return { data: [] };
       }
 
       if (url.endsWith('/catalog/brands?limit=250') && method === 'GET') {
@@ -2414,6 +3572,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         source_sku: 'SKU-3',
         vendor_product_id: 'P-3',
         name: 'Brand Product',
+        gtin: '00011122233362',
         price: 12,
         cost_price: 9,
         brand_name: 'Products manufactured by social compliant factories',
@@ -2435,21 +3594,18 @@ describe('upsertBigCommerceProduct media sync', () => {
     mockRequestJson.mockImplementation(async (_accessToken, url: string, options: RequestInit) => {
       const method = options.method ?? 'GET';
 
-      if (url.includes('/catalog/products?sku=SKU-4')) {
+      if (url.includes('/catalog/products?upc=00011122233363')) {
         return {
           data: [
             {
               id: 904,
               sku: 'SKU-4',
               name: 'Long Brand Product',
+              upc: '00011122233363',
               custom_fields: [{ name: 'vendor_id', value: '22' }],
             },
           ],
         };
-      }
-
-      if (url.includes('/catalog/products?name=Long%20Brand%20Product')) {
-        return { data: [] };
       }
 
       if (url.endsWith('/catalog/categories?limit=250') && method === 'GET') {
@@ -2509,6 +3665,7 @@ describe('upsertBigCommerceProduct media sync', () => {
         source_sku: 'SKU-4',
         vendor_product_id: 'P-4',
         name: 'Long Brand Product',
+        gtin: '00011122233363',
         price: 12,
         cost_price: 9,
         brand_name: overlongBrandName,

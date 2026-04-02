@@ -22,7 +22,13 @@ interface SyncRunDetailsSummary {
   endpointFailures: Array<Record<string, unknown>>;
   blockedProducts: Array<Record<string, unknown>>;
   mediaRetries: Array<Record<string, unknown>>;
+  endpointFailureCount: number;
+  blockedProductCount: number;
+  mediaRetryCount: number;
   failedItemCount: number;
+  endpointFailuresTruncated: boolean;
+  blockedProductsTruncated: boolean;
+  mediaRetriesTruncated: boolean;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -57,15 +63,31 @@ export function summarizeSyncRunDetails(details: Record<string, unknown> | undef
   const endpointResults = asArray(record.endpointResults).map(asRecord);
   const productStatuses = asArray(record.productStatuses).map(asRecord);
   const mediaRetries = asArray(record.mediaRetries).map(asRecord);
+  const counts = asRecord(record.counts);
+  const truncated = asRecord(record.truncated);
 
   const endpointFailures = endpointResults.filter(isFailureEndpointResult);
   const blockedProducts = productStatuses.filter(isBlockedProductStatus);
+  const endpointFailureCount =
+    typeof counts.endpointFailures === 'number' ? counts.endpointFailures : endpointFailures.length;
+  const blockedProductCount =
+    typeof counts.blockedProducts === 'number' ? counts.blockedProducts : blockedProducts.length;
+  const mediaRetryCount =
+    typeof counts.mediaRetries === 'number' ? counts.mediaRetries : mediaRetries.length;
+  const failedItemCount =
+    typeof counts.failedItems === 'number' ? counts.failedItems : blockedProductCount + mediaRetryCount;
 
   return {
     endpointFailures,
     blockedProducts,
     mediaRetries,
-    failedItemCount: blockedProducts.length + mediaRetries.length,
+    endpointFailureCount,
+    blockedProductCount,
+    mediaRetryCount,
+    failedItemCount,
+    endpointFailuresTruncated: truncated.endpointResults === true,
+    blockedProductsTruncated: truncated.productStatuses === true,
+    mediaRetriesTruncated: truncated.mediaRetries === true,
   };
 }
 

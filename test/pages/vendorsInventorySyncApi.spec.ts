@@ -1,3 +1,5 @@
+export {};
+
 const mockGetSession = jest.fn();
 const mockRecordInternalFailure = jest.fn();
 const mockSubmitCatalogSyncJob = jest.fn();

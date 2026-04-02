@@ -11,6 +11,8 @@ const QUALITY_STEP = 5;
 const MAX_RESIZE_ROUNDS = 14;
 const MIN_SHRINK_DIMENSION = 256;
 
+sharp.cache(false);
+
 /**
  * Re-encodes raster image bytes as WebP, reducing quality and dimensions until
  * the output is within maxBytes (BigCommerce remote image fetch limit).

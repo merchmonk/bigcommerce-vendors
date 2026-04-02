@@ -16,6 +16,105 @@ interface RunSyncBody {
   sync_all?: boolean;
   integration_job_id?: number;
   action?: 'cancel';
+  start_reference_index?: number | string;
+  max_references_per_run?: number | string;
+}
+
+interface ResumeCheckpoint {
+  sync_run_id: number;
+  start_reference_index: number;
+  status: string;
+  last_processed_product_id?: string;
+  last_processed_sku?: string;
+}
+
+type SyncRunRecord = Awaited<ReturnType<typeof listSyncRunsForVendor>>[number];
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) ? value : null;
+}
+
+function buildResumeCheckpoint(run: SyncRunRecord): ResumeCheckpoint | null {
+  if (run.sync_scope !== 'ALL') {
+    return null;
+  }
+
+  const details = asRecord(run.details);
+  const progress = asRecord(details.progress);
+  const continuation = asRecord(details.continuation);
+  const processedReferences = readInteger(progress.processed_references);
+  const continuationStartIndex = readInteger(continuation.next_start_reference_index);
+
+  if (run.status !== 'SUCCESS' && processedReferences !== null && processedReferences > 0) {
+    return {
+      sync_run_id: run.etl_sync_run_id,
+      start_reference_index: processedReferences,
+      status: run.status,
+      last_processed_product_id: readString(progress.current_product_id),
+      last_processed_sku: readString(progress.current_sku),
+    };
+  }
+
+  if (
+    run.status === 'SUCCESS' &&
+    continuation.enqueued !== true &&
+    continuationStartIndex !== null &&
+    continuationStartIndex > 0
+  ) {
+    return {
+      sync_run_id: run.etl_sync_run_id,
+      start_reference_index: continuationStartIndex,
+      status: run.status,
+      last_processed_product_id: readString(progress.current_product_id),
+      last_processed_sku: readString(progress.current_sku),
+    };
+  }
+
+  return null;
+}
+
+function findLatestResumeCheckpoint(runs: SyncRunRecord[]): ResumeCheckpoint | null {
+  for (const run of runs) {
+    const checkpoint = buildResumeCheckpoint(run);
+    if (checkpoint) {
+      return checkpoint;
+    }
+  }
+
+  return null;
+}
+
+function readOptionalInteger(value: unknown, options: { min: number; fieldName: string }): number | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isInteger(parsed) || parsed < options.min) {
+    const error = new Error(`${options.fieldName} must be an integer greater than or equal to ${options.min}.`);
+    (error as Error & { statusCode?: number }).statusCode = 400;
+    throw error;
+  }
+
+  return parsed;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -37,11 +136,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await reconcileStaleCatalogSyncRunsForVendor(vendorId);
         const activeJob = await getActiveCatalogSyncJobForVendor(vendorId);
         const runs = await listSyncRunsForVendor(vendorId);
-        return res.status(200).json({ data: runs, active_job: activeJob });
+        const resumeCheckpoint = findLatestResumeCheckpoint(runs);
+        return res.status(200).json({ data: runs, active_job: activeJob, resume_checkpoint: resumeCheckpoint });
       }
 
       if (req.method === 'POST') {
         const body = req.body as RunSyncBody;
+        const startReferenceIndex = readOptionalInteger(body.start_reference_index, {
+          min: 0,
+          fieldName: 'start_reference_index',
+        });
+        const maxReferencesPerRun = readOptionalInteger(body.max_references_per_run, {
+          min: 1,
+          fieldName: 'max_references_per_run',
+        });
         if (body.action === 'cancel') {
           const activeJob = body.integration_job_id
             ? await getIntegrationJobStatus(body.integration_job_id).then(result => result.job)
@@ -67,6 +175,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           requestPayload: {
             mapping_id: body.mapping_id ?? null,
             sync_all: body.sync_all ?? false,
+            ...(startReferenceIndex !== undefined || maxReferencesPerRun !== undefined
+              ? {
+                  continuation: {
+                    ...(startReferenceIndex !== undefined
+                      ? { start_reference_index: startReferenceIndex }
+                      : {}),
+                    ...(maxReferencesPerRun !== undefined
+                      ? { max_references_per_run: maxReferencesPerRun }
+                      : {}),
+                  },
+                }
+              : {}),
           },
         });
         const status = await getIntegrationJobStatus(submittedJob.job.integration_job_id);
@@ -107,8 +227,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         },
         error,
       });
-      const { message, response } = error;
-      return res.status(response?.status || 500).json({ message: message ?? 'Vendor sync failed' });
+      const { message, response, statusCode } = error;
+      return res.status(response?.status || statusCode || 500).json({ message: message ?? 'Vendor sync failed' });
     }
   });
 }

@@ -89,14 +89,17 @@ describe('operatorDiagnostics', () => {
     expect(summary.endpointFailures).toHaveLength(1);
     expect(summary.blockedProducts).toHaveLength(1);
     expect(summary.mediaRetries).toHaveLength(1);
+    expect(summary.endpointFailureCount).toBe(1);
+    expect(summary.blockedProductCount).toBe(1);
+    expect(summary.mediaRetryCount).toBe(1);
     expect(summary.failedItemCount).toBe(2);
   });
 
   test('loads sync run diagnostics with traces', async () => {
     mockGetSyncRunById.mockResolvedValue({
-      sync_run_id: 77,
+      etl_sync_run_id: 77,
       vendor_id: 12,
-      mapping_id: null,
+      endpoint_mapping_id: null,
       sync_scope: 'ALL',
       status: 'FAILED',
       started_at: '2026-03-19T02:00:00.000Z',

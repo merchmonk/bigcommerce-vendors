@@ -55,6 +55,8 @@ export interface TestConnectionInput {
   vendorId: number;
 }
 
+const BIGCOMMERCE_RELATED_PRODUCT_LINK_SYNC_ENABLED = false;
+
 export interface TestConnectionConfigInput {
   vendorApiUrl: string;
   vendorAccountId?: string | null;
@@ -95,6 +97,7 @@ const BLOCKED_PRODUCT_FAILURE_THRESHOLD_MIN_ATTEMPTS = 100;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO = 0.5;
 const DEFAULT_MAX_PRODUCT_REFERENCES_PER_RUN = 15;
 const INVENTORY_SYNC_FLUSH_TARGET_COUNT = 25;
+const SYNC_DETAIL_SAMPLE_LIMIT = 50;
 
 interface ProductAssemblyStatusSummary {
   blockedCount: number;
@@ -494,6 +497,55 @@ function readPartialBigCommerceUpsertResult(error: unknown): {
   };
 }
 
+function isFailureEndpointResult(result: SyncRunResult['endpointResults'][number]): boolean {
+  return result.status >= 400;
+}
+
+function capSyncDetailSample<T>(items: T[]): T[] {
+  if (items.length <= SYNC_DETAIL_SAMPLE_LIMIT) {
+    return items;
+  }
+
+  return items.slice(0, SYNC_DETAIL_SAMPLE_LIMIT);
+}
+
+function buildSyncDetailSnapshot(input: {
+  endpointResults?: SyncRunResult['endpointResults'];
+  productStatuses?: Array<{
+    sku: string;
+    vendor_product_id?: string;
+    blocked: boolean;
+    gating_reasons: string[];
+    enrichment_status: NonNullable<NormalizedProduct['enrichment_status']>;
+  }>;
+  mediaRetries?: Array<{
+    sku: string;
+    vendor_product_id: string;
+    message: string;
+  }>;
+}): Record<string, unknown> {
+  const endpointFailures = (input.endpointResults ?? []).filter(isFailureEndpointResult);
+  const blockedProducts = (input.productStatuses ?? []).filter(status => status.blocked);
+  const mediaRetries = input.mediaRetries ?? [];
+
+  return {
+    endpointResults: capSyncDetailSample(endpointFailures),
+    productStatuses: capSyncDetailSample(blockedProducts),
+    mediaRetries: capSyncDetailSample(mediaRetries),
+    counts: {
+      endpointFailures: endpointFailures.length,
+      blockedProducts: blockedProducts.length,
+      mediaRetries: mediaRetries.length,
+      failedItems: blockedProducts.length + mediaRetries.length,
+    },
+    truncated: {
+      endpointResults: endpointFailures.length > SYNC_DETAIL_SAMPLE_LIMIT,
+      productStatuses: blockedProducts.length > SYNC_DETAIL_SAMPLE_LIMIT,
+      mediaRetries: mediaRetries.length > SYNC_DETAIL_SAMPLE_LIMIT,
+    },
+  };
+}
+
 function buildSyncProgressDetails(input: {
   phase: 'DISCOVERY' | 'ENRICHMENT' | 'UPSERT' | 'FINALIZING' | 'CANCELLED';
   totalReferences?: number;
@@ -528,9 +580,11 @@ function buildSyncProgressDetails(input: {
       current_product_id: input.currentProductId ?? null,
       current_sku: input.currentSku ?? null,
     },
-    endpointResults: input.endpointResults ?? [],
-    productStatuses: input.productStatuses ?? [],
-    mediaRetries: input.mediaRetries ?? [],
+    ...buildSyncDetailSnapshot({
+      endpointResults: input.endpointResults,
+      productStatuses: input.productStatuses,
+      mediaRetries: input.mediaRetries,
+    }),
   };
 }
 
@@ -974,6 +1028,11 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
           for (const product of assembly.products) {
             await throwIfSyncCancelled(input.integrationJobId);
 
+            const existingProductMap =
+              product.vendor_product_id && !product.gtin?.trim()
+                ? await findVendorProductMapByVendorProductId(input.vendorId, product.vendor_product_id)
+                : null;
+
             let upsertResult;
             try {
               upsertResult = await upsertBigCommerceProduct({
@@ -982,6 +1041,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
                 vendorId: input.vendorId,
                 vendorName: vendor.vendor_name,
                 product,
+                existingBigCommerceProductId: existingProductMap?.bigcommerce_product_id ?? undefined,
                 defaultMarkupPercent: 30,
                 pricingContext,
               });
@@ -1045,19 +1105,21 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
               });
             }
 
-            const related = product.related_vendor_product_ids ?? [];
-            for (const targetVendorProductId of related) {
-              if (!product.vendor_product_id) continue;
-              await upsertPendingRelatedProductLink({
-                vendor_id: input.vendorId,
-                source_vendor_product_id: product.vendor_product_id,
-                target_vendor_product_id: targetVendorProductId,
-                source_bigcommerce_product_id: upsertResult.product.id,
-                status: 'PENDING',
-                metadata: {
-                  source_sku: upsertResult.resolvedSku,
-                },
-              });
+            if (BIGCOMMERCE_RELATED_PRODUCT_LINK_SYNC_ENABLED) {
+              const related = product.related_vendor_product_ids ?? [];
+              for (const targetVendorProductId of related) {
+                if (!product.vendor_product_id) continue;
+                await upsertPendingRelatedProductLink({
+                  vendor_id: input.vendorId,
+                  source_vendor_product_id: product.vendor_product_id,
+                  target_vendor_product_id: targetVendorProductId,
+                  source_bigcommerce_product_id: upsertResult.product.id,
+                  status: 'PENDING',
+                  metadata: {
+                    source_sku: upsertResult.resolvedSku,
+                  },
+                });
+              }
             }
 
             if (!writtenProductKeys.has(upsertResult.resolvedSku)) {
@@ -1322,19 +1384,21 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
             });
           }
 
-          const related = product.related_vendor_product_ids ?? [];
-          for (const targetVendorProductId of related) {
-            if (!product.vendor_product_id) continue;
-            await upsertPendingRelatedProductLink({
-              vendor_id: input.vendorId,
-              source_vendor_product_id: product.vendor_product_id,
-              target_vendor_product_id: targetVendorProductId,
-              source_bigcommerce_product_id: upsertResult.product.id,
-              status: 'PENDING',
-              metadata: {
-                source_sku: upsertResult.resolvedSku,
-              },
-            });
+          if (BIGCOMMERCE_RELATED_PRODUCT_LINK_SYNC_ENABLED) {
+            const related = product.related_vendor_product_ids ?? [];
+            for (const targetVendorProductId of related) {
+              if (!product.vendor_product_id) continue;
+              await upsertPendingRelatedProductLink({
+                vendor_id: input.vendorId,
+                source_vendor_product_id: product.vendor_product_id,
+                target_vendor_product_id: targetVendorProductId,
+                source_bigcommerce_product_id: upsertResult.product.id,
+                status: 'PENDING',
+                metadata: {
+                  source_sku: upsertResult.resolvedSku,
+                },
+              });
+            }
           }
 
           if (!seenReadProductKeys.has(product.vendor_product_id ?? product.sku)) {
@@ -1377,11 +1441,13 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       mediaRetries,
     });
 
-    await resolveDeferredRelatedProducts({
-      accessToken: input.session.accessToken,
-      storeHash: input.session.storeHash,
-      vendorId: input.vendorId,
-    });
+    if (BIGCOMMERCE_RELATED_PRODUCT_LINK_SYNC_ENABLED) {
+      await resolveDeferredRelatedProducts({
+        accessToken: input.session.accessToken,
+        storeHash: input.session.storeHash,
+        vendorId: input.vendorId,
+      });
+    }
 
     if (shouldFailSyncBecauseAllProductsWereBlocked({
       recordsRead,
@@ -1400,9 +1466,11 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       records_read: recordsRead,
       records_written: recordsWritten,
       details: {
-        endpointResults,
-        productStatuses: assemblyStatuses,
-        mediaRetries,
+        ...buildSyncDetailSnapshot({
+          endpointResults,
+          productStatuses: assemblyStatuses,
+          mediaRetries,
+        }),
         continuation: continuationResult
           ? {
               enqueued: continuationResult.enqueued,
@@ -1471,9 +1539,11 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       status: error?.name === 'IntegrationJobCancelledError' ? 'CANCELLED' : 'FAILED',
       error_message: error?.message ?? 'ETL sync failed',
       details: {
-        endpointResults,
-        productStatuses: assemblyStatuses,
-        mediaRetries,
+        ...buildSyncDetailSnapshot({
+          endpointResults,
+          productStatuses: assemblyStatuses,
+          mediaRetries,
+        }),
         recordsWritten,
         stack: error?.stack,
       },

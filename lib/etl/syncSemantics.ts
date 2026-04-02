@@ -4,6 +4,7 @@ export interface ProductCandidate {
   id: number;
   sku: string;
   name: string;
+  gtin?: string;
   vendor_marker?: string | null;
 }
 
@@ -35,19 +36,23 @@ function readVendorMarker(candidate: ProductCandidate | undefined): string | und
 export function classifyDuplicateDecision(input: {
   source_sku: string;
   source_name: string;
+  source_gtin?: string;
   vendor_id: number;
   candidates: ProductCandidate[];
 }): DuplicateDecision {
-  const exactSkuMatch = input.candidates.find(candidate => candidate.sku === input.source_sku);
-  const exactNameMatch = input.candidates.find(candidate => candidate.name === input.source_name);
-  const candidate = exactSkuMatch ?? exactNameMatch;
+  const normalizedSourceGtin = input.source_gtin?.trim();
+  const candidate = normalizedSourceGtin
+    ? input.candidates.find(item => item.gtin?.trim() === normalizedSourceGtin)
+    : undefined;
 
   if (!candidate) {
     return {
       action: 'create',
       duplicate: false,
       resolved_sku: input.source_sku,
-      reason: 'No existing exact SKU or exact name match.',
+      reason: normalizedSourceGtin
+        ? 'No existing exact GTIN match.'
+        : 'Skipped duplicate lookup because GTIN is missing.',
     };
   }
 

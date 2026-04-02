@@ -39,6 +39,14 @@ interface ActiveJobRow {
   submitted_at: string;
 }
 
+interface ResumeCheckpoint {
+  sync_run_id: number;
+  start_reference_index: number;
+  status: string;
+  last_processed_product_id?: string;
+  last_processed_sku?: string;
+}
+
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 const panelStyle: React.CSSProperties = {
@@ -84,13 +92,17 @@ const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
     fetcher,
     vendorSyncPanelSwrOptions,
   );
-  const { data: runsData, mutate: mutateRuns } = useSWR<{ data: SyncRunRow[]; active_job?: ActiveJobRow | null }>(
+  const { data: runsData, mutate: mutateRuns } = useSWR<{
+    data: SyncRunRow[];
+    active_job?: ActiveJobRow | null;
+    resume_checkpoint?: ResumeCheckpoint | null;
+  }>(
     runsUrl,
     fetcher,
     vendorSyncPanelSwrOptions,
   );
 
-  const runSync = async (body: { mapping_id?: number; sync_all?: boolean }) => {
+  const runSync = async (body: { mapping_id?: number; sync_all?: boolean; start_reference_index?: number }) => {
     setIsSubmitting(true);
     try {
       await fetch(runsUrl, {
@@ -125,6 +137,7 @@ const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
   const mappings = mappingsData?.data ?? [];
   const runs = runsData?.data ?? [];
   const activeJob = runsData?.active_job ?? null;
+  const resumeCheckpoint = runsData?.resume_checkpoint ?? null;
   const hasActiveSync = Boolean(
     activeJob && ['PENDING', 'ENQUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(activeJob.status),
   );
@@ -159,6 +172,21 @@ const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
         >
           Run All Product ETLs
         </button>
+        {resumeCheckpoint ? (
+          <button
+            type="button"
+            style={subtleButtonStyle}
+            onClick={() =>
+              runSync({
+                sync_all: true,
+                start_reference_index: resumeCheckpoint.start_reference_index,
+              })
+            }
+            disabled={Boolean(hasActiveSync) || isSubmitting}
+          >
+            Resume From Last Checkpoint
+          </button>
+        ) : null}
         {hasActiveSync ? (
           <button
             type="button"
@@ -170,6 +198,13 @@ const VendorSyncPanel = ({ vendorId, context }: VendorSyncPanelProps) => {
           </button>
         ) : null}
       </div>
+      {resumeCheckpoint ? (
+        <div style={{ color: '#475569', marginBottom: '16px' }}>
+          Resume from run #{resumeCheckpoint.sync_run_id} at reference {resumeCheckpoint.start_reference_index}
+          {resumeCheckpoint.last_processed_sku ? ` after ${resumeCheckpoint.last_processed_sku}` : ''}
+          {resumeCheckpoint.last_processed_product_id ? ` (${resumeCheckpoint.last_processed_product_id})` : ''}.
+        </div>
+      ) : null}
 
       <div style={{ marginBottom: '20px' }}>
         <h4>Endpoint ETLs</h4>

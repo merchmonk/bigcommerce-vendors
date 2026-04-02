@@ -15,7 +15,13 @@ interface SyncRunDiagnosticsResponse {
     endpointFailures: Array<Record<string, unknown>>;
     blockedProducts: Array<Record<string, unknown>>;
     mediaRetries: Array<Record<string, unknown>>;
+    endpointFailureCount: number;
+    blockedProductCount: number;
+    mediaRetryCount: number;
     failedItemCount: number;
+    endpointFailuresTruncated: boolean;
+    blockedProductsTruncated: boolean;
+    mediaRetriesTruncated: boolean;
   };
   traces: OperatorTrace[];
 }
@@ -89,7 +95,12 @@ const VendorSyncRunDiagnosticsPage = () => {
 
       <section style={pageCardStyle}>
         <div style={{ marginBottom: '18px' }}>
-          <h3 style={sectionTitleStyle}>Endpoint Failures</h3>
+          <h3 style={sectionTitleStyle}>Endpoint Failures ({summary.endpointFailureCount})</h3>
+          {summary.endpointFailuresTruncated ? (
+            <p style={{ color: '#64748b', margin: '8px 0 0' }}>
+              Showing the first {summary.endpointFailures.length} recorded endpoint failures for this run.
+            </p>
+          ) : null}
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%' }}>
@@ -127,7 +138,12 @@ const VendorSyncRunDiagnosticsPage = () => {
 
       <section style={pageCardStyle}>
         <div style={{ marginBottom: '18px' }}>
-          <h3 style={sectionTitleStyle}>Blocked Products</h3>
+          <h3 style={sectionTitleStyle}>Blocked Products ({summary.blockedProductCount})</h3>
+          {summary.blockedProductsTruncated ? (
+            <p style={{ color: '#64748b', margin: '8px 0 0' }}>
+              Showing the first {summary.blockedProducts.length} blocked products captured for this run.
+            </p>
+          ) : null}
         </div>
         <div style={{ display: 'grid', gap: '12px' }}>
           {summary.blockedProducts.length === 0 ? (
@@ -163,7 +179,12 @@ const VendorSyncRunDiagnosticsPage = () => {
 
       <section style={pageCardStyle}>
         <div style={{ marginBottom: '18px' }}>
-          <h3 style={sectionTitleStyle}>Media Retry Markers</h3>
+          <h3 style={sectionTitleStyle}>Media Retry Markers ({summary.mediaRetryCount})</h3>
+          {summary.mediaRetriesTruncated ? (
+            <p style={{ color: '#64748b', margin: '8px 0 0' }}>
+              Showing the first {summary.mediaRetries.length} media retry markers captured for this run.
+            </p>
+          ) : null}
         </div>
         <div style={{ display: 'grid', gap: '12px' }}>
           {summary.mediaRetries.length === 0 ? (

@@ -264,9 +264,6 @@ describe('runVendorSync', () => {
         details: expect.objectContaining({
           endpointResults: expect.arrayContaining([
             expect.objectContaining({
-              endpoint_name: 'ProductData',
-            }),
-            expect.objectContaining({
               endpoint_name: 'Inventory',
             }),
           ]),
@@ -447,7 +444,7 @@ describe('runVendorSync', () => {
     );
   });
 
-  test('resolves deferred related-product links when mapped ids are available', async () => {
+  test('does not queue or resolve BigCommerce related-product links during sync finalization', async () => {
     mockBuildProductAssembly.mockResolvedValue({
       endpointResults: [],
       products: [
@@ -467,30 +464,6 @@ describe('runVendorSync', () => {
       statuses: [],
       mediaRetries: [],
     });
-    mockListPendingRelatedProductLinks.mockResolvedValue([
-      {
-        pending_related_product_link_id: 1,
-        vendor_id: 7,
-        source_vendor_product_id: 'PROD-1',
-        target_vendor_product_id: 'PROD-2',
-        source_bigcommerce_product_id: null,
-        target_bigcommerce_product_id: null,
-        status: 'PENDING',
-        retry_count: 0,
-        last_error: null,
-        metadata: {},
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        resolved_at: null,
-      },
-    ]);
-    mockFindVendorProductMapByVendorProductId
-      .mockResolvedValueOnce({
-        bigcommerce_product_id: 9001,
-      })
-      .mockResolvedValueOnce({
-        bigcommerce_product_id: 9002,
-      });
 
     await runVendorSync({
       vendorId: 7,
@@ -502,19 +475,10 @@ describe('runVendorSync', () => {
       syncAll: true,
     });
 
-    expect(mockUpsertPendingRelatedProductLink).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source_vendor_product_id: 'PROD-1',
-        target_vendor_product_id: 'PROD-2',
-        status: 'PENDING',
-      }),
-    );
-    expect(mockUpsertRelatedProducts).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourceProductId: 9001,
-        targetProductIds: [9002],
-      }),
-    );
+    expect(mockUpsertPendingRelatedProductLink).not.toHaveBeenCalled();
+    expect(mockListPendingRelatedProductLinks).not.toHaveBeenCalled();
+    expect(mockFindVendorProductMapByVendorProductId).not.toHaveBeenCalled();
+    expect(mockUpsertRelatedProducts).not.toHaveBeenCalled();
   });
 
   test('fails fast when discovery finds products but enrichment blocks all products before any BigCommerce writes', async () => {
