@@ -142,6 +142,290 @@ describe('buildProductAssembly', () => {
     );
   });
 
+  test('blocks product on non-media PromoStandards ErrorMessage payloads', async () => {
+    mockInvokeEndpoint
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          GetConfigurationAndPricingResponse: {
+            ErrorMessage: {
+              code: 120,
+              description: 'The following field(s) are required: locationId',
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          inventoryResponse: {
+            quantityAvailable: 42,
+          },
+        },
+      });
+
+    const result = await buildProductAssembly({
+      vendor: vendor as any,
+      assignedMappings: withEndpointUrls([
+        {
+          vendor_endpoint_mapping_id: 1,
+          vendor_id: 22,
+          mapping_id: 111,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 111,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'PricingAndConfiguration',
+            endpoint_version: '1.0.0',
+            operation_name: 'getConfigurationAndPricing',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          vendor_endpoint_mapping_id: 2,
+          vendor_id: 22,
+          mapping_id: 112,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 112,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'Inventory',
+            endpoint_version: '1.2.1',
+            operation_name: 'getInventoryLevels',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+      ]) as any,
+      baseProducts: [
+        {
+          sku: 'SKU-1',
+          vendor_product_id: 'P-1',
+          name: 'Product',
+          cost_price: 10,
+        },
+      ],
+    });
+
+    expect(result.products).toHaveLength(0);
+    expect(result.endpointResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          endpoint_name: 'PricingAndConfiguration',
+          status: 200,
+          products_found: 0,
+          message: 'PromoStandards Error 120: The following field(s) are required: locationId',
+        }),
+      ]),
+    );
+    expect(result.statuses[0]).toEqual(
+      expect.objectContaining({
+        blocked: true,
+        gating_reasons: ['PricingAndConfiguration supplier error 120: The following field(s) are required: locationId'],
+        enrichment_status: expect.objectContaining({
+          pricing: 'FAILED',
+          inventory: 'SUCCESS',
+        }),
+      }),
+    );
+  });
+
+  test('prefers human-readable location names over raw location ids in modifier blueprints', async () => {
+    mockInvokeEndpoint
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          Configuration: {
+            productId: '502',
+            LocationArray: {
+              Location: [
+                {
+                  locationId: '1000190',
+                  locationName: 'Front Pocket Center',
+                  maxDecorations: 6,
+                  DecorationArray: {
+                    Decoration: [
+                      {
+                        decorationName: 'Print',
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            PartArray: {
+              Part: [
+                {
+                  partId: '502-001',
+                  PartPriceArray: {
+                    PartPrice: [
+                      {
+                        minQuantity: 1,
+                        price: 10,
+                      },
+                    ],
+                  },
+                  LocationIdArray: {
+                    LocationId: ['1000190'],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          DecorationChargeArray: {
+            DecorationCharge: [
+              {
+                locationId: '1000190',
+                chargeName: 'Heat Transfer',
+                chargePrice: 1.25,
+              },
+            ],
+          },
+        },
+      });
+
+    const result = await buildProductAssembly({
+      vendor: vendor as any,
+      assignedMappings: withEndpointUrls([
+        {
+          vendor_endpoint_mapping_id: 1,
+          vendor_id: 22,
+          mapping_id: 111,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 111,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'PricingAndConfiguration',
+            endpoint_version: '1.0.0',
+            operation_name: 'getConfigurationAndPricing',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          vendor_endpoint_mapping_id: 2,
+          vendor_id: 22,
+          mapping_id: 112,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 112,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'PricingAndConfiguration',
+            endpoint_version: '1.0.0',
+            operation_name: 'getAvailableCharges',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+      ]) as any,
+      baseProducts: [
+        {
+          sku: '502',
+          vendor_product_id: '502',
+          name: 'Product 502',
+          cost_price: 10,
+          variants: [
+            {
+              sku: '502-001',
+              part_id: '502-001',
+              option_values: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.products).toHaveLength(1);
+    expect(result.products[0]?.modifier_blueprint).toEqual(
+      expect.objectContaining({
+        locations: [
+          expect.objectContaining({
+            location: 'Front Pocket Center',
+            max_decorations: 6,
+            methods: expect.arrayContaining([
+              expect.objectContaining({
+                method: 'Heat Transfer',
+                charge_amount: 1.25,
+              }),
+            ]),
+          }),
+        ],
+        charges: expect.arrayContaining([
+          expect.objectContaining({
+            location: 'Front Pocket Center',
+            method: 'Heat Transfer',
+            amount: 1.25,
+          }),
+        ]),
+      }),
+    );
+    expect(result.products[0]?.modifier_blueprint?.locations).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location: '1000190',
+        }),
+      ]),
+    );
+  });
+
   test('blocks product when no pricing mappings are assigned and no product price is available', async () => {
     mockInvokeEndpoint.mockResolvedValueOnce({
       status: 200,
@@ -649,6 +933,156 @@ describe('buildProductAssembly', () => {
           vendor_product_id: 'P-1',
         }),
       ]),
+    );
+  });
+
+  test('does not block product when ProductMedia returns a PromoStandards ErrorMessage payload', async () => {
+    mockInvokeEndpoint
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          pricing: {
+            price: 9.5,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          inventoryResponse: {
+            quantityAvailable: 12,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          GetMediaContentResponse: {
+            ErrorMessage: {
+              code: 120,
+              description: 'The following field(s) are required: partId',
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<ok/>',
+        parsedBody: {
+          GetMediaContentResponse: {
+            ErrorMessage: {
+              code: 120,
+              description: 'The following field(s) are required: partId',
+            },
+          },
+        },
+      });
+
+    const result = await buildProductAssembly({
+      vendor: vendor as any,
+      assignedMappings: withEndpointUrls([
+        {
+          vendor_endpoint_mapping_id: 1,
+          vendor_id: 22,
+          mapping_id: 111,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 111,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'PricingAndConfiguration',
+            endpoint_version: '1.0.0',
+            operation_name: 'getConfigurationAndPricing',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          vendor_endpoint_mapping_id: 2,
+          vendor_id: 22,
+          mapping_id: 112,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 112,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'Inventory',
+            endpoint_version: '1.2.1',
+            operation_name: 'getInventoryLevels',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          vendor_endpoint_mapping_id: 3,
+          vendor_id: 22,
+          mapping_id: 113,
+          is_enabled: true,
+          runtime_config: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            mapping_id: 113,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'ProductMedia',
+            endpoint_version: '1.1.0',
+            operation_name: 'getMediaContent',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+      ]) as any,
+      baseProducts: [
+        {
+          sku: 'SKU-1',
+          source_sku: 'SKU-1',
+          vendor_product_id: 'P-1',
+          name: 'Product',
+          cost_price: 10,
+        },
+      ],
+    });
+
+    expect(result.products).toHaveLength(1);
+    expect(result.statuses[0]).toEqual(
+      expect.objectContaining({
+        blocked: false,
+        gating_reasons: [],
+      }),
     );
   });
 
@@ -1223,18 +1657,25 @@ describe('buildProductAssembly', () => {
               {
                 url: 'https://cdn.example.com/product.jpg',
                 mediaType: 'Image',
+                productId: 'P-1',
                 description: 'Hero image',
+                fileSize: 204800,
                 singlePart: false,
                 partId: '',
                 changeTimeStamp: '2026-03-22T12:00:00',
                 ClassTypeArray: {
-                  ClassType: ['Primary'],
+                  ClassType: [
+                    { classTypeId: 1001, classTypeName: 'Blank' },
+                    { classTypeId: 1003, classTypeName: 'Alternate' },
+                  ],
                 },
               },
               {
                 url: 'https://cdn.example.com/part-black.jpg',
                 mediaType: 'Image',
+                productId: 'P-1',
                 description: 'Black front',
+                fileSize: 5938103,
                 singlePart: true,
                 partId: 'PART-BLK',
                 color: 'Black',
@@ -1243,7 +1684,11 @@ describe('buildProductAssembly', () => {
                 dpi: 300,
                 changeTimeStamp: '2026-03-22T12:01:00',
                 ClassTypeArray: {
-                  ClassType: ['Primary', 'Decorated'],
+                  ClassType: [
+                    { classTypeId: 1002, classTypeName: 'Decorated' },
+                    { classTypeId: 1006, classTypeName: 'Primary' },
+                    { classTypeId: 2001, classTypeName: 'High' },
+                  ],
                 },
                 LocationArray: {
                   Location: [{ locationId: 'LOC-FRONT', locationName: 'Front Pocket', locationRank: 1 }],
@@ -1364,21 +1809,34 @@ describe('buildProductAssembly', () => {
       {
         url: 'https://cdn.example.com/product.jpg',
         media_type: 'Image',
+        product_id: 'P-1',
         description: 'Hero image',
-        class_types: ['Primary'],
+        class_type_array: [
+          { class_type_id: '1001', class_type_name: 'Blank' },
+          { class_type_id: '1003', class_type_name: 'Alternate' },
+        ],
+        class_types: ['Blank', 'Alternate'],
+        file_size: 204800,
         single_part: false,
         change_timestamp: '2026-03-22T12:00:00',
       },
       {
         url: 'https://cdn.example.com/part-black.jpg',
         media_type: 'Image',
+        product_id: 'P-1',
         part_id: 'PART-BLK',
         location_ids: ['LOC-FRONT'],
         location_names: ['Front Pocket'],
         decoration_ids: ['DEC-SCREEN'],
         decoration_names: ['Screen Print'],
         description: 'Black front',
-        class_types: ['Primary', 'Decorated'],
+        class_type_array: [
+          { class_type_id: '1002', class_type_name: 'Decorated' },
+          { class_type_id: '1006', class_type_name: 'Primary' },
+          { class_type_id: '2001', class_type_name: 'High' },
+        ],
+        class_types: ['Decorated', 'Primary', 'High'],
+        file_size: 5938103,
         color: 'Black',
         single_part: true,
         change_timestamp: '2026-03-22T12:01:00',
@@ -1390,10 +1848,10 @@ describe('buildProductAssembly', () => {
     expect(result.products[0].images).toEqual([
       {
         image_url: 'https://cdn.example.com/product.jpg',
-        is_thumbnail: true,
       },
       {
         image_url: 'https://cdn.example.com/part-black.jpg',
+        is_thumbnail: true,
       },
     ]);
   });

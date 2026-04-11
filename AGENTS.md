@@ -1,4 +1,4 @@
-<!-- BEGIN:nextjs-agent-rules 
+<!-- BEGIN:nextjs-agent-rules -->
  
 # Next.js: ALWAYS read docs before coding
  
@@ -6,7 +6,7 @@ Before any Next.js work, find and read the relevant docs in `node_modules/next/d
 
 If the docs do not exist in the specified directory, refer to the docs at https://github.com/vercel/next.js/tree/v16.1.6/docs - ensuring the v parameter of the URL matches the current version of next installed in the project.
  
- END:nextjs-agent-rules -->
+ <!--END:nextjs-agent-rules -->
 
 
 <!-- BEGIN:prisma-agent-rules -->

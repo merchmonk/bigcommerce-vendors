@@ -20,6 +20,7 @@ import {
   type BigCommerceRuntimeProduct,
   type BigCommerceRuntimeVariant,
 } from './bigcommerceRuntimeReader';
+import { resolveProductMetafieldValue } from '../etl/bigcommerceMetafields';
 
 const DEFAULT_CONTRACT_NAMESPACE = 'merchmonk';
 const DEFAULT_PRODUCT_CONTRACT_KEY = 'product_designer_defaults';
@@ -63,10 +64,12 @@ function findProductDesignerDefaults(
   bundle: BigCommerceDesignerRuntimeBundle,
 ): ProductDesignerDefaultsContract {
   const { namespace, productKey } = resolveProductContractKey();
-  const metafield = bundle.productMetafields.find(
-    item => item.namespace === namespace && item.key === productKey,
-  );
-  const parsed = parseMetafieldValue<ProductDesignerDefaultsContract>(metafield?.value);
+  const rawMetafieldValue = resolveProductMetafieldValue({
+    metafields: bundle.productMetafields,
+    namespace,
+    key: productKey,
+  });
+  const parsed = parseMetafieldValue<ProductDesignerDefaultsContract>(rawMetafieldValue);
   if (!parsed) {
     throw new Error(`Product ${bundle.product.id} is missing the required designer contract metafield.`);
   }

@@ -2,10 +2,15 @@ import type {
   NormalizedMediaAsset,
   NormalizedPhysicalDimensions,
   NormalizedProduct,
+  ProductDataSnapshot,
   NormalizedVariantPhysical,
   PricingConfigurationCharge,
+  PricingConfigurationDecorationColor,
   PricingConfigurationDecoration,
+  PricingConfigurationFobPoint,
   PricingConfigurationLocation,
+  PricingConfigurationPart,
+  PricingConfigurationPartPriceTier,
 } from './productNormalizer';
 import { deriveSellingPrice } from './syncSemantics';
 
@@ -25,9 +30,27 @@ export interface ProductContractProjection {
     sku: string;
     value: Record<string, unknown>;
   }>;
+  product_internal_metafields: Array<{
+    key: string;
+    value: Record<string, unknown>;
+  }>;
 }
 
 type AnyRecord = Record<string, unknown>;
+
+const PRODUCT_PRICING_CONFIGURATION_CONFIGURATION_KEY = 'pricing_configuration_configuration';
+const PRODUCT_PRICING_CONFIGURATION_AVAILABLE_LOCATIONS_KEY = 'pricing_configuration_available_locations';
+const PRODUCT_PRICING_CONFIGURATION_DECORATION_COLORS_KEY = 'pricing_configuration_decoration_colors';
+const PRODUCT_PRICING_CONFIGURATION_AVAILABLE_CHARGES_KEY = 'pricing_configuration_available_charges';
+const PRODUCT_PRICING_CONFIGURATION_FOB_POINTS_KEY = 'pricing_configuration_fob_points';
+const PRODUCT_DATA_PRODUCT_KEY = 'product_data_product';
+const PRODUCT_DATA_MARKETING_POINTS_KEY = 'product_data_marketing_points';
+const PRODUCT_DATA_CATEGORIES_KEY = 'product_data_categories';
+const PRODUCT_DATA_RELATED_PRODUCTS_KEY = 'product_data_related_products';
+const PRODUCT_DATA_PRICE_GROUPS_KEY = 'product_data_price_groups';
+const PRODUCT_DATA_LOCATION_DECORATIONS_KEY = 'product_data_location_decorations';
+const PRODUCT_DATA_FOB_POINTS_KEY = 'product_data_fob_points';
+const PRODUCT_DATA_PARTS_KEY = 'product_data_parts';
 
 function asArray<T>(value: T | T[] | null | undefined): T[] {
   if (value === null || value === undefined) return [];
@@ -47,6 +70,73 @@ function slugify(value: string | undefined): string | undefined {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
   return normalized || undefined;
+}
+
+function buildMetafieldBase(product: NormalizedProduct): Record<string, unknown> {
+  return {
+    contractVersion: PRODUCT_CONTRACT_VERSION,
+    source: {
+      ...(product.vendor_product_id ? { vendorProductId: product.vendor_product_id } : {}),
+      ...(product.source_sku ? { sourceSku: product.source_sku } : {}),
+      sku: product.sku,
+    },
+  };
+}
+
+function projectPartPriceTier(tier: PricingConfigurationPartPriceTier): Record<string, unknown> {
+  return {
+    minQuantity: tier.min_quantity,
+    ...(tier.quantity_max !== undefined ? { quantityMax: tier.quantity_max } : {}),
+    price: tier.price,
+    ...(tier.price_uom ? { priceUom: tier.price_uom } : {}),
+    ...(tier.discount_code ? { discountCode: tier.discount_code } : {}),
+    ...(tier.price_effective_date ? { priceEffectiveDate: tier.price_effective_date } : {}),
+    ...(tier.price_expiry_date ? { priceExpiryDate: tier.price_expiry_date } : {}),
+  };
+}
+
+function projectPricingConfigurationPart(part: PricingConfigurationPart): Record<string, unknown> {
+  return {
+    partId: part.part_id,
+    ...(part.part_description ? { partDescription: part.part_description } : {}),
+    ...(part.part_group ? { partGroup: part.part_group } : {}),
+    ...(part.next_part_group ? { nextPartGroup: part.next_part_group } : {}),
+    ...(part.part_group_required !== undefined ? { partGroupRequired: part.part_group_required } : {}),
+    ...(part.part_group_description ? { partGroupDescription: part.part_group_description } : {}),
+    ...(part.ratio !== undefined ? { ratio: part.ratio } : {}),
+    ...(part.default_part !== undefined ? { defaultPart: part.default_part } : {}),
+    ...(part.location_ids?.length ? { locationIds: part.location_ids } : {}),
+    priceTiers: part.price_tiers.map(projectPartPriceTier),
+  };
+}
+
+function projectPricingConfigurationFobPoint(point: PricingConfigurationFobPoint): Record<string, unknown> {
+  return {
+    ...(point.fob_id ? { fobId: point.fob_id } : {}),
+    ...(point.postal_code ? { fobPostalCode: point.postal_code } : {}),
+    ...(point.city ? { fobCity: point.city } : {}),
+    ...(point.state ? { fobState: point.state } : {}),
+    ...(point.country ? { fobCountry: point.country } : {}),
+    ...(point.supported_currencies?.length ? { supportedCurrencies: point.supported_currencies } : {}),
+    ...(point.product_ids?.length ? { productIds: point.product_ids } : {}),
+  };
+}
+
+function projectDecorationColor(decorationColor: PricingConfigurationDecorationColor): Record<string, unknown> {
+  return {
+    ...(decorationColor.product_id ? { productId: decorationColor.product_id } : {}),
+    ...(decorationColor.location_id ? { locationId: decorationColor.location_id } : {}),
+    ...(decorationColor.pms_match !== undefined ? { pmsMatch: decorationColor.pms_match } : {}),
+    ...(decorationColor.full_color !== undefined ? { fullColor: decorationColor.full_color } : {}),
+    colors: decorationColor.colors.map(color => ({
+      ...(color.color_id ? { colorId: color.color_id } : {}),
+      ...(color.color_name ? { colorName: color.color_name } : {}),
+    })),
+    decorationMethods: decorationColor.decoration_methods.map(method => ({
+      ...(method.decoration_id ? { decorationId: method.decoration_id } : {}),
+      ...(method.decoration_name ? { decorationName: method.decoration_name } : {}),
+    })),
+  };
 }
 
 function projectPrintArea(decoration: PricingConfigurationDecoration): Record<string, unknown> | undefined {
@@ -87,6 +177,8 @@ function projectCharge(charge: PricingConfigurationCharge): Record<string, unkno
       ...(tier.repeat_price !== undefined ? { repeatPrice: tier.repeat_price } : {}),
       ...(tier.discount_code ? { discountCode: tier.discount_code } : {}),
       ...(tier.repeat_discount_code ? { repeatDiscountCode: tier.repeat_discount_code } : {}),
+      ...(tier.price_effective_date ? { priceEffectiveDate: tier.price_effective_date } : {}),
+      ...(tier.price_expiry_date ? { priceExpiryDate: tier.price_expiry_date } : {}),
     })),
   };
 }
@@ -212,6 +304,10 @@ function projectVariantCatalog(product: NormalizedProduct, markupPercent: number
           minQuantity: tier.min_quantity,
           ...(tier.quantity_max !== undefined ? { quantityMax: tier.quantity_max } : {}),
           price: sellPrice,
+          ...(tier.price_uom ? { priceUom: tier.price_uom } : {}),
+          ...(tier.discount_code ? { discountCode: tier.discount_code } : {}),
+          ...(tier.price_effective_date ? { priceEffectiveDate: tier.price_effective_date } : {}),
+          ...(tier.price_expiry_date ? { priceExpiryDate: tier.price_expiry_date } : {}),
         };
       })
       .filter((tier): tier is NonNullable<typeof tier> => !!tier);
@@ -221,6 +317,8 @@ function projectVariantCatalog(product: NormalizedProduct, markupPercent: number
       ...(variant.part_id ? { partId: variant.part_id } : {}),
       ...(variant.color ? { color: variant.color } : {}),
       ...(variant.size ? { size: variant.size } : {}),
+      ...(variant.min_purchase_quantity !== undefined ? { minPurchaseQuantity: variant.min_purchase_quantity } : {}),
+      ...(variant.max_purchase_quantity !== undefined ? { maxPurchaseQuantity: variant.max_purchase_quantity } : {}),
       optionValues: variant.option_values.map(optionValue => ({
         optionDisplayName: optionValue.option_display_name,
         label: optionValue.label,
@@ -353,15 +451,177 @@ function projectStructuredMedia(product: NormalizedProduct): Record<string, unkn
     };
   };
 
- /* const videoGroups = createGroups(assets.filter(asset => asset.media_type === 'Video'));
-  if (Object.keys(videoGroups).length === 0) {
+  const imageGroups = createGroups(assets.filter(asset => asset.media_type !== 'Video'));
+  if (Object.keys(imageGroups).length === 0) {
     return undefined;
   }
 
-  return {
-    videos: videoGroups,
-  };*/
-  return undefined;
+  return imageGroups;
+}
+
+function projectPricingConfigurationMetafields(product: NormalizedProduct): Array<{ key: string; value: Record<string, unknown> }> {
+  const pricingConfiguration = product.pricing_configuration;
+  if (!pricingConfiguration) {
+    return [];
+  }
+
+  const metafieldBase = buildMetafieldBase(product);
+  const metafields: Array<{ key: string; value: Record<string, unknown> }> = [];
+
+  metafields.push({
+    key: PRODUCT_PRICING_CONFIGURATION_CONFIGURATION_KEY,
+    value: {
+      ...metafieldBase,
+      ...(pricingConfiguration.product_id ? { productId: pricingConfiguration.product_id } : {}),
+      ...(pricingConfiguration.currency ? { currency: pricingConfiguration.currency } : {}),
+      ...(pricingConfiguration.price_type ? { priceType: pricingConfiguration.price_type } : {}),
+      ...(pricingConfiguration.fob_postal_code ? { fobPostalCode: pricingConfiguration.fob_postal_code } : {}),
+      ...(product.min_purchase_quantity !== undefined ? { minPurchaseQuantity: product.min_purchase_quantity } : {}),
+      ...(product.max_purchase_quantity !== undefined ? { maxPurchaseQuantity: product.max_purchase_quantity } : {}),
+      parts: pricingConfiguration.parts.map(projectPricingConfigurationPart),
+      locations: pricingConfiguration.locations.map(location => ({
+        ...(location.location_id ? { locationId: location.location_id } : {}),
+        ...(location.location_name ? { locationName: location.location_name } : {}),
+        ...(location.decorations_included !== undefined ? { decorationsIncluded: location.decorations_included } : {}),
+        ...(location.default_location !== undefined ? { defaultLocation: location.default_location } : {}),
+        ...(location.max_decoration !== undefined ? { maxDecoration: location.max_decoration } : {}),
+        ...(location.min_decoration !== undefined ? { minDecoration: location.min_decoration } : {}),
+        ...(location.location_rank !== undefined ? { locationRank: location.location_rank } : {}),
+        decorations: location.decorations.map(decoration => ({
+          ...(decoration.decoration_id ? { decorationId: decoration.decoration_id } : {}),
+          ...(decoration.decoration_name ? { decorationName: decoration.decoration_name } : {}),
+          ...(decoration.decoration_geometry ? { decorationGeometry: decoration.decoration_geometry } : {}),
+          ...(decoration.decoration_height !== undefined ? { decorationHeight: decoration.decoration_height } : {}),
+          ...(decoration.decoration_width !== undefined ? { decorationWidth: decoration.decoration_width } : {}),
+          ...(decoration.decoration_diameter !== undefined ? { decorationDiameter: decoration.decoration_diameter } : {}),
+          ...(decoration.decoration_uom ? { decorationUom: decoration.decoration_uom } : {}),
+          ...(decoration.allow_sub_for_default_location !== undefined
+            ? { allowSubForDefaultLocation: decoration.allow_sub_for_default_location }
+            : {}),
+          ...(decoration.allow_sub_for_default_method !== undefined
+            ? { allowSubForDefaultMethod: decoration.allow_sub_for_default_method }
+            : {}),
+          ...(decoration.item_part_quantity_ltm !== undefined ? { itemPartQuantityLtm: decoration.item_part_quantity_ltm } : {}),
+          ...(decoration.decoration_units_included !== undefined ? { decorationUnitsIncluded: decoration.decoration_units_included } : {}),
+          ...(decoration.decoration_units_included_uom ? { decorationUnitsIncludedUom: decoration.decoration_units_included_uom } : {}),
+          ...(decoration.decoration_units_max !== undefined ? { decorationUnitsMax: decoration.decoration_units_max } : {}),
+          ...(decoration.default_decoration !== undefined ? { defaultDecoration: decoration.default_decoration } : {}),
+          ...(decoration.lead_time_days !== undefined ? { leadTime: decoration.lead_time_days } : {}),
+          ...(decoration.rush_lead_time_days !== undefined ? { rushLeadTime: decoration.rush_lead_time_days } : {}),
+          charges: decoration.charges.map(projectCharge),
+        })),
+      })),
+      variants: (product.variants ?? []).map(variant => ({
+        sku: variant.sku,
+        ...(variant.part_id ? { partId: variant.part_id } : {}),
+        ...(variant.min_purchase_quantity !== undefined ? { minPurchaseQuantity: variant.min_purchase_quantity } : {}),
+        ...(variant.max_purchase_quantity !== undefined ? { maxPurchaseQuantity: variant.max_purchase_quantity } : {}),
+      })),
+    },
+  });
+
+  if (pricingConfiguration.available_locations?.length) {
+    metafields.push({
+      key: PRODUCT_PRICING_CONFIGURATION_AVAILABLE_LOCATIONS_KEY,
+      value: {
+        ...metafieldBase,
+        availableLocations: pricingConfiguration.available_locations.map(location => ({
+          ...(location.location_id ? { locationId: location.location_id } : {}),
+          ...(location.location_name ? { locationName: location.location_name } : {}),
+        })),
+      },
+    });
+  }
+
+  if (pricingConfiguration.decoration_colors?.length) {
+    metafields.push({
+      key: PRODUCT_PRICING_CONFIGURATION_DECORATION_COLORS_KEY,
+      value: {
+        ...metafieldBase,
+        decorationColors: pricingConfiguration.decoration_colors.map(projectDecorationColor),
+      },
+    });
+  }
+
+  if (pricingConfiguration.available_charges?.length) {
+    metafields.push({
+      key: PRODUCT_PRICING_CONFIGURATION_AVAILABLE_CHARGES_KEY,
+      value: {
+        ...metafieldBase,
+        availableCharges: pricingConfiguration.available_charges.map(charge => ({
+          ...(charge.charge_id ? { chargeId: charge.charge_id } : {}),
+          ...(charge.charge_name ? { chargeName: charge.charge_name } : {}),
+          ...(charge.charge_description ? { chargeDescription: charge.charge_description } : {}),
+          ...(charge.charge_type ? { chargeType: charge.charge_type } : {}),
+        })),
+      },
+    });
+  }
+
+  if (pricingConfiguration.fob_points.length > 0) {
+    metafields.push({
+      key: PRODUCT_PRICING_CONFIGURATION_FOB_POINTS_KEY,
+      value: {
+        ...metafieldBase,
+        fobPoints: pricingConfiguration.fob_points.map(projectPricingConfigurationFobPoint),
+      },
+    });
+  }
+
+  return metafields;
+}
+
+function projectProductDataMetafields(product: NormalizedProduct): Array<{ key: string; value: Record<string, unknown> }> {
+  const productData = product.product_data;
+  if (!productData) {
+    return [];
+  }
+
+  const metafieldBase = buildMetafieldBase(product);
+  const metafields: Array<{ key: string; value: Record<string, unknown> }> = [];
+
+  const {
+    marketing_points,
+    categories,
+    related_products,
+    product_price_groups,
+    location_decorations,
+    fob_points,
+    parts,
+    ...productFields
+  } = productData;
+
+  metafields.push({
+    key: PRODUCT_DATA_PRODUCT_KEY,
+    value: {
+      ...metafieldBase,
+      productData: productFields as Record<string, unknown>,
+    },
+  });
+
+  const appendArrayMetafield = (key: string, valueKey: string, items: unknown[] | undefined): void => {
+    if (!items || items.length === 0) {
+      return;
+    }
+
+    metafields.push({
+      key,
+      value: {
+        ...metafieldBase,
+        [valueKey]: items as unknown as Record<string, unknown>,
+      } as Record<string, unknown>,
+    });
+  };
+
+  appendArrayMetafield(PRODUCT_DATA_MARKETING_POINTS_KEY, 'marketingPoints', marketing_points);
+  appendArrayMetafield(PRODUCT_DATA_CATEGORIES_KEY, 'categories', categories);
+  appendArrayMetafield(PRODUCT_DATA_RELATED_PRODUCTS_KEY, 'relatedProducts', related_products);
+  appendArrayMetafield(PRODUCT_DATA_PRICE_GROUPS_KEY, 'productPriceGroups', product_price_groups);
+  appendArrayMetafield(PRODUCT_DATA_LOCATION_DECORATIONS_KEY, 'locationDecorations', location_decorations);
+  appendArrayMetafield(PRODUCT_DATA_FOB_POINTS_KEY, 'fobPoints', fob_points);
+  appendArrayMetafield(PRODUCT_DATA_PARTS_KEY, 'parts', parts);
+
+  return metafields;
 }
 
 export function projectBigCommerceProductContract(
@@ -395,6 +655,8 @@ export function projectBigCommerceProductContract(
         key: context.markup_key,
       },
       ...(product.pricing_configuration?.price_type ? { priceType: product.pricing_configuration.price_type } : {}),
+      ...(product.min_purchase_quantity !== undefined ? { minPurchaseQuantity: product.min_purchase_quantity } : {}),
+      ...(product.max_purchase_quantity !== undefined ? { maxPurchaseQuantity: product.max_purchase_quantity } : {}),
       variantCatalog: projectVariantCatalog(product, context.markup_percent),
     },
     locations,
@@ -442,6 +704,8 @@ export function projectBigCommerceProductContract(
           ...(variant.part_id ? { partId: variant.part_id } : {}),
           ...(variant.size ? { size: variant.size } : {}),
           ...(variant.color ? { color: variant.color } : {}),
+          ...(variant.min_purchase_quantity !== undefined ? { minPurchaseQuantity: variant.min_purchase_quantity } : {}),
+          ...(variant.max_purchase_quantity !== undefined ? { maxPurchaseQuantity: variant.max_purchase_quantity } : {}),
           ...(applicableLocationIds && applicableLocationIds.length > 0
             ? { applicableLocationIds }
             : {}),
@@ -454,5 +718,9 @@ export function projectBigCommerceProductContract(
   return {
     product_designer_defaults: productDesignerDefaults,
     variant_designer_overrides: variantDesignerOverrides,
+    product_internal_metafields: [
+      ...projectPricingConfigurationMetafields(product),
+      ...projectProductDataMetafields(product),
+    ],
   };
 }

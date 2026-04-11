@@ -7,16 +7,24 @@ export interface SharedOptionValues {
 
 export type NormalizedMediaType = 'Image' | 'Video';
 
+export interface NormalizedMediaClassType {
+  class_type_id?: string;
+  class_type_name?: string;
+}
+
 export interface NormalizedMediaAsset {
   url: string;
   media_type: NormalizedMediaType;
+  product_id?: string;
   part_id?: string;
   location_ids?: string[];
   location_names?: string[];
   decoration_ids?: string[];
   decoration_names?: string[];
   description?: string;
+  class_type_array?: NormalizedMediaClassType[];
   class_types?: string[];
+  file_size?: number;
   color?: string;
   single_part?: boolean;
   change_timestamp?: string;
@@ -83,6 +91,9 @@ export interface PricingConfigurationPartPriceTier {
   price: number;
   quantity_max?: number;
   price_uom?: string;
+  currency?: string;
+  price_type?: string;
+  configuration_type?: string;
   discount_code?: string;
   price_effective_date?: string;
   price_expiry_date?: string;
@@ -162,12 +173,31 @@ export interface PricingConfigurationFobPoint {
   state?: string;
   postal_code?: string;
   country?: string;
+  supported_currencies?: string[];
+  product_ids?: string[];
+}
+
+export interface PricingConfigurationDecorationColor {
+  product_id?: string;
+  location_id?: string;
+  pms_match?: boolean;
+  full_color?: boolean;
+  colors: Array<{
+    color_id?: string;
+    color_name?: string;
+  }>;
+  decoration_methods: Array<{
+    decoration_id?: string;
+    decoration_name?: string;
+  }>;
 }
 
 export interface ProductPricingConfiguration {
   product_id?: string;
   currency?: string;
   price_type?: string;
+  configuration_type?: string;
+  fob_postal_code?: string;
   parts: PricingConfigurationPart[];
   locations: PricingConfigurationLocation[];
   fob_points: PricingConfigurationFobPoint[];
@@ -178,6 +208,154 @@ export interface ProductPricingConfiguration {
     charge_description?: string;
     charge_type?: string;
   }>;
+  decoration_colors?: PricingConfigurationDecorationColor[];
+}
+
+export interface ProductDataColorSnapshot {
+  color_name?: string;
+  hex?: string;
+  approximate_pms?: string;
+  standard_color_name?: string;
+}
+
+export interface ProductDataSpecificationSnapshot {
+  specification_type?: string;
+  specification_uom?: string;
+  measurement_value?: string;
+}
+
+export interface ProductDataApparelSizeSnapshot {
+  apparel_style?: string;
+  label_size?: string;
+  custom_size?: string;
+}
+
+export interface ProductDataDimensionSnapshot {
+  dimension_uom?: string;
+  depth?: number;
+  height?: number;
+  width?: number;
+  weight_uom?: string;
+  weight?: number;
+}
+
+export interface ProductDataPackageSnapshot {
+  default?: boolean;
+  package_type?: string;
+  description?: string;
+  quantity?: number;
+  dimension_uom?: string;
+  depth?: number;
+  height?: number;
+  width?: number;
+  weight_uom?: string;
+  weight?: number;
+}
+
+export interface ProductDataRelatedProductSnapshot {
+  relation_type?: string;
+  product_id?: string;
+  part_id?: string;
+}
+
+export interface ProductDataMarketingPointSnapshot {
+  point_type?: string;
+  point_copy?: string;
+}
+
+export interface ProductDataCategorySnapshot {
+  category?: string;
+  sub_category?: string;
+}
+
+export interface ProductDataLocationDecorationSnapshot {
+  location_name?: string;
+  max_imprint_colors?: number;
+  decoration_name?: string;
+  location_decoration_combo_default?: boolean;
+  price_includes?: boolean;
+}
+
+export interface ProductDataFobPointSnapshot {
+  fob_id?: string;
+  fob_postal_code?: string;
+  fob_city?: string;
+  fob_state?: string;
+  fob_country?: string;
+}
+
+export interface ProductDataPriceSnapshot {
+  quantity_min?: number;
+  quantity_max?: number;
+  price?: number;
+  discount_code?: string;
+}
+
+export interface ProductDataPriceGroupSnapshot {
+  group_name?: string;
+  currency?: string;
+  description?: string;
+  prices: ProductDataPriceSnapshot[];
+}
+
+export interface ProductDataPartSnapshot {
+  part_id?: string;
+  description?: string[];
+  country_of_origin?: string;
+  colors?: ProductDataColorSnapshot[];
+  primary_color?: ProductDataColorSnapshot;
+  primary_material?: string;
+  specifications?: ProductDataSpecificationSnapshot[];
+  shape?: string;
+  apparel_size?: ProductDataApparelSizeSnapshot;
+  dimension?: ProductDataDimensionSnapshot;
+  lead_time?: number;
+  unspsc?: string;
+  gtin?: string;
+  is_rush_service?: boolean;
+  product_packaging?: ProductDataPackageSnapshot[];
+  shipping_packages?: ProductDataPackageSnapshot[];
+  end_date?: string;
+  effective_date?: string;
+  is_closeout?: boolean;
+  is_caution?: boolean;
+  caution_comment?: string;
+  nmfc_code?: number;
+  nmfc_description?: string;
+  nmfc_number?: string;
+  is_on_demand?: boolean;
+  is_hazmat?: boolean;
+}
+
+export interface ProductDataSnapshot {
+  product_id: string;
+  product_name: string;
+  description?: string[];
+  price_expires_date?: string;
+  marketing_points?: ProductDataMarketingPointSnapshot[];
+  keywords?: string[];
+  product_brand?: string;
+  export?: boolean;
+  categories?: ProductDataCategorySnapshot[];
+  related_products?: ProductDataRelatedProductSnapshot[];
+  last_change_date?: string;
+  creation_date?: string;
+  end_date?: string;
+  effective_date?: string;
+  is_caution?: boolean;
+  caution_comment?: string;
+  is_closeout?: boolean;
+  line_name?: string;
+  primary_image_url?: string;
+  product_price_groups?: ProductDataPriceGroupSnapshot[];
+  compliance_info_available?: boolean;
+  unspsc_commodity_code?: number;
+  imprint_size?: string;
+  default_set_up_charge?: string;
+  default_run_charge?: string;
+  fob_points?: ProductDataFobPointSnapshot[];
+  location_decorations?: ProductDataLocationDecorationSnapshot[];
+  parts?: ProductDataPartSnapshot[];
 }
 
 export interface NormalizedProduct {
@@ -188,6 +366,8 @@ export interface NormalizedProduct {
   gtin?: string;
   price?: number;
   cost_price?: number;
+  min_purchase_quantity?: number;
+  max_purchase_quantity?: number;
   weight?: number;
   inventory_level?: number;
   vendor_product_id?: string;
@@ -201,6 +381,7 @@ export interface NormalizedProduct {
   search_keywords?: string;
   related_vendor_product_ids?: string[];
   location_decoration_data?: Record<string, unknown>;
+  product_data?: ProductDataSnapshot;
   shared_option_values?: SharedOptionValues;
   modifier_blueprint?: ProductModifierBlueprint;
   pricing_configuration?: ProductPricingConfiguration;
@@ -214,9 +395,12 @@ export interface NormalizedVariant {
   gtin?: string;
   price?: number;
   cost_price?: number;
+  min_purchase_quantity?: number;
+  max_purchase_quantity?: number;
   weight?: number;
   inventory_level?: number;
   color?: string;
+  color_hex?: string;
   size?: string;
   physical?: NormalizedVariantPhysical;
   option_values: Array<{
@@ -320,6 +504,331 @@ function toNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function toBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+
+  return undefined;
+}
+
+function extractDescriptionArray(value: unknown): string[] | undefined {
+  const descriptions = asArray(value)
+    .map(item => (typeof item === 'string' ? item.trim() : String(item ?? '').trim()))
+    .filter(Boolean);
+
+  return descriptions.length > 0 ? descriptions : undefined;
+}
+
+function extractProductDataColor(value: unknown): ProductDataColorSnapshot | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const color = {
+    ...(getFirstString(record, ['colorName']) ? { color_name: getFirstString(record, ['colorName']) } : {}),
+    ...(getFirstString(record, ['hex']) ? { hex: getFirstString(record, ['hex']) } : {}),
+    ...(getFirstString(record, ['approximatePms']) ? { approximate_pms: getFirstString(record, ['approximatePms']) } : {}),
+    ...(getFirstString(record, ['standardColorName']) ? { standard_color_name: getFirstString(record, ['standardColorName']) } : {}),
+  };
+
+  return Object.keys(color).length > 0 ? color : undefined;
+}
+
+function extractProductDataColors(node: AnyRecord): ProductDataColorSnapshot[] | undefined {
+  const colorArray = asRecord(node.ColorArray);
+  if (!colorArray) return undefined;
+
+  const colors = asArray(colorArray.Color)
+    .map(extractProductDataColor)
+    .filter((value): value is ProductDataColorSnapshot => !!value);
+
+  return colors.length > 0 ? colors : undefined;
+}
+
+function extractProductDataSpecification(value: unknown): ProductDataSpecificationSnapshot | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const specification = {
+    ...(getFirstString(record, ['specificationType']) ? { specification_type: getFirstString(record, ['specificationType']) } : {}),
+    ...(getFirstString(record, ['specificationUom']) ? { specification_uom: getFirstString(record, ['specificationUom']) } : {}),
+    ...(getFirstString(record, ['measurementValue']) ? { measurement_value: getFirstString(record, ['measurementValue']) } : {}),
+  };
+
+  return Object.keys(specification).length > 0 ? specification : undefined;
+}
+
+function extractProductDataSpecifications(node: AnyRecord): ProductDataSpecificationSnapshot[] | undefined {
+  const specificationArray = asRecord(node.SpecificationArray);
+  if (!specificationArray) return undefined;
+
+  const specifications = asArray(specificationArray.Specification)
+    .map(extractProductDataSpecification)
+    .filter((value): value is ProductDataSpecificationSnapshot => !!value);
+
+  return specifications.length > 0 ? specifications : undefined;
+}
+
+function extractProductDataApparelSize(value: unknown): ProductDataApparelSizeSnapshot | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const apparelSize = {
+    ...(getFirstString(record, ['apparelStyle']) ? { apparel_style: getFirstString(record, ['apparelStyle']) } : {}),
+    ...(getFirstString(record, ['labelSize', 'labelSizeEnum']) ? { label_size: getFirstString(record, ['labelSize', 'labelSizeEnum']) } : {}),
+    ...(getFirstString(record, ['customSize']) ? { custom_size: getFirstString(record, ['customSize']) } : {}),
+  };
+
+  return Object.keys(apparelSize).length > 0 ? apparelSize : undefined;
+}
+
+function extractProductDataDimension(value: unknown): ProductDataDimensionSnapshot | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const dimension = {
+    ...(getFirstString(record, ['dimensionUom', 'uom']) ? { dimension_uom: getFirstString(record, ['dimensionUom', 'uom']) } : {}),
+    ...(getFirstNumber(record, ['depth']) !== undefined ? { depth: getFirstNumber(record, ['depth']) } : {}),
+    ...(getFirstNumber(record, ['height']) !== undefined ? { height: getFirstNumber(record, ['height']) } : {}),
+    ...(getFirstNumber(record, ['width']) !== undefined ? { width: getFirstNumber(record, ['width']) } : {}),
+    ...(getFirstString(record, ['weightUom']) ? { weight_uom: getFirstString(record, ['weightUom']) } : {}),
+    ...(getFirstNumber(record, ['weight']) !== undefined ? { weight: getFirstNumber(record, ['weight']) } : {}),
+  };
+
+  return Object.keys(dimension).length > 0 ? dimension : undefined;
+}
+
+function extractProductDataPackage(value: unknown): ProductDataPackageSnapshot | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const productPackage = {
+    ...(toBoolean(record.default) !== undefined ? { default: toBoolean(record.default) } : {}),
+    ...(getFirstString(record, ['packageType']) ? { package_type: getFirstString(record, ['packageType']) } : {}),
+    ...(getFirstString(record, ['description']) ? { description: getFirstString(record, ['description']) } : {}),
+    ...(getFirstNumber(record, ['quantity']) !== undefined ? { quantity: getFirstNumber(record, ['quantity']) } : {}),
+    ...(getFirstString(record, ['dimensionUom']) ? { dimension_uom: getFirstString(record, ['dimensionUom']) } : {}),
+    ...(getFirstNumber(record, ['depth']) !== undefined ? { depth: getFirstNumber(record, ['depth']) } : {}),
+    ...(getFirstNumber(record, ['height']) !== undefined ? { height: getFirstNumber(record, ['height']) } : {}),
+    ...(getFirstNumber(record, ['width']) !== undefined ? { width: getFirstNumber(record, ['width']) } : {}),
+    ...(getFirstString(record, ['weightUom']) ? { weight_uom: getFirstString(record, ['weightUom']) } : {}),
+    ...(getFirstNumber(record, ['weight']) !== undefined ? { weight: getFirstNumber(record, ['weight']) } : {}),
+  };
+
+  return Object.keys(productPackage).length > 0 ? productPackage : undefined;
+}
+
+function extractProductDataPackages(node: AnyRecord, key: 'ProductPackagingArray' | 'ShippingPackageArray'): ProductDataPackageSnapshot[] | undefined {
+  const packageArray = asRecord(node[key]);
+  if (!packageArray) return undefined;
+  const recordKey = key === 'ProductPackagingArray' ? 'ProductPackaging' : 'ShippingPackage';
+  const packages = asArray(packageArray[recordKey])
+    .map(extractProductDataPackage)
+    .filter((value): value is ProductDataPackageSnapshot => !!value);
+
+  return packages.length > 0 ? packages : undefined;
+}
+
+function extractProductDataMarketingPoints(node: AnyRecord): ProductDataMarketingPointSnapshot[] | undefined {
+  const marketingPointArray = asRecord(node.ProductMarketingPointArray);
+  if (!marketingPointArray) return undefined;
+
+  const marketingPoints = asArray(marketingPointArray.ProductMarketingPoint)
+    .map(item => asRecord(item))
+    .filter((item): item is AnyRecord => !!item)
+    .map(item => ({
+      ...(getFirstString(item, ['pointType']) ? { point_type: getFirstString(item, ['pointType']) } : {}),
+      ...(getFirstString(item, ['pointCopy']) ? { point_copy: getFirstString(item, ['pointCopy']) } : {}),
+    }))
+    .filter(item => Object.keys(item).length > 0);
+
+  return marketingPoints.length > 0 ? marketingPoints : undefined;
+}
+
+function extractProductDataCategories(node: AnyRecord): ProductDataCategorySnapshot[] | undefined {
+  const categoryArray = asRecord(node.ProductCategoryArray);
+  if (!categoryArray) return undefined;
+
+  const categories = asArray(categoryArray.ProductCategory)
+    .map(item => asRecord(item))
+    .filter((item): item is AnyRecord => !!item)
+    .map(item => ({
+      ...(getFirstString(item, ['category']) ? { category: getFirstString(item, ['category']) } : {}),
+      ...(getFirstString(item, ['subCategory']) ? { sub_category: getFirstString(item, ['subCategory']) } : {}),
+    }))
+    .filter(item => Object.keys(item).length > 0);
+
+  return categories.length > 0 ? categories : undefined;
+}
+
+function extractProductDataRelatedProducts(node: AnyRecord): ProductDataRelatedProductSnapshot[] | undefined {
+  const relatedArray = asRecord(node.RelatedProductArray);
+  if (!relatedArray) return undefined;
+
+  const relatedProducts = asArray(relatedArray.RelatedProduct)
+    .map(item => asRecord(item))
+    .filter((item): item is AnyRecord => !!item)
+    .map(item => ({
+      ...(getFirstString(item, ['relationType']) ? { relation_type: getFirstString(item, ['relationType']) } : {}),
+      ...(getFirstString(item, ['productId']) ? { product_id: getFirstString(item, ['productId']) } : {}),
+      ...(getFirstString(item, ['partId', 'partID']) ? { part_id: getFirstString(item, ['partId', 'partID']) } : {}),
+    }))
+    .filter(item => Object.keys(item).length > 0);
+
+  return relatedProducts.length > 0 ? relatedProducts : undefined;
+}
+
+function extractProductDataLocationDecorations(node: AnyRecord): ProductDataLocationDecorationSnapshot[] | undefined {
+  const locationDecorationArray = asRecord(node.LocationDecorationArray);
+  if (!locationDecorationArray) return undefined;
+
+  const locationDecorations = asArray(locationDecorationArray.LocationDecoration)
+    .map(item => asRecord(item))
+    .filter((item): item is AnyRecord => !!item)
+    .map(item => ({
+      ...(getFirstString(item, ['locationName']) ? { location_name: getFirstString(item, ['locationName']) } : {}),
+      ...(getFirstNumber(item, ['maxImprintColors']) !== undefined ? { max_imprint_colors: getFirstNumber(item, ['maxImprintColors']) } : {}),
+      ...(getFirstString(item, ['decorationName']) ? { decoration_name: getFirstString(item, ['decorationName']) } : {}),
+      ...(toBoolean(item.locationDecorationComboDefault) !== undefined
+        ? { location_decoration_combo_default: toBoolean(item.locationDecorationComboDefault) }
+        : {}),
+      ...(toBoolean(item.priceIncludes) !== undefined ? { price_includes: toBoolean(item.priceIncludes) } : {}),
+    }))
+    .filter(item => Object.keys(item).length > 0);
+
+  return locationDecorations.length > 0 ? locationDecorations : undefined;
+}
+
+function extractProductDataFobPoints(node: AnyRecord): ProductDataFobPointSnapshot[] | undefined {
+  const fobPointArray = asRecord(node.FobPointArray);
+  if (!fobPointArray) return undefined;
+
+  const fobPoints = asArray(fobPointArray.FobPoint)
+    .map(item => asRecord(item))
+    .filter((item): item is AnyRecord => !!item)
+    .map(item => ({
+      ...(getFirstString(item, ['fobId']) ? { fob_id: getFirstString(item, ['fobId']) } : {}),
+      ...(getFirstString(item, ['fobPostalCode']) ? { fob_postal_code: getFirstString(item, ['fobPostalCode']) } : {}),
+      ...(getFirstString(item, ['fobCity']) ? { fob_city: getFirstString(item, ['fobCity']) } : {}),
+      ...(getFirstString(item, ['fobState']) ? { fob_state: getFirstString(item, ['fobState']) } : {}),
+      ...(getFirstString(item, ['fobCountry']) ? { fob_country: getFirstString(item, ['fobCountry']) } : {}),
+    }))
+    .filter(item => Object.keys(item).length > 0);
+
+  return fobPoints.length > 0 ? fobPoints : undefined;
+}
+
+function extractProductDataPriceGroups(node: AnyRecord): ProductDataPriceGroupSnapshot[] | undefined {
+  const productPriceGroupArray = asRecord(node.ProductPriceGroupArray);
+  if (!productPriceGroupArray) return undefined;
+
+  const groups = asArray(productPriceGroupArray.ProductPriceGroup)
+    .map(item => asRecord(item))
+    .filter((item): item is AnyRecord => !!item)
+    .map(item => {
+      const productPriceArray = asRecord(item.ProductPriceArray);
+      const prices = asArray(productPriceArray?.ProductPrice)
+        .map(priceItem => asRecord(priceItem))
+        .filter((priceItem): priceItem is AnyRecord => !!priceItem)
+        .map(priceItem => ({
+          ...(getFirstNumber(priceItem, ['quantityMin']) !== undefined ? { quantity_min: getFirstNumber(priceItem, ['quantityMin']) } : {}),
+          ...(getFirstNumber(priceItem, ['quantityMax']) !== undefined ? { quantity_max: getFirstNumber(priceItem, ['quantityMax']) } : {}),
+          ...(getFirstNumber(priceItem, ['price']) !== undefined ? { price: getFirstNumber(priceItem, ['price']) } : {}),
+          ...(getFirstString(priceItem, ['discountCode']) ? { discount_code: getFirstString(priceItem, ['discountCode']) } : {}),
+        }))
+        .filter(price => Object.keys(price).length > 0);
+
+      return {
+        ...(getFirstString(item, ['groupName']) ? { group_name: getFirstString(item, ['groupName']) } : {}),
+        ...(getFirstString(item, ['currency']) ? { currency: getFirstString(item, ['currency']) } : {}),
+        ...(getFirstString(item, ['description']) ? { description: getFirstString(item, ['description']) } : {}),
+        prices,
+      };
+    })
+    .filter(group => group.prices.length > 0 || Object.keys(group).length > 1);
+
+  return groups.length > 0 ? groups : undefined;
+}
+
+function extractProductDataPartSnapshots(node: AnyRecord): ProductDataPartSnapshot[] | undefined {
+  const partArray = asRecord(node.ProductPartArray);
+  if (!partArray) return undefined;
+
+  const parts = asArray(partArray.ProductPart)
+    .map(item => asRecord(item))
+    .filter((item): item is AnyRecord => !!item)
+    .map(part => ({
+      ...(getFirstString(part, ['partId', 'partID']) ? { part_id: getFirstString(part, ['partId', 'partID']) } : {}),
+      ...(extractDescriptionArray(part.description) ? { description: extractDescriptionArray(part.description) } : {}),
+      ...(getFirstString(part, ['countryOfOrigin']) ? { country_of_origin: getFirstString(part, ['countryOfOrigin']) } : {}),
+      ...(extractProductDataColors(part) ? { colors: extractProductDataColors(part) } : {}),
+      ...(extractProductDataColor(asRecord(asRecord(part.primaryColor)?.Color)) ? { primary_color: extractProductDataColor(asRecord(asRecord(part.primaryColor)?.Color)) } : {}),
+      ...(getFirstString(part, ['primaryMaterial']) ? { primary_material: getFirstString(part, ['primaryMaterial']) } : {}),
+      ...(extractProductDataSpecifications(part) ? { specifications: extractProductDataSpecifications(part) } : {}),
+      ...(getFirstString(part, ['shape']) ? { shape: getFirstString(part, ['shape']) } : {}),
+      ...(extractProductDataApparelSize(part.ApparelSize) ? { apparel_size: extractProductDataApparelSize(part.ApparelSize) } : {}),
+      ...(extractProductDataDimension(part.Dimension) ? { dimension: extractProductDataDimension(part.Dimension) } : {}),
+      ...(getFirstNumber(part, ['leadTime']) !== undefined ? { lead_time: getFirstNumber(part, ['leadTime']) } : {}),
+      ...(getFirstString(part, ['unspsc']) ? { unspsc: getFirstString(part, ['unspsc']) } : {}),
+      ...(extractGtin(part) ? { gtin: extractGtin(part) } : {}),
+      ...(toBoolean(part.isRushService) !== undefined ? { is_rush_service: toBoolean(part.isRushService) } : {}),
+      ...(extractProductDataPackages(part, 'ProductPackagingArray') ? { product_packaging: extractProductDataPackages(part, 'ProductPackagingArray') } : {}),
+      ...(extractProductDataPackages(part, 'ShippingPackageArray') ? { shipping_packages: extractProductDataPackages(part, 'ShippingPackageArray') } : {}),
+      ...(getFirstString(part, ['endDate']) ? { end_date: getFirstString(part, ['endDate']) } : {}),
+      ...(getFirstString(part, ['effectiveDate']) ? { effective_date: getFirstString(part, ['effectiveDate']) } : {}),
+      ...(toBoolean(part.isCloseout) !== undefined ? { is_closeout: toBoolean(part.isCloseout) } : {}),
+      ...(toBoolean(part.isCaution) !== undefined ? { is_caution: toBoolean(part.isCaution) } : {}),
+      ...(getFirstString(part, ['cautionComment']) ? { caution_comment: getFirstString(part, ['cautionComment']) } : {}),
+      ...(getFirstNumber(part, ['nmfcCode']) !== undefined ? { nmfc_code: getFirstNumber(part, ['nmfcCode']) } : {}),
+      ...(getFirstString(part, ['nmfcDescription']) ? { nmfc_description: getFirstString(part, ['nmfcDescription']) } : {}),
+      ...(getFirstString(part, ['nmfcNumber']) ? { nmfc_number: getFirstString(part, ['nmfcNumber']) } : {}),
+      ...(toBoolean(part.isOnDemand) !== undefined ? { is_on_demand: toBoolean(part.isOnDemand) } : {}),
+      ...(toBoolean(part.isHazmat) !== undefined ? { is_hazmat: toBoolean(part.isHazmat) } : {}),
+    }))
+    .filter(part => Object.keys(part).length > 0);
+
+  return parts.length > 0 ? parts : undefined;
+}
+
+function buildProductDataSnapshot(node: AnyRecord, productId: string, productName: string): ProductDataSnapshot {
+  return {
+    product_id: productId,
+    product_name: productName,
+    ...(extractDescriptionArray(node.description) ? { description: extractDescriptionArray(node.description) } : {}),
+    ...(getFirstString(node, ['priceExpiresDate']) ? { price_expires_date: getFirstString(node, ['priceExpiresDate']) } : {}),
+    ...(extractProductDataMarketingPoints(node) ? { marketing_points: extractProductDataMarketingPoints(node) } : {}),
+    ...(extractProductKeywords(node).length > 0 ? { keywords: extractProductKeywords(node) } : {}),
+    ...(getFirstString(node, ['productBrand']) ? { product_brand: getFirstString(node, ['productBrand']) } : {}),
+    ...(toBoolean(node.export) !== undefined ? { export: toBoolean(node.export) } : {}),
+    ...(extractProductDataCategories(node) ? { categories: extractProductDataCategories(node) } : {}),
+    ...(extractProductDataRelatedProducts(node) ? { related_products: extractProductDataRelatedProducts(node) } : {}),
+    ...(getFirstString(node, ['lastChangeDate']) ? { last_change_date: getFirstString(node, ['lastChangeDate']) } : {}),
+    ...(getFirstString(node, ['creationDate']) ? { creation_date: getFirstString(node, ['creationDate']) } : {}),
+    ...(getFirstString(node, ['endDate']) ? { end_date: getFirstString(node, ['endDate']) } : {}),
+    ...(getFirstString(node, ['effectiveDate']) ? { effective_date: getFirstString(node, ['effectiveDate']) } : {}),
+    ...(toBoolean(node.isCaution) !== undefined ? { is_caution: toBoolean(node.isCaution) } : {}),
+    ...(getFirstString(node, ['cautionComment']) ? { caution_comment: getFirstString(node, ['cautionComment']) } : {}),
+    ...(toBoolean(node.isCloseout) !== undefined ? { is_closeout: toBoolean(node.isCloseout) } : {}),
+    ...(getFirstString(node, ['lineName']) ? { line_name: getFirstString(node, ['lineName']) } : {}),
+    ...(getFirstString(node, ['primaryImageUrl', 'primaryImageURL']) ? { primary_image_url: getFirstString(node, ['primaryImageUrl', 'primaryImageURL']) } : {}),
+    ...(extractProductDataPriceGroups(node) ? { product_price_groups: extractProductDataPriceGroups(node) } : {}),
+    ...(toBoolean(node.complianceInfoAvailable) !== undefined ? { compliance_info_available: toBoolean(node.complianceInfoAvailable) } : {}),
+    ...(getFirstNumber(node, ['unspscCommodityCode']) !== undefined ? { unspsc_commodity_code: getFirstNumber(node, ['unspscCommodityCode']) } : {}),
+    ...(getFirstString(node, ['imprintSize']) ? { imprint_size: getFirstString(node, ['imprintSize']) } : {}),
+    ...(getFirstString(node, ['defaultSetUpCharge']) ? { default_set_up_charge: getFirstString(node, ['defaultSetUpCharge']) } : {}),
+    ...(getFirstString(node, ['defaultRunCharge']) ? { default_run_charge: getFirstString(node, ['defaultRunCharge']) } : {}),
+    ...(extractProductDataFobPoints(node) ? { fob_points: extractProductDataFobPoints(node) } : {}),
+    ...(extractProductDataLocationDecorations(node) ? { location_decorations: extractProductDataLocationDecorations(node) } : {}),
+    ...(extractProductDataPartSnapshots(node) ? { parts: extractProductDataPartSnapshots(node) } : {}),
+  };
+}
+
 function normalizeWeightToPounds(weight: number, uom?: string): number | undefined {
   if (!Number.isFinite(weight) || weight <= 0) return undefined;
 
@@ -361,15 +870,29 @@ function extractWeightInPounds(node: AnyRecord): number | undefined {
 
 function walkNodes(value: unknown, callback: (node: AnyRecord) => void): void {
   if (!value) return;
-  if (Array.isArray(value)) {
-    value.forEach(item => walkNodes(item, callback));
-    return;
-  }
-  if (typeof value !== 'object') return;
+  const stack: unknown[] = [value];
 
-  const node = value as AnyRecord;
-  callback(node);
-  Object.values(node).forEach(child => walkNodes(child, callback));
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    if (Array.isArray(current)) {
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        stack.push(current[index]);
+      }
+      continue;
+    }
+
+    if (typeof current !== 'object') continue;
+
+    const node = current as AnyRecord;
+    callback(node);
+
+    const children = Object.values(node);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
+  }
 }
 
 function dedupeStrings(values: Array<string | undefined | null>): string[] {
@@ -384,6 +907,34 @@ function dedupeStrings(values: Array<string | undefined | null>): string[] {
     output.push(normalized);
   }
   return output;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#39;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&reg;|&#174;/gi, '®')
+    .replace(/&trade;|&#8482;/gi, '™')
+    .replace(/&copy;|&#169;/gi, '©')
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : _match;
+    })
+    .replace(/&#(\d+);/g, (_match, decimal) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : _match;
+    });
+}
+
+function sanitizeProductName(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const decoded = decodeHtmlEntities(value).replace(/\s+/g, ' ').trim();
+  return decoded || undefined;
 }
 
 function dedupeMediaAssets(assets: NormalizedMediaAsset[]): NormalizedMediaAsset[] {
@@ -457,6 +1008,8 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
       description: product.description ?? existing.description,
       price: product.price ?? existing.price,
       cost_price: product.cost_price ?? existing.cost_price,
+      min_purchase_quantity: product.min_purchase_quantity ?? existing.min_purchase_quantity,
+      max_purchase_quantity: product.max_purchase_quantity ?? existing.max_purchase_quantity,
       weight: product.weight ?? existing.weight,
       inventory_level: product.inventory_level ?? existing.inventory_level,
       brand_name: product.brand_name ?? existing.brand_name,
@@ -469,6 +1022,7 @@ function mergeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
       search_keywords: product.search_keywords ?? existing.search_keywords,
       related_vendor_product_ids: uniqueRelated.length > 0 ? uniqueRelated : undefined,
       location_decoration_data: product.location_decoration_data ?? existing.location_decoration_data,
+      product_data: product.product_data ?? existing.product_data,
       shared_option_values: {
         ...(existing.shared_option_values ?? {}),
         ...(product.shared_option_values ?? {}),
@@ -497,6 +1051,8 @@ function mergeVariantsBySku(variants: NormalizedVariant[]): NormalizedVariant[] 
       part_id: variant.part_id ?? existing.part_id,
       price: variant.price ?? existing.price,
       cost_price: variant.cost_price ?? existing.cost_price,
+      min_purchase_quantity: variant.min_purchase_quantity ?? existing.min_purchase_quantity,
+      max_purchase_quantity: variant.max_purchase_quantity ?? existing.max_purchase_quantity,
       weight: variant.weight ?? existing.weight,
       inventory_level: variant.inventory_level ?? existing.inventory_level,
       color: variant.color ?? existing.color,
@@ -879,7 +1435,7 @@ function normalizeProductDataGetProduct(
   if (!productNode) return [];
 
   const productId = getFirstString(productNode, ['productId']);
-  const productName = getFirstString(productNode, ['productName']);
+  const productName = sanitizeProductName(getFirstString(productNode, ['productName']));
   if (!productId || !productName) return [];
 
   const descriptions = asArray(productNode.description)
@@ -897,12 +1453,13 @@ function normalizeProductDataGetProduct(
   } = extractVariantsFromProduct(productNode, basePrice);
   const categories = extractProductCategories(productNode);
   const brandName = getFirstString(productNode, ['productBrand']);
-  const primaryImageUrl = getFirstString(productNode, ['primaryImageUrl']);
+  const primaryImageUrl = getFirstString(productNode, ['primaryImageUrl', 'primaryImageURL']);
   const lineName = getFirstString(productNode, ['lineName']);
   const keywords = extractProductKeywords(productNode);
   const relatedProducts = extractRelatedProducts(productNode);
   const sizeLabel = getFirstString(productNode, ['labelSizeEnum', 'labelSize']) ?? discoveredSizes[0];
   const locationDecorationData = asRecord(productNode.LocationDecorationArray) ?? undefined;
+  const productData = buildProductDataSnapshot(productNode, productId, productName);
   const isCloseout = productNode.isCloseout;
   const isCloseoutValue =
     typeof isCloseout === 'boolean'
@@ -955,6 +1512,7 @@ function normalizeProductDataGetProduct(
       search_keywords: keywords.length > 0 ? keywords.join(', ') : undefined,
       related_vendor_product_ids: relatedProducts.length > 0 ? relatedProducts : undefined,
       location_decoration_data: locationDecorationData,
+      product_data: productData,
       shared_option_values: {
         size: sizeLabel,
       },
@@ -1014,7 +1572,7 @@ export function normalizeProductsFromEndpoint(
     const sku = getFirstString(node, SKU_KEYS);
     if (!sku) return;
 
-    const name = getFirstString(node, NAME_KEYS) ?? `Vendor product ${sku}`;
+    const name = sanitizeProductName(getFirstString(node, NAME_KEYS)) ?? `Vendor product ${sku}`;
     const description = getFirstString(node, DESCRIPTION_KEYS);
     const price = getFirstNumber(node, PRICE_KEYS);
     const inventoryLevel = getFirstInventoryNumber(node, INVENTORY_KEYS);

@@ -10,12 +10,14 @@ describe('syncSemantics', () => {
     const decision = classifyDuplicateDecision({
       source_sku: 'SKU-100',
       source_name: 'Product 100',
+      source_gtin: '12345',
       vendor_id: 12,
       candidates: [
         {
           id: 44,
           sku: 'SKU-100',
           name: 'Product 100',
+          gtin: '12345',
           vendor_marker: '4',
         },
       ],
@@ -30,12 +32,14 @@ describe('syncSemantics', () => {
     const decision = classifyDuplicateDecision({
       source_sku: 'SKU-100',
       source_name: 'Product 100',
+      source_gtin: '12345',
       vendor_id: 12,
       candidates: [
         {
           id: 44,
           sku: 'SKU-100',
           name: 'Product 100',
+          gtin: '12345',
         },
       ],
     });
@@ -45,7 +49,7 @@ describe('syncSemantics', () => {
     expect(decision.target_product_id).toBe(44);
   });
 
-  test('derives markup-based selling price and percent bulk tiers from vendor cost', () => {
+  test('derives margin-based selling price and percent bulk tiers from vendor cost', () => {
     const price = deriveSellingPrice(10, 30);
     const rules = derivePercentBulkPricingRulesFromCost({
       base_cost_price: 10,
@@ -65,7 +69,7 @@ describe('syncSemantics', () => {
       ],
     });
 
-    expect(price).toBe(13);
+    expect(price).toBe(14.29);
     expect(rules).toEqual([
       {
         quantity_min: 10,

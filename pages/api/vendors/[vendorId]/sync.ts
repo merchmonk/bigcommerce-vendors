@@ -122,7 +122,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   return runWithRequestContext(buildApiRequestContext(req, { vendorId }), async () => {
     logger.info('vendor sync API request', { method: req.method, vendorId });
 
-    try {
+   // try {
       const session = await getSession(req);
       if (!session) {
         return res.status(401).json({ message: 'Unauthorized' });
@@ -216,7 +216,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       res.setHeader('Allow', ['GET', 'POST', 'DELETE']);
       return res.status(405).json({ message: `Method ${req.method} not allowed` });
-    } catch (error: any) {
+    /*} catch (error: any) {
       await recordInternalFailure({
         action: 'vendor_sync_api_request',
         payload: {
@@ -229,6 +229,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
       const { message, response, statusCode } = error;
       return res.status(response?.status || statusCode || 500).json({ message: message ?? 'Vendor sync failed' });
-    }
+    }*/
   });
 }

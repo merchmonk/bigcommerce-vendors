@@ -8,6 +8,8 @@ describe('projectBigCommerceProductContract', () => {
         source_sku: 'TEE-BASE',
         vendor_product_id: 'PC54',
         name: 'Port Authority Tee',
+        min_purchase_quantity: 12,
+        max_purchase_quantity: 95,
         variants: [
           {
             sku: 'PC54-BLK-M',
@@ -15,6 +17,8 @@ describe('projectBigCommerceProductContract', () => {
             part_id: 'PC54-BLK-M',
             color: 'Black',
             size: 'M',
+            min_purchase_quantity: 12,
+            max_purchase_quantity: 95,
             option_values: [
               { option_display_name: 'Color', label: 'Black' },
               { option_display_name: 'Size', label: 'M' },
@@ -26,6 +30,8 @@ describe('projectBigCommerceProductContract', () => {
             part_id: 'PC54-BLK-XL',
             color: 'Black',
             size: 'XL',
+            min_purchase_quantity: 12,
+            max_purchase_quantity: 95,
             physical: {
               shape: 'rectangular',
               dimension: {
@@ -79,7 +85,67 @@ describe('projectBigCommerceProductContract', () => {
             },
           ],
         },
+        product_data: {
+          product_id: 'PC54',
+          product_name: 'Port Authority Tee',
+          line_name: 'Core Apparel',
+          primary_image_url: 'https://cdn.example.com/products/pc54/hero.jpg',
+          marketing_points: [
+            {
+              point_type: 'Highlights',
+              point_copy: 'Soft cotton feel',
+            },
+          ],
+          categories: [
+            {
+              category: 'Apparel',
+              sub_category: 'T-Shirts',
+            },
+          ],
+          related_products: [
+            {
+              relation_type: 'CompanionSell',
+              product_id: 'PC55',
+            },
+          ],
+          product_price_groups: [
+            {
+              group_name: 'List',
+              currency: 'USD',
+              prices: [
+                {
+                  quantity_min: 12,
+                  quantity_max: 95,
+                  price: 10,
+                },
+              ],
+            },
+          ],
+          location_decorations: [
+            {
+              location_name: 'Full Front',
+              max_imprint_colors: 4,
+              decoration_name: 'Screen Print',
+            },
+          ],
+          fob_points: [
+            {
+              fob_id: 'GA-ATL',
+              fob_postal_code: '30318',
+            },
+          ],
+          parts: [
+            {
+              part_id: 'PC54-BLK-M',
+              country_of_origin: 'US',
+              primary_material: 'Cotton',
+            },
+          ],
+        },
         pricing_configuration: {
+          product_id: 'PC54',
+          currency: 'USD',
+          fob_postal_code: '30318',
           price_type: 'List',
           locations: [
             {
@@ -124,13 +190,49 @@ describe('projectBigCommerceProductContract', () => {
           parts: [
             {
               part_id: 'PC54-BLK-M',
+              part_description: 'Black M',
               location_ids: ['FULL_FRONT', 'FULL_BACK'],
-              price_tiers: [{ min_quantity: 1, price: 10 }],
+              price_tiers: [
+                {
+                  min_quantity: 12,
+                  quantity_max: 95,
+                  price: 10,
+                  price_uom: 'EA',
+                  discount_code: 'A',
+                },
+              ],
             },
             {
               part_id: 'PC54-BLK-XL',
+              part_description: 'Black XL',
               location_ids: ['FULL_FRONT'],
-              price_tiers: [{ min_quantity: 1, price: 12 }],
+              price_tiers: [
+                {
+                  min_quantity: 12,
+                  quantity_max: 95,
+                  price: 12,
+                  price_uom: 'EA',
+                  discount_code: 'A',
+                },
+              ],
+            },
+          ],
+          available_locations: [
+            { location_id: 'FULL_FRONT', location_name: 'Full Front' },
+            { location_id: 'FULL_BACK', location_name: 'Full Back' },
+          ],
+          decoration_colors: [
+            {
+              product_id: 'PC54',
+              location_id: 'FULL_FRONT',
+              pms_match: true,
+              full_color: false,
+              colors: [
+                { color_id: 'BLK', color_name: 'Black' },
+              ],
+              decoration_methods: [
+                { decoration_id: 'SCREEN_PRINT', decoration_name: 'Screen Print' },
+              ],
             },
           ],
           available_charges: [
@@ -148,6 +250,8 @@ describe('projectBigCommerceProductContract', () => {
               state: 'GA',
               postal_code: '30318',
               country: 'US',
+              supported_currencies: ['USD'],
+              product_ids: ['PC54'],
             },
           ],
         },
@@ -175,14 +279,18 @@ describe('projectBigCommerceProductContract', () => {
             namespace: 'merchmonk',
             key: 'product_markup',
           },
+          minPurchaseQuantity: 12,
+          maxPurchaseQuantity: 95,
           variantCatalog: [
             expect.objectContaining({
               sku: 'PC54-BLK-M',
               partId: 'PC54-BLK-M',
               color: 'Black',
               size: 'M',
+              minPurchaseQuantity: 12,
+              maxPurchaseQuantity: 95,
               priceTiers: [
-                { minQuantity: 1, price: 13 },
+                { minQuantity: 12, quantityMax: 95, price: 14.29, priceUom: 'EA', discountCode: 'A' },
               ],
             }),
             expect.objectContaining({
@@ -190,8 +298,10 @@ describe('projectBigCommerceProductContract', () => {
               partId: 'PC54-BLK-XL',
               color: 'Black',
               size: 'XL',
+              minPurchaseQuantity: 12,
+              maxPurchaseQuantity: 95,
               priceTiers: [
-                { minQuantity: 1, price: 15.6 },
+                { minQuantity: 12, quantityMax: 95, price: 17.14, priceUom: 'EA', discountCode: 'A' },
               ],
             }),
           ],
@@ -204,6 +314,39 @@ describe('projectBigCommerceProductContract', () => {
             charge_type: 'run',
           },
         ],
+        media: expect.objectContaining({
+          gallery: [
+            expect.objectContaining({
+              url: 'https://cdn.example.com/products/pc54/hero.jpg',
+              classTypes: ['Primary'],
+            }),
+          ],
+          variantAssets: expect.objectContaining({
+            'PC54-BLK-XL': [
+              expect.objectContaining({
+                url: 'https://cdn.example.com/products/pc54/black-xl.jpg',
+                partId: 'PC54-BLK-XL',
+              }),
+            ],
+          }),
+          locationAssets: expect.objectContaining({
+            FULL_FRONT: [
+              expect.objectContaining({
+                url: 'https://cdn.example.com/products/pc54/full-front.jpg',
+                locationIds: ['FULL_FRONT'],
+              }),
+            ],
+          }),
+          methodAssets: expect.objectContaining({
+            SCREEN_PRINT: [
+              expect.objectContaining({
+                url: 'https://cdn.example.com/products/pc54/full-front.jpg',
+                decorationIds: ['SCREEN_PRINT'],
+                locationId: 'FULL_FRONT',
+              }),
+            ],
+          }),
+        }),
       }),
     );
     expect((contract.product_designer_defaults.locations as Array<Record<string, unknown>>)[0]).toEqual(
@@ -233,6 +376,8 @@ describe('projectBigCommerceProductContract', () => {
         value: expect.objectContaining({
           partId: 'PC54-BLK-XL',
           size: 'XL',
+          minPurchaseQuantity: 12,
+          maxPurchaseQuantity: 95,
           applicableLocationIds: ['FULL_FRONT'],
           physical: {
             shape: 'rectangular',
@@ -246,5 +391,108 @@ describe('projectBigCommerceProductContract', () => {
       },
     ]);
     expect(contract.product_designer_defaults).not.toHaveProperty('availableLocations');
+    expect(contract.product_internal_metafields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'pricing_configuration_configuration',
+          value: expect.objectContaining({
+            productId: 'PC54',
+            currency: 'USD',
+            priceType: 'List',
+            fobPostalCode: '30318',
+            minPurchaseQuantity: 12,
+            maxPurchaseQuantity: 95,
+            parts: expect.arrayContaining([
+              expect.objectContaining({
+                partId: 'PC54-BLK-M',
+                partDescription: 'Black M',
+                priceTiers: expect.arrayContaining([
+                  expect.objectContaining({
+                    minQuantity: 12,
+                    quantityMax: 95,
+                    price: 10,
+                    priceUom: 'EA',
+                    discountCode: 'A',
+                  }),
+                ]),
+              }),
+            ]),
+            variants: expect.arrayContaining([
+              expect.objectContaining({
+                sku: 'PC54-BLK-M',
+                minPurchaseQuantity: 12,
+                maxPurchaseQuantity: 95,
+              }),
+            ]),
+          }),
+        }),
+        expect.objectContaining({
+          key: 'product_data_product',
+          value: expect.objectContaining({
+            productData: expect.objectContaining({
+              product_id: 'PC54',
+              product_name: 'Port Authority Tee',
+              line_name: 'Core Apparel',
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          key: 'product_data_marketing_points',
+          value: expect.objectContaining({
+            marketingPoints: [
+              expect.objectContaining({
+                point_type: 'Highlights',
+                point_copy: 'Soft cotton feel',
+              }),
+            ],
+          }),
+        }),
+        expect.objectContaining({
+          key: 'product_data_parts',
+          value: expect.objectContaining({
+            parts: [
+              expect.objectContaining({
+                part_id: 'PC54-BLK-M',
+                country_of_origin: 'US',
+                primary_material: 'Cotton',
+              }),
+            ],
+          }),
+        }),
+        expect.objectContaining({
+          key: 'pricing_configuration_available_locations',
+          value: expect.objectContaining({
+            availableLocations: [
+              { locationId: 'FULL_FRONT', locationName: 'Full Front' },
+              { locationId: 'FULL_BACK', locationName: 'Full Back' },
+            ],
+          }),
+        }),
+        expect.objectContaining({
+          key: 'pricing_configuration_decoration_colors',
+          value: expect.objectContaining({
+            decorationColors: [
+              expect.objectContaining({
+                productId: 'PC54',
+                locationId: 'FULL_FRONT',
+                pmsMatch: true,
+              }),
+            ],
+          }),
+        }),
+        expect.objectContaining({
+          key: 'pricing_configuration_fob_points',
+          value: expect.objectContaining({
+            fobPoints: [
+              expect.objectContaining({
+                fobId: 'GA-ATL',
+                supportedCurrencies: ['USD'],
+                productIds: ['PC54'],
+              }),
+            ],
+          }),
+        }),
+      ]),
+    );
   });
 });

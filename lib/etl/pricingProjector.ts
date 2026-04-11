@@ -3,6 +3,7 @@ import type {
   NormalizedProduct,
   NormalizedVariant,
   PricingConfigurationPart,
+  PricingConfigurationPartPriceTier,
 } from './productNormalizer';
 import {
   collapseBulkPricingRulesByRange,
@@ -43,6 +44,13 @@ export interface PricingProjectionContext {
   markup_percent: number;
   price_list_id: number;
   currency: string;
+  family_preferences?: PricingFamilyPreference[];
+  require_family_match?: boolean;
+}
+
+export interface PricingFamilyPreference {
+  price_type?: string;
+  configuration_type?: string;
 }
 
 function buildSyntheticVariant(product: NormalizedProduct): NormalizedVariant {
@@ -165,18 +173,83 @@ function toVendorBulkRulesFromPart(part: PricingConfigurationPart | undefined): 
   return rules.length > 0 ? rules : undefined;
 }
 
+function normalizeFamilyValue(value?: string): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return normalized || undefined;
+}
+
+function buildTierFamilyKey(tier: PricingConfigurationPartPriceTier): string {
+  return [
+    normalizeFamilyValue(tier.currency) ?? '',
+    normalizeFamilyValue(tier.price_type) ?? '',
+    normalizeFamilyValue(tier.configuration_type) ?? '',
+  ].join('|');
+}
+
+function selectPartPriceTiers(
+  part: PricingConfigurationPart | undefined,
+  context: PricingProjectionContext,
+): PricingConfigurationPartPriceTier[] {
+  if (!part || part.price_tiers.length === 0) return [];
+
+  const groupedByFamily = new Map<string, PricingConfigurationPartPriceTier[]>();
+  for (const tier of part.price_tiers) {
+    const key = buildTierFamilyKey(tier);
+    const existing = groupedByFamily.get(key) ?? [];
+    existing.push(tier);
+    groupedByFamily.set(key, existing);
+  }
+
+  const allGroups = Array.from(groupedByFamily.values()).map(group =>
+    [...group].sort((left, right) => left.min_quantity - right.min_quantity),
+  );
+  const normalizedCurrency = normalizeFamilyValue(context.currency);
+  const exactCurrencyGroups = allGroups.filter(group =>
+    group.some(tier => normalizeFamilyValue(tier.currency) === normalizedCurrency),
+  );
+  const candidateGroups = exactCurrencyGroups.length > 0 ? exactCurrencyGroups : allGroups;
+
+  if (context.family_preferences && context.family_preferences.length > 0) {
+    for (const preference of context.family_preferences) {
+      const preferredGroup = candidateGroups.find(group => {
+        const sample = group[0];
+        const matchesPriceType =
+          !preference.price_type ||
+          normalizeFamilyValue(sample?.price_type) === normalizeFamilyValue(preference.price_type);
+        const matchesConfigurationType =
+          !preference.configuration_type ||
+          normalizeFamilyValue(sample?.configuration_type) === normalizeFamilyValue(preference.configuration_type);
+        return matchesPriceType && matchesConfigurationType;
+      });
+      if (preferredGroup) {
+        return preferredGroup;
+      }
+    }
+  }
+
+  if (context.require_family_match) {
+    return [];
+  }
+
+  return candidateGroups[0] ?? [];
+}
+
 function resolvePartProjection(
   product: NormalizedProduct,
   variant: NormalizedVariant,
+  context: PricingProjectionContext,
 ): {
   vendor_cost_price: number;
   vendor_bulk_rules?: NormalizedBulkPricingRule[];
+  has_price_family_match: boolean;
 } {
   const partMap = new Map(
     (product.pricing_configuration?.parts ?? []).map(part => [part.part_id, part]),
   );
   const part = partMap.get(variant.part_id ?? variant.sku);
-  const baseTier = part?.price_tiers[0];
+  const selectedPriceTiers = selectPartPriceTiers(part, context);
+  const baseTier = selectedPriceTiers[0];
 
   const vendor_cost_price =
     baseTier?.price ??
@@ -189,8 +262,16 @@ function resolvePartProjection(
   return {
     vendor_cost_price,
     vendor_bulk_rules: collapseBulkPricingRulesByRange(
-      toVendorBulkRulesFromPart(part) ?? product.bulk_pricing_rules ?? [],
+      toVendorBulkRulesFromPart(
+        part && selectedPriceTiers.length > 0
+          ? {
+              ...part,
+              price_tiers: selectedPriceTiers,
+            }
+          : undefined,
+      ) ?? product.bulk_pricing_rules ?? [],
     ),
+    has_price_family_match: selectedPriceTiers.length > 0,
   };
 }
 
@@ -202,15 +283,23 @@ export function projectProductPricing(
     ? product.variants
     : [buildSyntheticVariant(product)]);
 
-  const projectedVariants = variants.map(variant => {
-    const { vendor_cost_price, vendor_bulk_rules } = resolvePartProjection(product, variant);
+  const projectedVariants: VariantPricingProjection[] = [];
+  for (const variant of variants) {
+    const { vendor_cost_price, vendor_bulk_rules, has_price_family_match } = resolvePartProjection(
+      product,
+      variant,
+      context,
+    );
+    if (context.require_family_match && !has_price_family_match) {
+      continue;
+    }
     const sellPrice =
       deriveSellingPrice(vendor_cost_price, context.markup_percent) ??
       variant.price ??
       product.price ??
       0;
 
-    return {
+    projectedVariants.push({
       sku: variant.sku,
       part_id: variant.part_id,
       option_values: variant.option_values,
@@ -222,8 +311,8 @@ export function projectProductPricing(
         base_sell_price: sellPrice,
         markup_percent: context.markup_percent,
       }),
-    } satisfies VariantPricingProjection;
-  });
+    } satisfies VariantPricingProjection);
+  }
 
   const defaultVariant = projectedVariants[0];
   const fallbackBulkPricingRules =

@@ -10,6 +10,10 @@ export function buildApiBase(storeHash: string): string {
   return `https://api.bigcommerce.com/stores/${storeHash}/v3`;
 }
 
+export function buildApiV2Base(storeHash: string): string {
+  return `https://api.bigcommerce.com/stores/${storeHash}/v2`;
+}
+
 export function createHeaders(accessToken: string): HeadersInit {
   return {
     Accept: 'application/json',

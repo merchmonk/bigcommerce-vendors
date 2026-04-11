@@ -64,7 +64,7 @@ describe('projectProductPricing', () => {
 
     expect(projection.product_fallback).toEqual({
       cost_price: 10,
-      price: 13,
+      price: 14.29,
       bulk_pricing_rules: [
         {
           quantity_min: 48,
@@ -77,24 +77,24 @@ describe('projectProductPricing', () => {
       expect.objectContaining({
         sku: 'TEE-BLK-M',
         cost_price: 10,
-        price: 13,
+        price: 14.29,
         price_list_bulk_tiers: [
           {
             quantity_min: 48,
             type: 'price',
-            amount: 12.35,
+            amount: 13.57,
           },
         ],
       }),
       expect.objectContaining({
         sku: 'TEE-BLK-XL',
         cost_price: 12,
-        price: 15.6,
+        price: 17.14,
         price_list_bulk_tiers: [
           {
             quantity_min: 48,
             type: 'price',
-            amount: 14.95,
+            amount: 16.43,
           },
         ],
       }),
@@ -154,18 +154,18 @@ describe('projectProductPricing', () => {
             quantity_min: 50,
             quantity_max: 99,
             type: 'price',
-            amount: 30.95,
+            amount: 34.01,
           },
           {
             quantity_min: 100,
             quantity_max: 299,
             type: 'price',
-            amount: 27.03,
+            amount: 29.7,
           },
           {
             quantity_min: 300,
             type: 'price',
-            amount: 25.97,
+            amount: 28.54,
           },
         ],
       }),
@@ -260,21 +260,177 @@ describe('projectProductPricing', () => {
             quantity_min: 25,
             quantity_max: 49,
             type: 'price',
-            amount: 63.73,
+            amount: 70.03,
           },
           {
             quantity_min: 50,
             quantity_max: 99,
             type: 'price',
-            amount: 51.35,
+            amount: 56.43,
           },
           {
             quantity_min: 100,
             type: 'price',
-            amount: 49.37,
+            amount: 54.26,
           },
         ],
       }),
     ]);
+  });
+
+  test('prefers net decorated pricing for the default list when family metadata is available', () => {
+    const projection = projectProductPricing(
+      {
+        sku: 'PCNA-BASE',
+        source_sku: 'PCNA-BASE',
+        vendor_product_id: 'PCNA-BASE',
+        name: 'Example Mug',
+        variants: [
+          {
+            sku: 'PCNA-BLK',
+            source_sku: 'PCNA-BLK',
+            part_id: 'PCNA-BLK',
+            option_values: [{ option_display_name: 'Color', label: 'Black' }],
+          },
+        ],
+        pricing_configuration: {
+          parts: [
+            {
+              part_id: 'PCNA-BLK',
+              default_part: true,
+              price_tiers: [
+                {
+                  min_quantity: 1,
+                  price: 10,
+                  currency: 'USD',
+                  price_type: 'Net',
+                  configuration_type: 'Blank',
+                },
+                {
+                  min_quantity: 24,
+                  price: 9.5,
+                  currency: 'USD',
+                  price_type: 'Net',
+                  configuration_type: 'Blank',
+                },
+                {
+                  min_quantity: 24,
+                  price: 15,
+                  currency: 'USD',
+                  price_type: 'Net',
+                  configuration_type: 'Decorated',
+                },
+                {
+                  min_quantity: 1,
+                  price: 16,
+                  currency: 'USD',
+                  price_type: 'Net',
+                  configuration_type: 'Decorated',
+                },
+              ],
+            },
+          ],
+          locations: [],
+          fob_points: [],
+        },
+      },
+      {
+        markup_percent: 30,
+        price_list_id: 1,
+        currency: 'USD',
+        family_preferences: [
+          {
+            price_type: 'Net',
+            configuration_type: 'Decorated',
+          },
+          {
+            price_type: 'Net',
+          },
+        ],
+      },
+    );
+
+    expect(projection.product_fallback).toEqual({
+      cost_price: 16,
+      price: 22.86,
+      bulk_pricing_rules: [
+        {
+          quantity_min: 24,
+          type: 'percent',
+          amount: 6.25,
+        },
+      ],
+    });
+    expect(projection.variants).toEqual([
+      expect.objectContaining({
+        sku: 'PCNA-BLK',
+        cost_price: 16,
+        price: 22.86,
+        price_list_bulk_tiers: [
+          {
+            quantity_min: 24,
+            type: 'price',
+            amount: 21.43,
+          },
+        ],
+      }),
+    ]);
+  });
+
+  test('requires an explicit family match for the blanks list projection', () => {
+    const projection = projectProductPricing(
+      {
+        sku: 'PCNA-BASE',
+        source_sku: 'PCNA-BASE',
+        vendor_product_id: 'PCNA-BASE',
+        name: 'Example Mug',
+        variants: [
+          {
+            sku: 'PCNA-BLK',
+            source_sku: 'PCNA-BLK',
+            part_id: 'PCNA-BLK',
+            option_values: [{ option_display_name: 'Color', label: 'Black' }],
+          },
+        ],
+        pricing_configuration: {
+          parts: [
+            {
+              part_id: 'PCNA-BLK',
+              default_part: true,
+              price_tiers: [
+                {
+                  min_quantity: 1,
+                  price: 16,
+                  currency: 'USD',
+                  price_type: 'Net',
+                  configuration_type: 'Decorated',
+                },
+              ],
+            },
+          ],
+          locations: [],
+          fob_points: [],
+        },
+      },
+      {
+        markup_percent: 0,
+        price_list_id: 2,
+        currency: 'USD',
+        family_preferences: [
+          {
+            price_type: 'Net',
+            configuration_type: 'Blank',
+          },
+        ],
+        require_family_match: true,
+      },
+    );
+
+    expect(projection.variants).toEqual([]);
+    expect(projection.product_fallback).toEqual({
+      cost_price: undefined,
+      price: undefined,
+      bulk_pricing_rules: undefined,
+    });
   });
 });

@@ -1,4 +1,8 @@
-import type { BigCommercePricingContext } from './bigcommercePricingContext';
+import {
+  buildPriceListTargets,
+  type BigCommercePricingContext,
+} from './bigcommercePricingContext';
+import pluralize from 'pluralize';
 import { syncProjectedProductContract } from './bigcommerceMetafields';
 import { upsertPriceListRecords } from './bigcommercePriceLists';
 import {
@@ -14,6 +18,7 @@ import {
   BigCommerceCatalogListResponse,
   BigCommerceCatalogResponse,
   buildApiBase,
+  buildApiV2Base,
   requestJson,
 } from './bigcommerceApi';
 import {
@@ -30,7 +35,9 @@ interface BigCommerceCatalogProduct {
   sku: string;
   name: string;
   upc?: string;
+  mpn?: string;
   base_variant_id?: number;
+  related_products?: string | number[];
   custom_fields?: Array<{ name: string; value: string }>;
 }
 
@@ -48,6 +55,7 @@ interface BigCommerceCategory {
 interface BigCommerceVariant {
   id: number;
   sku: string;
+  mpn?: string;
   option_values?: Array<{
     option_id?: number;
     id?: number;
@@ -128,9 +136,31 @@ interface BigCommerceVideo {
 const DEFAULT_BIGCOMMERCE_INVENTORY_LOCATION_ID = 1;
 
 interface VendorManagedMediaMetadata {
-  mediaType: 'Image' | 'Video';
-  url: string;
+  productId?: string;
+  mediaType?: 'Image' | 'Video';
+  url?: string;
   partId?: string;
+  classTypeArray?: Array<{
+    classTypeId?: string;
+    classTypeName?: string;
+  }>;
+  classTypes?: string[];
+  fileSize?: number;
+  width?: number;
+  height?: number;
+  dpi?: number;
+  color?: string;
+  description?: string;
+  singlePart?: boolean;
+  changeTimeStamp?: string;
+  decorationArray?: Array<{
+    decorationId?: string;
+    decorationName?: string;
+  }>;
+  locationArray?: Array<{
+    locationId?: string;
+    locationName?: string;
+  }>;
   locationIds?: string[];
   locationNames?: string[];
   decorationIds?: string[];
@@ -154,11 +184,25 @@ const BIGCOMMERCE_MAX_REMOTE_IMAGE_BYTES = 8 * 1024 * 1024;
 const BIGCOMMERCE_MAX_IMAGE_DOWNLOAD_BYTES = 32 * 1024 * 1024;
 
 const VENDOR_MEDIA_MARKER_PREFIX = 'mm_media:';
+const VENDOR_MEDIA_DESCRIPTION_SEPARATOR = ' | ';
 const BIGCOMMERCE_CATEGORY_NAME_MAX_LENGTH = 50;
 const BIGCOMMERCE_BRAND_NAME_MAX_LENGTH = 100;
 const BIGCOMMERCE_CUSTOM_FIELD_VALUE_MAX_LENGTH = 250;
 const BIGCOMMERCE_RELATED_VENDOR_PRODUCT_IDS_FIELD = 'related_vendor_product_ids';
 const INVENTORY_ONLY_FOR_EXISTING_PRODUCTS = true;
+
+function toTitleCase(value: string): string {
+  return value.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function normalizeCategorySegment(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  return toTitleCase(pluralize(toTitleCase(trimmed)).trim());
+}
 
 function normalizeIdentifier(value: string | undefined): string | undefined {
   const normalized = value?.trim().toLowerCase();
@@ -169,6 +213,7 @@ function buildVariantIdentityKeys(variant: {
   sku?: string;
   source_sku?: string;
   part_id?: string;
+  mpn?: string;
   option_values?: Array<{ option_display_name?: string; label?: string }>;
 }): string[] {
   const keys = new Set<string>();
@@ -182,6 +227,7 @@ function buildVariantIdentityKeys(variant: {
   add(variant.sku);
   add(variant.source_sku);
   add(variant.part_id);
+  add(variant.mpn);
 
   const partOption = (variant.option_values ?? []).find(
     optionValue => optionValue.option_display_name?.trim().toLowerCase() === 'part',
@@ -197,6 +243,7 @@ function findMatchingExistingVariant(
     sku?: string;
     source_sku?: string;
     part_id?: string;
+    mpn?: string;
     option_values?: Array<{ option_display_name?: string; label?: string }>;
   },
 ): BigCommerceVariant | undefined {
@@ -208,6 +255,206 @@ function findMatchingExistingVariant(
   return existingVariants.find(existingVariant =>
     buildVariantIdentityKeys(existingVariant).some(key => identityKeys.has(key)),
   );
+}
+
+function readManagedIdentifier(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return undefined;
+}
+
+function hashManagedIdentifier(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) % 100000000;
+  }
+  return String(hash).padStart(8, '0');
+}
+
+function buildManagedProductSku(productId: number): string {
+  return `MM${productId}`;
+}
+
+function buildTemporaryManagedProductSku(input: {
+  vendorId: number;
+  product: NormalizedProduct;
+  attempt?: number;
+}): string {
+  const identity = readManagedIdentifier(
+    input.product.vendor_product_id,
+    input.product.source_sku,
+    input.product.sku,
+  ) ?? `${input.vendorId}`;
+  const suffix = hashManagedIdentifier(`${input.vendorId}:${identity}`);
+  return input.attempt && input.attempt > 0
+    ? `MMTMP${suffix}_${input.attempt}`
+    : `MMTMP${suffix}`;
+}
+
+function buildManagedVariantIdentity(input: {
+  variant: {
+    sku?: string;
+    source_sku?: string;
+    part_id?: string;
+    option_values?: Array<{ option_display_name?: string; label?: string }>;
+  };
+}): string {
+  const optionKey = (input.variant.option_values ?? [])
+    .map(optionValue => `${optionValue.option_display_name ?? ''}:${optionValue.label ?? ''}`)
+    .join('|');
+  return readManagedIdentifier(
+    input.variant.part_id,
+    input.variant.source_sku,
+    input.variant.sku,
+    optionKey,
+  ) ?? 'variant';
+}
+
+function normalizeVariantSkuSegment(value: string | undefined): string {
+  const normalized = value?.toUpperCase().replace(/[^A-Z0-9]+/g, '') ?? '';
+  if (normalized.length >= 3) {
+    return normalized.slice(0, 3);
+  }
+  if (normalized.length > 0) {
+    return normalized.padEnd(3, 'X');
+  }
+  return 'VAR';
+}
+
+function resolveManagedVariantLabel(variant: {
+  color?: string;
+  size?: string;
+  part_id?: string;
+  source_sku?: string;
+  sku?: string;
+  option_values?: Array<{ option_display_name?: string; label?: string }>;
+}): string {
+  const preferredOptionLabel = (variant.option_values ?? [])
+    .filter(optionValue => optionValue.option_display_name?.trim().toLowerCase() !== 'part')
+    .map(optionValue => optionValue.label?.trim())
+    .find((value): value is string => !!value);
+
+  return (
+    preferredOptionLabel ??
+    variant.color?.trim() ??
+    variant.size?.trim() ??
+    variant.part_id?.trim() ??
+    variant.source_sku?.trim() ??
+    variant.sku?.trim() ??
+    'VAR'
+  );
+}
+
+function buildManagedVariantSkuLookup(input: {
+  parentSku: string;
+  variants: Array<{
+    sku?: string;
+    source_sku?: string;
+    part_id?: string;
+    color?: string;
+    size?: string;
+    option_values?: Array<{ option_display_name?: string; label?: string }>;
+  }>;
+}): Map<string, string> {
+  const lookup = new Map<string, string>();
+  const usedSkus = new Set<string>();
+
+  for (const variant of input.variants) {
+    const identity = buildManagedVariantIdentity({ variant });
+    const segment = normalizeVariantSkuSegment(resolveManagedVariantLabel(variant));
+    let candidateSku = `${input.parentSku}-${segment}`;
+
+    if (usedSkus.has(candidateSku)) {
+      const hash = hashManagedIdentifier(identity);
+      for (let length = 1; length <= hash.length; length += 1) {
+        const nextCandidate = `${input.parentSku}-${segment}${hash.slice(0, length)}`;
+        if (!usedSkus.has(nextCandidate)) {
+          candidateSku = nextCandidate;
+          break;
+        }
+      }
+    }
+
+    usedSkus.add(candidateSku);
+    lookup.set(identity, candidateSku);
+  }
+
+  return lookup;
+}
+
+function getManagedVariantSku(input: {
+  variantSkuLookup: Map<string, string>;
+  variant: {
+    sku?: string;
+    source_sku?: string;
+    part_id?: string;
+    option_values?: Array<{ option_display_name?: string; label?: string }>;
+  };
+}): string {
+  return input.variantSkuLookup.get(buildManagedVariantIdentity({ variant: input.variant })) ?? 'MM-VAR';
+}
+
+function buildVariantReferenceKeys(variant: {
+  sku?: string;
+  source_sku?: string;
+  part_id?: string;
+  mpn?: string;
+}): string[] {
+  const keys = [variant.part_id, variant.mpn, variant.source_sku, variant.sku]
+    .map(value => value?.trim())
+    .filter((value): value is string => !!value);
+
+  return keys.filter((value, index) => keys.indexOf(value) === index);
+}
+
+function registerVariantId(
+  variantIdsBySku: Map<string, number>,
+  variant: {
+    sku?: string;
+    source_sku?: string;
+    part_id?: string;
+    mpn?: string;
+  },
+  variantId: number,
+): void {
+  for (const key of buildVariantReferenceKeys(variant)) {
+    variantIdsBySku.set(key, variantId);
+  }
+}
+
+function resolveVariantId(
+  variantIdsBySku: Map<string, number>,
+  variant: {
+    sku?: string;
+    source_sku?: string;
+    part_id?: string;
+    mpn?: string;
+  },
+): number | undefined {
+  for (const key of buildVariantReferenceKeys(variant)) {
+    const variantId = variantIdsBySku.get(key);
+    if (variantId !== undefined) {
+      return variantId;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveManagedProductMpn(product: NormalizedProduct): string | undefined {
+  return readManagedIdentifier(product.vendor_product_id, product.source_sku, product.sku);
+}
+
+function resolveManagedVariantMpn(variant: {
+  part_id?: string;
+  source_sku?: string;
+  sku?: string;
+}): string | undefined {
+  return readManagedIdentifier(variant.part_id, variant.source_sku, variant.sku);
 }
 
 function buildInventorySyncTarget(input: {
@@ -235,9 +482,10 @@ function buildInventorySyncTarget(input: {
 
   const items = variants
     .map(variant => {
-      const variantId =
-        input.variantIdsBySku.get(variant.sku) ??
-        (variant.source_sku ? input.variantIdsBySku.get(variant.source_sku) : undefined);
+      const variantId = resolveVariantId(input.variantIdsBySku, {
+        ...variant,
+        mpn: resolveManagedVariantMpn(variant),
+      });
       const quantity = variant.inventory_level;
 
       if (!variantId || quantity === undefined) {
@@ -270,6 +518,7 @@ export interface UpsertBigCommerceProductInput {
   existingBigCommerceProductId?: number;
   defaultMarkupPercent?: number;
   pricingContext?: BigCommercePricingContext;
+  inventoryOnlyForExistingProducts?: boolean;
 }
 
 export interface UpsertBigCommerceProductResult {
@@ -322,6 +571,80 @@ function buildPartialUpsertError(
   return Object.assign(baseError, {
     partial_upsert_result: partialResult,
   });
+}
+
+function buildManagedContractProduct(input: {
+  product: NormalizedProduct;
+  resolvedSku: string;
+}): NormalizedProduct {
+  const variantSkuLookup = buildManagedVariantSkuLookup({
+    parentSku: input.resolvedSku,
+    variants: input.product.variants ?? [],
+  });
+
+  return {
+    ...input.product,
+    sku: input.resolvedSku,
+    variants: (input.product.variants ?? []).map(variant => ({
+      ...variant,
+      sku: getManagedVariantSku({
+        variantSkuLookup,
+        variant,
+      }),
+    })),
+  };
+}
+
+function buildProjectedPriceListRecords(input: {
+  pricingProjection: ReturnType<typeof projectProductPricing>;
+  variantIdsBySku: Map<string, number>;
+  hasOptionBearingVariants: boolean;
+  baseVariantId?: number;
+}): Array<{
+  variant_id: number;
+  price: number;
+  currency: string;
+  bulk_pricing_tiers?: import('./pricingProjector').PriceListBulkPricingTier[];
+}> {
+  const variantPriceListRecords = input.pricingProjection.variants
+    .map(variant => {
+      const variantId = input.variantIdsBySku.get(variant.sku);
+      if (!variantId) return null;
+      return {
+        variant_id: variantId,
+        price: variant.price,
+        currency: input.pricingProjection.currency,
+        ...(variant.price_list_bulk_tiers ? { bulk_pricing_tiers: variant.price_list_bulk_tiers } : {}),
+      };
+    })
+    .filter(
+      (
+        record,
+      ): record is {
+        variant_id: number;
+        price: number;
+        currency: string;
+        bulk_pricing_tiers?: import('./pricingProjector').PriceListBulkPricingTier[];
+      } => !!record,
+    );
+
+  const basePriceListRecord =
+    !input.hasOptionBearingVariants &&
+    input.baseVariantId &&
+    input.pricingProjection.product_fallback.price !== undefined
+      ? {
+          variant_id: input.baseVariantId,
+          price: input.pricingProjection.product_fallback.price,
+          currency: input.pricingProjection.currency,
+        }
+      : null;
+
+  return [
+    ...variantPriceListRecords,
+    ...(basePriceListRecord ? [basePriceListRecord] : []),
+  ].filter(
+    (record, index, records) => records.findIndex(item => item.variant_id === record.variant_id) === index,
+  );
 }
 
 function dedupeProducts(products: BigCommerceCatalogProduct[]): BigCommerceCatalogProduct[] {
@@ -510,6 +833,7 @@ function buildBigCommercePayload(
     includeVariants?: boolean;
     isVisible?: boolean;
     sku: string;
+    mpn?: string;
     markupPercent: number;
     duplicate: boolean;
     vendorId: number;
@@ -521,8 +845,11 @@ function buildBigCommercePayload(
     variants: Array<{
       sku: string;
       gtin?: string;
+      mpn?: string;
       cost_price: number;
       price: number;
+      min_purchase_quantity?: number;
+      max_purchase_quantity?: number;
       option_values: Array<{ option_display_name: string; label: string }>;
     }>;
   },
@@ -533,8 +860,11 @@ function buildBigCommercePayload(
       return {
         sku: variant.sku,
         ...(variant.gtin ? { upc: variant.gtin } : {}),
+        ...(variant.mpn ? { mpn: variant.mpn } : {}),
         cost_price: variant.cost_price,
         price: variant.price,
+        ...(variant.min_purchase_quantity !== undefined ? { min_purchase_quantity: variant.min_purchase_quantity } : {}),
+        ...(variant.max_purchase_quantity !== undefined ? { max_purchase_quantity: variant.max_purchase_quantity } : {}),
         option_values: variant.option_values,
       };
     });
@@ -545,11 +875,14 @@ function buildBigCommercePayload(
     name: product.name,
     type: 'physical',
     sku: options.sku,
+    ...(options.mpn ? { mpn: options.mpn } : {}),
     ...(product.gtin ? { upc: product.gtin } : {}),
     description: product.description ?? '',
     weight: product.weight ?? 0,
     ...(options.productFallback.cost_price !== undefined ? { cost_price: options.productFallback.cost_price } : {}),
     ...(options.productFallback.price !== undefined ? { price: options.productFallback.price } : {}),
+    ...(product.min_purchase_quantity !== undefined ? { min_purchase_quantity: product.min_purchase_quantity } : {}),
+    ...(product.max_purchase_quantity !== undefined ? { max_purchase_quantity: product.max_purchase_quantity } : {}),
     inventory_tracking: hasVariants ? 'variant' : 'product',
     search_keywords: product.search_keywords ?? undefined,
     ...(options.includeCustomFields !== false
@@ -617,7 +950,7 @@ async function ensureBrandId(
 function parseCategoryPath(category: string): string[] {
   const parts = category
     .split('>')
-    .map(value => value.trim())
+    .map(normalizeCategorySegment)
     .filter(Boolean);
 
   if (parts.some(part => part.length === 0 || part.length > BIGCOMMERCE_CATEGORY_NAME_MAX_LENGTH)) {
@@ -907,12 +1240,18 @@ async function syncInventoryOnlyForExistingProduct(input: {
   const existingVariants = await listProductVariants(input.accessToken, input.storeHash, input.productId);
 
   for (const variant of variants) {
-    const existing = findMatchingExistingVariant(existingVariants, variant);
+    const existing = findMatchingExistingVariant(existingVariants, {
+      ...variant,
+      mpn: resolveManagedVariantMpn(variant),
+    });
     if (!existing) {
       continue;
     }
 
-    variantIdsBySku.set(variant.sku, existing.id);
+    registerVariantId(variantIdsBySku, {
+      ...variant,
+      mpn: resolveManagedVariantMpn(variant),
+    }, existing.id);
   }
 
   return variantIdsBySku;
@@ -922,6 +1261,7 @@ async function syncVariants(
   accessToken: string,
   storeHash: string,
   productId: number,
+  parentSku: string,
   vendorId: number,
   product: NormalizedProduct,
   pricingProjection: ReturnType<typeof projectProductPricing>,
@@ -943,17 +1283,33 @@ async function syncVariants(
   const variantIdsBySku = new Map<string, number>(
     Array.from(existingBySku.entries()).map(([sku, variant]) => [sku, variant.id]),
   );
+  const managedVariantSkuLookup = buildManagedVariantSkuLookup({
+    parentSku,
+    variants,
+  });
 
   for (const variant of variants) {
     const projected = pricingProjection.variants.find(item => item.sku === variant.sku);
+    const managedSku = getManagedVariantSku({
+      variantSkuLookup: managedVariantSkuLookup,
+      variant,
+    });
     const payload = {
-      sku: variant.sku,
+      sku: managedSku,
       ...(variant.gtin ? { upc: variant.gtin } : {}),
+      ...(resolveManagedVariantMpn(variant) ? { mpn: resolveManagedVariantMpn(variant) } : {}),
       cost_price: projected?.cost_price ?? variant.cost_price ?? variant.price ?? product.cost_price ?? product.price ?? 0,
       price: projected?.price ?? variant.price ?? product.price ?? 0,
+      ...(variant.min_purchase_quantity !== undefined ? { min_purchase_quantity: variant.min_purchase_quantity } : {}),
+      ...(variant.max_purchase_quantity !== undefined ? { max_purchase_quantity: variant.max_purchase_quantity } : {}),
       option_values: toBigCommerceVariantOptionValues(variant.option_values, variantOptionLookup),
     };
-    const existing = existingBySku.get(variant.sku) ?? findMatchingExistingVariant(existingVariants, variant);
+    const existing =
+      existingBySku.get(variant.sku) ??
+      findMatchingExistingVariant(existingVariants, {
+        ...variant,
+        mpn: resolveManagedVariantMpn(variant),
+      });
     if (existing) {
       const updated = await requestJson<BigCommerceCatalogResponse<BigCommerceVariant>>(
         accessToken,
@@ -964,7 +1320,10 @@ async function syncVariants(
         },
         'Failed to update BigCommerce variant',
       );
-      variantIdsBySku.set(variant.sku, updated.data?.id ?? existing.id);
+      registerVariantId(variantIdsBySku, {
+        ...variant,
+        mpn: resolveManagedVariantMpn(variant),
+      }, updated.data?.id ?? existing.id);
       continue;
     }
 
@@ -983,12 +1342,14 @@ async function syncVariants(
       if (isDuplicateVariantOptionValuesError(error)) {
         const refreshedVariants = await listProductVariants(accessToken, storeHash, productId);
         const targetOptionKey = serializeBigCommerceVariantOptionValues(payload.option_values);
-        const matchingVariant = refreshedVariants.find(existingVariant => {
-          if (existingVariant.sku === variant.sku) {
-            return true;
-          }
-          return serializeBigCommerceVariantOptionValues(existingVariant.option_values) === targetOptionKey;
-        });
+        const matchingVariant =
+          findMatchingExistingVariant(refreshedVariants, {
+            ...variant,
+            mpn: resolveManagedVariantMpn(variant),
+          }) ??
+          refreshedVariants.find(existingVariant => {
+            return serializeBigCommerceVariantOptionValues(existingVariant.option_values) === targetOptionKey;
+          });
 
         if (!matchingVariant) {
           throw error;
@@ -1013,7 +1374,7 @@ async function syncVariants(
         const retryPayload = {
           ...payload,
           sku: buildSkuRetryCandidateSku({
-            desiredSku: variant.sku,
+            desiredSku: managedSku,
             vendorId,
             attempt,
           }),
@@ -1031,13 +1392,16 @@ async function syncVariants(
       throw error;
     });
     if (created.data?.id) {
-      variantIdsBySku.set(variant.sku, created.data.id);
+      registerVariantId(variantIdsBySku, {
+        ...variant,
+        mpn: resolveManagedVariantMpn(variant),
+      }, created.data.id);
     }
   }
 
   const refreshed = await listProductVariants(accessToken, storeHash, productId);
   for (const variant of refreshed) {
-    variantIdsBySku.set(variant.sku, variant.id);
+    registerVariantId(variantIdsBySku, variant, variant.id);
   }
 
   return variantIdsBySku;
@@ -1794,43 +2158,155 @@ function resolveMediaDecorationNames(product: NormalizedProduct, asset: Normaliz
   return names.length > 0 ? names : undefined;
 }
 
+function buildMediaClassTypeArray(asset: NormalizedMediaAsset): VendorManagedMediaMetadata['classTypeArray'] {
+  const directEntries = (asset.class_type_array ?? [])
+    .map(entry => ({
+      ...(entry.class_type_id?.trim() ? { classTypeId: entry.class_type_id.trim() } : {}),
+      ...(entry.class_type_name?.trim() ? { classTypeName: entry.class_type_name.trim() } : {}),
+    }))
+    .filter(entry => Object.keys(entry).length > 0);
+
+  if (directEntries.length > 0) {
+    return directEntries;
+  }
+
+  const fallbackEntries = asset.class_types
+    ?.map(classTypeName => classTypeName.trim())
+    .filter(classTypeName => classTypeName.length > 0)
+    .map(classTypeName => ({ classTypeName }));
+
+  return fallbackEntries?.length ? fallbackEntries : undefined;
+}
+
+function buildMediaLocationArray(
+  product: NormalizedProduct,
+  asset: NormalizedMediaAsset,
+): VendorManagedMediaMetadata['locationArray'] {
+  const locationIds = asset.location_ids ?? [];
+  const locationNames = resolveMediaLocationNames(product, asset) ?? [];
+  const length = Math.max(locationIds.length, locationNames.length);
+  if (length === 0) {
+    return undefined;
+  }
+
+  const values = Array.from({ length }, (_, index) => ({
+    ...(locationIds[index]?.trim() ? { locationId: locationIds[index]!.trim() } : {}),
+    ...(locationNames[index]?.trim() ? { locationName: locationNames[index]!.trim() } : {}),
+  })).filter(entry => Object.keys(entry).length > 0);
+
+  return values.length > 0 ? values : undefined;
+}
+
+function buildMediaDecorationArray(
+  product: NormalizedProduct,
+  asset: NormalizedMediaAsset,
+): VendorManagedMediaMetadata['decorationArray'] {
+  const decorationIds = asset.decoration_ids ?? [];
+  const decorationNames = resolveMediaDecorationNames(product, asset) ?? [];
+  const length = Math.max(decorationIds.length, decorationNames.length);
+  if (length === 0) {
+    return undefined;
+  }
+
+  const values = Array.from({ length }, (_, index) => ({
+    ...(decorationIds[index]?.trim() ? { decorationId: decorationIds[index]!.trim() } : {}),
+    ...(decorationNames[index]?.trim() ? { decorationName: decorationNames[index]!.trim() } : {}),
+  })).filter(entry => Object.keys(entry).length > 0);
+
+  return values.length > 0 ? values : undefined;
+}
+
+function hasPrimaryClassType(asset: NormalizedMediaAsset): boolean {
+  return (asset.class_type_array ?? []).some(
+    entry => entry.class_type_name?.trim().toLowerCase() === 'primary',
+  ) || (asset.class_types ?? []).some(classType => classType.trim().toLowerCase() === 'primary');
+}
+
 function buildVendorManagedMediaMarker(product: NormalizedProduct, asset: NormalizedMediaAsset): string {
+  const classTypeArray = buildMediaClassTypeArray(asset);
+  const classTypes = Array.from(
+    new Set(
+      [
+        ...(classTypeArray ?? []).map(entry => entry.classTypeName ?? ''),
+        ...(asset.class_types ?? []),
+      ]
+        .map(value => value.trim())
+        .filter(value => value.length > 0),
+    ),
+  );
   const metadata: VendorManagedMediaMetadata = {
-    mediaType: asset.media_type,
-    url: asset.url,
     ...(asset.part_id ? { partId: asset.part_id } : {}),
-    ...(asset.location_ids?.length ? { locationIds: asset.location_ids } : {}),
-    ...(resolveMediaLocationNames(product, asset)?.length
-      ? { locationNames: resolveMediaLocationNames(product, asset) }
-      : {}),
-    ...(asset.decoration_ids?.length ? { decorationIds: asset.decoration_ids } : {}),
-    ...(resolveMediaDecorationNames(product, asset)?.length
-      ? { decorationNames: resolveMediaDecorationNames(product, asset) }
-      : {}),
+    ...(classTypes?.length ? { classTypes } : {}),
   };
 
-  return `${VENDOR_MEDIA_MARKER_PREFIX}${JSON.stringify(metadata)}`;
+  return JSON.stringify(metadata);
 }
 
 function buildVendorManagedDescription(product: NormalizedProduct, asset: NormalizedMediaAsset): string {
   const marker = buildVendorManagedMediaMarker(product, asset);
-  return asset.description ? `${asset.description} | ${marker}` : marker;
+  return asset.description ? `${asset.description}${VENDOR_MEDIA_DESCRIPTION_SEPARATOR}${marker}` : marker;
 }
 
-function parseVendorManagedMarker(description: string | undefined): VendorManagedMediaMetadata | null {
-  if (!description) return null;
-  const markerIndex = description.indexOf(VENDOR_MEDIA_MARKER_PREFIX);
-  if (markerIndex < 0) return null;
-  const payload = description.slice(markerIndex + VENDOR_MEDIA_MARKER_PREFIX.length).trim();
+function tryParseVendorManagedMarkerPayload(payload: string | undefined): VendorManagedMediaMetadata | null {
+  if (!payload) return null;
+
   try {
-    return JSON.parse(payload) as VendorManagedMediaMetadata;
+    const parsed = JSON.parse(payload) as VendorManagedMediaMetadata;
+    return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
     return null;
   }
 }
 
+function parseVendorManagedMarker(description: string | undefined): VendorManagedMediaMetadata | null {
+  if (!description) return null;
+
+  const legacyMarkerIndex = description.indexOf(VENDOR_MEDIA_MARKER_PREFIX);
+  if (legacyMarkerIndex >= 0) {
+    return tryParseVendorManagedMarkerPayload(
+      description.slice(legacyMarkerIndex + VENDOR_MEDIA_MARKER_PREFIX.length).trim(),
+    );
+  }
+
+  const trimmed = description.trim();
+  const separatorIndex = trimmed.lastIndexOf(VENDOR_MEDIA_DESCRIPTION_SEPARATOR);
+  if (separatorIndex >= 0) {
+    const trailingPayload = trimmed.slice(separatorIndex + VENDOR_MEDIA_DESCRIPTION_SEPARATOR.length).trim();
+    const parsedTrailingPayload = tryParseVendorManagedMarkerPayload(trailingPayload);
+    if (parsedTrailingPayload) {
+      return parsedTrailingPayload;
+    }
+  }
+
+  return tryParseVendorManagedMarkerPayload(trimmed);
+}
+
 function isVendorManagedDescription(description: string | undefined): boolean {
   return !!parseVendorManagedMarker(description);
+}
+
+function extractVendorManagedVisibleDescription(description: string | undefined): string | undefined {
+  if (!description) return undefined;
+
+  const legacyMarkerIndex = description.indexOf(VENDOR_MEDIA_MARKER_PREFIX);
+  if (legacyMarkerIndex >= 0) {
+    const visibleDescription = description.slice(0, legacyMarkerIndex).replace(/\|\s*$/, '').trim();
+    return visibleDescription || undefined;
+  }
+
+  const trimmed = description.trim();
+  const separatorIndex = trimmed.lastIndexOf(VENDOR_MEDIA_DESCRIPTION_SEPARATOR);
+  if (separatorIndex < 0) {
+    return trimmed.startsWith('{') ? undefined : trimmed || undefined;
+  }
+
+  const trailingPayload = trimmed.slice(separatorIndex + VENDOR_MEDIA_DESCRIPTION_SEPARATOR.length).trim();
+  if (!tryParseVendorManagedMarkerPayload(trailingPayload)) {
+    return trimmed || undefined;
+  }
+
+  const visibleDescription = trimmed.slice(0, separatorIndex).trim();
+  return visibleDescription || undefined;
 }
 
 function normalizeMarkerIdentityValues(values: string[] | undefined, options?: { lowercase?: boolean }): string[] {
@@ -1856,20 +2332,32 @@ function buildMarkerIdentityValues(input: {
 
 function serializeVendorManagedImageSignature(input: {
   marker: VendorManagedMediaMetadata;
+  descriptionText?: string;
   isThumbnail: boolean;
+  imageUrl?: string;
 }): string {
+  const descriptionText = input.descriptionText?.trim();
+  const partId = input.marker.partId?.trim();
+  const classTypes = normalizeMarkerIdentityValues(input.marker.classTypes, { lowercase: true });
+
+  if (partId) {
+    return JSON.stringify({
+      descriptionText,
+      partId,
+      classTypes,
+      isThumbnail: input.isThumbnail,
+    });
+  }
+
+  if (descriptionText) {
+    return JSON.stringify({
+      descriptionText,
+      isThumbnail: input.isThumbnail,
+    });
+  }
+
   return JSON.stringify({
-    mediaType: input.marker.mediaType,
-    url: normalizeBigCommerceImageUrl(input.marker.url) ?? input.marker.url.trim(),
-    partId: input.marker.partId?.trim(),
-    locations: buildMarkerIdentityValues({
-      ids: input.marker.locationIds,
-      names: input.marker.locationNames,
-    }),
-    decorations: buildMarkerIdentityValues({
-      ids: input.marker.decorationIds,
-      names: input.marker.decorationNames,
-    }),
+    imageUrl: input.imageUrl?.trim() ?? input.marker.url?.trim(),
     isThumbnail: input.isThumbnail,
   });
 }
@@ -1879,19 +2367,20 @@ function buildVendorManagedImageSignature(input: {
   is_thumbnail?: boolean;
 }): string | null {
   const marker = parseVendorManagedMarker(input.description);
-  if (!marker || marker.mediaType !== 'Image') {
+  if (!marker) {
     return null;
   }
 
   return serializeVendorManagedImageSignature({
     marker,
+    descriptionText: extractVendorManagedVisibleDescription(input.description),
     isThumbnail: !!input.is_thumbnail,
   });
 }
 
 function buildDesiredImageSignature(image: DesiredBigCommerceImage): string {
   const marker = parseVendorManagedMarker(image.description);
-  if (!marker || marker.mediaType !== 'Image') {
+  if (!marker) {
     return JSON.stringify({
       mediaType: 'Image',
       url: image.image_url,
@@ -1901,7 +2390,9 @@ function buildDesiredImageSignature(image: DesiredBigCommerceImage): string {
 
   return serializeVendorManagedImageSignature({
     marker,
+    descriptionText: extractVendorManagedVisibleDescription(image.description),
     isThumbnail: !!image.is_thumbnail,
+    imageUrl: image.image_url,
   });
 }
 
@@ -1920,7 +2411,16 @@ function decrementCount(counts: Map<string, number>, key: string): void {
 }
 
 function rankMediaAsset(asset: NormalizedMediaAsset): number {
-  const classes = (asset.class_types ?? []).map(value => value.toLowerCase());
+  const classes = Array.from(
+    new Set(
+      [
+        ...(asset.class_type_array ?? []).map(entry => entry.class_type_name ?? ''),
+        ...(asset.class_types ?? []),
+      ]
+        .map(value => value.trim().toLowerCase())
+        .filter(value => value.length > 0),
+    ),
+  );
   if (classes.includes('primary')) return 400;
   if (classes.includes('blank') || classes.includes('hero')) return 300;
   if (classes.includes('finished') || classes.includes('decorated')) return 200;
@@ -1966,7 +2466,7 @@ function resolveVendorMediaAssets(product: NormalizedProduct): NormalizedMediaAs
 
 function buildDesiredBigCommerceImages(product: NormalizedProduct): DesiredBigCommerceImage[] {
   const imageAssets = resolveVendorMediaAssets(product).filter(asset => asset.media_type === 'Image');
-  return imageAssets
+  const desiredImages = imageAssets
     .map(asset => {
       const normalizedUrl = normalizeBigCommerceImageUrl(asset.url);
       if (!normalizedUrl) {
@@ -1974,15 +2474,27 @@ function buildDesiredBigCommerceImages(product: NormalizedProduct): DesiredBigCo
       }
 
       return {
+        asset,
         image_url: normalizedUrl,
         description: buildVendorManagedDescription(product, asset),
       };
     })
-    .filter((image): image is Omit<DesiredBigCommerceImage, 'is_thumbnail'> => !!image)
-    .map((image, index) => ({
-      ...image,
-      ...(index === 0 ? { is_thumbnail: true } : {}),
-    }));
+    .filter(
+      (
+        image,
+      ): image is {
+        asset: NormalizedMediaAsset;
+        image_url: string;
+        description: string;
+      } => !!image,
+    );
+
+  const thumbnailIndex = Math.max(desiredImages.findIndex(image => hasPrimaryClassType(image.asset)), 0);
+
+  return desiredImages.map(({ asset: _asset, ...image }, index) => ({
+    ...image,
+    ...(index === thumbnailIndex ? { is_thumbnail: true } : {}),
+  }));
 }
 
 function normalizeBigCommerceImageUrl(url: string): string | undefined {
@@ -2625,9 +3137,10 @@ async function syncVariantImages(input: {
       continue;
     }
 
-    const variantId =
-      input.variantIdsBySku.get(variant.sku) ??
-      (variant.source_sku ? input.variantIdsBySku.get(variant.source_sku) : undefined);
+    const variantId = resolveVariantId(input.variantIdsBySku, {
+      ...variant,
+      mpn: resolveManagedVariantMpn(variant),
+    });
     if (!variantId) {
       continue;
     }
@@ -2682,15 +3195,39 @@ export async function upsertBigCommerceProduct(
 
   const markupPercent = input.pricingContext?.markup_percent ?? input.defaultMarkupPercent ?? 30;
   const priceListId = input.pricingContext?.price_list_id ?? Number(process.env.BIGCOMMERCE_B2B_PRICE_LIST_ID ?? 1);
+  const blanksPriceListId =
+    input.pricingContext?.blanks_price_list_id ?? Number(process.env.BIGCOMMERCE_BLANKS_PRICE_LIST_ID ?? 2);
   const currency = input.pricingContext?.currency ?? process.env.BIGCOMMERCE_PRICE_LIST_CURRENCY ?? 'USD';
+  const markupNamespace =
+    input.pricingContext?.markup_namespace ?? process.env.BIGCOMMERCE_MARKUP_METAFIELD_NAMESPACE ?? 'merchmonk';
+  const markupKey =
+    input.pricingContext?.markup_key ?? process.env.BIGCOMMERCE_MARKUP_METAFIELD_KEY ?? 'product_markup';
+  const priceListTargets = buildPriceListTargets({
+    pricingContext: {
+      markup_percent: markupPercent,
+      price_list_id: priceListId,
+      blanks_price_list_id: blanksPriceListId,
+      currency,
+      markup_namespace: markupNamespace,
+      markup_key: markupKey,
+    },
+  });
+  const primaryPriceListTarget = priceListTargets[0];
 
   const pricingProjection = projectProductPricing(input.product, {
-    markup_percent: markupPercent,
-    price_list_id: priceListId,
+    markup_percent: primaryPriceListTarget?.markup_percent ?? markupPercent,
+    price_list_id: primaryPriceListTarget?.price_list_id ?? priceListId,
     currency,
+    family_preferences: primaryPriceListTarget?.family_preferences,
+    require_family_match: primaryPriceListTarget?.require_family_match,
   });
 
-  if (INVENTORY_ONLY_FOR_EXISTING_PRODUCTS && decision.action === 'update' && decision.target_product_id) {
+  if (
+    INVENTORY_ONLY_FOR_EXISTING_PRODUCTS &&
+    input.inventoryOnlyForExistingProducts === true &&
+    decision.action === 'update' &&
+    decision.target_product_id
+  ) {
     const existingProduct = candidates.find(candidate => candidate.id === decision.target_product_id);
     let partialResult: PartialBigCommerceUpsertResult = {
       product: {
@@ -2710,26 +3247,6 @@ export async function upsertBigCommerceProduct(
         storeHash: input.storeHash,
         productId: decision.target_product_id,
         product: input.product,
-      });
-      await ensureSharedOptionModifiers(input.accessToken, input.storeHash, decision.target_product_id, {
-        vendorId: input.vendorId,
-        vendorName: input.vendorName,
-        duplicate: decision.duplicate,
-        size: input.product.shared_option_values?.size,
-        markupPercent,
-      });
-      await syncRelatedVendorProductIdsCustomField({
-        accessToken: input.accessToken,
-        storeHash: input.storeHash,
-        productId: decision.target_product_id,
-        product: input.product,
-      });
-      await syncVendorManagedProductMedia({
-        accessToken: input.accessToken,
-        storeHash: input.storeHash,
-        productId: decision.target_product_id,
-        product: input.product,
-        variantIdsBySku,
       });
       const pricingReconciliation = reconcileProjectedPricingTargets({
         pricingProjection,
@@ -2758,6 +3275,37 @@ export async function upsertBigCommerceProduct(
   let resolvedSku = decision.resolved_sku;
   const brandId = await ensureBrandId(input.accessToken, input.storeHash, input.product.brand_name);
   const categoryIds = await ensureCategoryIds(input.accessToken, input.storeHash, input.product.categories);
+  const productMpn = resolveManagedProductMpn(input.product);
+  const createSku = buildTemporaryManagedProductSku({
+    vendorId: input.vendorId,
+    product: input.product,
+  });
+  const desiredManagedProductSku = decision.target_product_id
+    ? buildManagedProductSku(decision.target_product_id)
+    : undefined;
+  const catalogVariantSkuLookup =
+    desiredManagedProductSku && input.product.variants
+      ? buildManagedVariantSkuLookup({
+          parentSku: desiredManagedProductSku,
+          variants: input.product.variants,
+        })
+      : undefined;
+  const catalogVariants = pricingProjection.variants.map(variant => {
+    const normalizedVariant = (input.product.variants ?? []).find(candidate => candidate.sku === variant.sku);
+    return {
+      ...variant,
+      sku:
+        decision.target_product_id && catalogVariantSkuLookup
+          ? getManagedVariantSku({
+              variantSkuLookup: catalogVariantSkuLookup,
+              variant: normalizedVariant ?? variant,
+            })
+          : variant.sku,
+      mpn: resolveManagedVariantMpn(normalizedVariant ?? variant),
+      min_purchase_quantity: normalizedVariant?.min_purchase_quantity,
+      max_purchase_quantity: normalizedVariant?.max_purchase_quantity,
+    };
+  });
 
   const createPayload = buildBigCommercePayload(input.product, {
     brandId,
@@ -2765,30 +3313,32 @@ export async function upsertBigCommerceProduct(
     includeCustomFields: true,
     includeVariants: false,
     isVisible: false,
-    sku: resolvedSku,
+    sku: createSku,
+    mpn: productMpn,
     markupPercent,
     duplicate: decision.duplicate,
     vendorId: input.vendorId,
     productFallback: pricingProjection.product_fallback,
-    variants: pricingProjection.variants,
+    variants: catalogVariants,
   });
   const updatePayload = buildBigCommercePayload(input.product, {
     brandId,
     categoryIds,
     includeCustomFields: false,
     includeVariants: false,
-    sku: resolvedSku,
+    sku: desiredManagedProductSku ?? resolvedSku,
+    mpn: productMpn,
     markupPercent,
     duplicate: decision.duplicate,
     vendorId: input.vendorId,
     productFallback: pricingProjection.product_fallback,
-    variants: pricingProjection.variants,
+    variants: catalogVariants,
   });
 
   const productRecord =
     decision.action === 'create' || !decision.target_product_id
       ? await (async (): Promise<BigCommerceCatalogProduct> => {
-          let nextSku = resolvedSku;
+          let nextSku = createSku;
 
           for (let attempt = 0; attempt < 6; attempt += 1) {
             try {
@@ -2812,7 +3362,7 @@ export async function upsertBigCommerceProduct(
               }
 
               nextSku = buildSkuRetryCandidateSku({
-                desiredSku: decision.resolved_sku,
+                desiredSku: createSku,
                 vendorId: input.vendorId,
                 attempt,
               });
@@ -2833,6 +3383,8 @@ export async function upsertBigCommerceProduct(
           )
         ).data;
 
+  resolvedSku = productRecord.sku;
+
   const action = decision.action === 'create' || !decision.target_product_id ? 'create' : 'update';
   let partialResult: PartialBigCommerceUpsertResult = {
     product: {
@@ -2850,6 +3402,7 @@ export async function upsertBigCommerceProduct(
       input.accessToken,
       input.storeHash,
       productRecord.id,
+      desiredManagedProductSku ?? resolvedSku,
       input.vendorId,
       input.product,
       pricingProjection,
@@ -2893,12 +3446,15 @@ export async function upsertBigCommerceProduct(
     });
     await ensureConfigurationModifiers(input.accessToken, input.storeHash, productRecord.id, input.product);
 
-    const contractProjection = projectBigCommerceProductContract(input.product, {
+    const contractProjection = projectBigCommerceProductContract(buildManagedContractProduct({
+      product: input.product,
+      resolvedSku,
+    }), {
       price_list_id: priceListId,
       currency,
       markup_percent: markupPercent,
-      markup_namespace: input.pricingContext?.markup_namespace ?? process.env.BIGCOMMERCE_MARKUP_METAFIELD_NAMESPACE ?? 'merchmonk',
-      markup_key: input.pricingContext?.markup_key ?? process.env.BIGCOMMERCE_MARKUP_METAFIELD_KEY ?? 'product_markup',
+      markup_namespace: markupNamespace,
+      markup_key: markupKey,
     });
 
     await syncProjectedProductContract({
@@ -2906,6 +3462,7 @@ export async function upsertBigCommerceProduct(
       storeHash: input.storeHash,
       productId: productRecord.id,
       productDesignerDefaults: contractProjection.product_designer_defaults,
+      productInternalMetafields: contractProjection.product_internal_metafields,
       variantDesignerOverrides: contractProjection.variant_designer_overrides,
       variantIdsBySku,
     });
@@ -2919,41 +3476,36 @@ export async function upsertBigCommerceProduct(
     });
 
     const hasOptionBearingVariants = (input.product.variants ?? []).some(variant => variant.option_values.length > 0);
-    const variantPriceListRecords = pricingProjection.variants
-      .map(variant => {
-        const variantId = variantIdsBySku.get(variant.sku);
-        if (!variantId) return null;
-        return {
-          variant_id: variantId,
-          price: variant.price,
-          currency,
-          ...(variant.price_list_bulk_tiers ? { bulk_pricing_tiers: variant.price_list_bulk_tiers } : {}),
-        };
-      })
-      .filter((record): record is { variant_id: number; price: number; currency: string; bulk_pricing_tiers?: import('./pricingProjector').PriceListBulkPricingTier[] } => !!record);
+    for (const target of priceListTargets) {
+      const targetProjection =
+        target === primaryPriceListTarget
+          ? pricingProjection
+          : projectProductPricing(input.product, {
+              markup_percent: target.markup_percent,
+              price_list_id: target.price_list_id,
+              currency,
+              family_preferences: target.family_preferences,
+              require_family_match: target.require_family_match,
+            });
 
-    const basePriceListRecord =
-      !hasOptionBearingVariants && productRecord.base_variant_id && pricingProjection.product_fallback.price !== undefined
-        ? {
-            variant_id: productRecord.base_variant_id,
-            price: pricingProjection.product_fallback.price,
-            currency,
-          }
-        : null;
+      const priceListRecords = buildProjectedPriceListRecords({
+        pricingProjection: targetProjection,
+        variantIdsBySku,
+        hasOptionBearingVariants,
+        baseVariantId: productRecord.base_variant_id,
+      });
 
-    const priceListRecords = [
-      ...(basePriceListRecord ? [basePriceListRecord] : []),
-      ...variantPriceListRecords,
-    ].filter(
-      (record, index, records) => records.findIndex(item => item.variant_id === record.variant_id) === index,
-    );
+      if (priceListRecords.length === 0) {
+        continue;
+      }
 
-    await upsertPriceListRecords({
-      accessToken: input.accessToken,
-      storeHash: input.storeHash,
-      price_list_id: priceListId,
-      records: priceListRecords,
-    });
+      await upsertPriceListRecords({
+        accessToken: input.accessToken,
+        storeHash: input.storeHash,
+        price_list_id: target.price_list_id,
+        records: priceListRecords,
+      });
+    }
 
     return {
       ...partialResult,
@@ -2973,32 +3525,44 @@ export async function upsertRelatedProducts(input: {
 }): Promise<void> {
   if (input.targetProductIds.length === 0) return;
 
-  const existingResponse = await requestJson<BigCommerceCatalogListResponse<{ related_product_id?: number; id?: number }>>(
+  const existingProduct = await requestJson<BigCommerceCatalogProduct>(
     input.accessToken,
-    `${buildApiBase(input.storeHash)}/catalog/products/${input.sourceProductId}/related-products?limit=250`,
+    `${buildApiV2Base(input.storeHash)}/products/${input.sourceProductId}`,
     { method: 'GET' },
-    'Failed to list related products',
-  );
-  const existing = new Set(
-    (existingResponse.data ?? [])
-      .map(row => row.related_product_id ?? row.id)
-      .filter((value): value is number => typeof value === 'number'),
+    'Failed to load related products',
   );
 
-  for (const relatedProductId of input.targetProductIds) {
-    if (existing.has(relatedProductId)) continue;
-    try {
-      await requestJson<Record<string, unknown>>(
-        input.accessToken,
-        `${buildApiBase(input.storeHash)}/catalog/products/${input.sourceProductId}/related-products`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ related_product_id: relatedProductId }),
-        },
-        'Failed to create related product link',
-      );
-    } catch {
-      // Duplicate or validation race can happen when sync runs overlap.
+  const parseRelatedProducts = (value: string | number[] | undefined): number[] => {
+    if (Array.isArray(value)) {
+      return value.filter((item): item is number => typeof item === 'number');
     }
+
+    if (typeof value !== 'string') {
+      return [];
+    }
+
+    return value
+      .split(',')
+      .map(item => Number(item.trim()))
+      .filter(item => Number.isInteger(item) && item > 0);
+  };
+
+  const existing = new Set(parseRelatedProducts(existingProduct.related_products));
+  const merged = Array.from(new Set([...Array.from(existing), ...input.targetProductIds]));
+
+  if (merged.length === existing.size) {
+    return;
   }
+
+  await requestJson<BigCommerceCatalogProduct>(
+    input.accessToken,
+    `${buildApiV2Base(input.storeHash)}/products/${input.sourceProductId}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        related_products: merged.join(','),
+      }),
+    },
+    'Failed to update related products',
+  );
 }

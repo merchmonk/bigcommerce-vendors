@@ -5,6 +5,7 @@ jest.mock('@lib/db', () => ({
 }));
 
 import {
+  buildPriceListTargets,
   resolveBigCommercePricingContext,
   resolveConfiguredMarkupValue,
 } from '@lib/etl/bigcommercePricingContext';
@@ -15,6 +16,7 @@ describe('resolveConfiguredMarkupValue', () => {
     delete process.env.BIGCOMMERCE_MARKUP_METAFIELD_NAMESPACE;
     delete process.env.BIGCOMMERCE_MARKUP_METAFIELD_KEY;
     delete process.env.BIGCOMMERCE_B2B_PRICE_LIST_ID;
+    delete process.env.BIGCOMMERCE_BLANKS_PRICE_LIST_ID;
     delete process.env.BIGCOMMERCE_PRICE_LIST_CURRENCY;
   });
 
@@ -54,6 +56,7 @@ describe('resolveConfiguredMarkupValue', () => {
     expect(context).toEqual({
       markup_percent: 30,
       price_list_id: 1,
+      blanks_price_list_id: 2,
       currency: 'USD',
       markup_namespace: 'merchmonk',
       markup_key: 'product_markup',
@@ -72,9 +75,52 @@ describe('resolveConfiguredMarkupValue', () => {
     expect(context).toEqual({
       markup_percent: 42,
       price_list_id: 1,
+      blanks_price_list_id: 2,
       currency: 'USD',
       markup_namespace: 'merchmonk',
       markup_key: 'product_markup',
     });
+  });
+});
+
+describe('buildPriceListTargets', () => {
+  test('routes storefront pricing to marked-up net decorated and blanks to raw net blank for PromoStandards pricing families', () => {
+    expect(
+      buildPriceListTargets({
+        pricingContext: {
+          markup_percent: 30,
+          price_list_id: 1,
+          blanks_price_list_id: 2,
+          currency: 'USD',
+          markup_namespace: 'merchmonk',
+          markup_key: 'product_markup',
+        },
+      }),
+    ).toEqual([
+      {
+        price_list_id: 1,
+        markup_percent: 30,
+        family_preferences: [
+          {
+            price_type: 'Net',
+            configuration_type: 'Decorated',
+          },
+          {
+            price_type: 'Net',
+          },
+        ],
+      },
+      {
+        price_list_id: 2,
+        markup_percent: 0,
+        family_preferences: [
+          {
+            price_type: 'Net',
+            configuration_type: 'Blank',
+          },
+        ],
+        require_family_match: true,
+      },
+    ]);
   });
 });

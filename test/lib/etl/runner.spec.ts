@@ -444,7 +444,7 @@ describe('runVendorSync', () => {
     );
   });
 
-  test('does not queue or resolve BigCommerce related-product links during sync finalization', async () => {
+  test('queues and resolves BigCommerce related-product links by vendor product identity during sync finalization', async () => {
     mockBuildProductAssembly.mockResolvedValue({
       endpointResults: [],
       products: [
@@ -464,6 +464,58 @@ describe('runVendorSync', () => {
       statuses: [],
       mediaRetries: [],
     });
+    mockListPendingRelatedProductLinks.mockResolvedValue([
+      {
+        pending_related_product_link_id: 1,
+        vendor_id: 7,
+        source_vendor_product_id: 'PROD-1',
+        target_vendor_product_id: 'PROD-2',
+        source_bigcommerce_product_id: 999,
+        target_bigcommerce_product_id: null,
+        status: 'PENDING',
+        retry_count: 0,
+        last_error: null,
+        metadata: { source_sku: 'MM999' },
+        resolved_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    mockFindVendorProductMapByVendorProductId.mockImplementation(async (_vendorId: number, vendorProductId: string) => {
+      if (vendorProductId === 'PROD-1') {
+        return {
+          vendor_product_map_id: 1,
+          vendor_id: 7,
+          endpoint_mapping_id: 100,
+          vendor_product_id: 'PROD-1',
+          bigcommerce_product_id: 999,
+          sku: 'MM999',
+          product_name: 'Example',
+          metadata: null,
+          last_synced_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      }
+
+      if (vendorProductId === 'PROD-2') {
+        return {
+          vendor_product_map_id: 2,
+          vendor_id: 7,
+          endpoint_mapping_id: 100,
+          vendor_product_id: 'PROD-2',
+          bigcommerce_product_id: 1001,
+          sku: 'MM1001',
+          product_name: 'Related Example',
+          metadata: null,
+          last_synced_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      }
+
+      return null;
+    });
 
     await runVendorSync({
       vendorId: 7,
@@ -475,10 +527,150 @@ describe('runVendorSync', () => {
       syncAll: true,
     });
 
-    expect(mockUpsertPendingRelatedProductLink).not.toHaveBeenCalled();
-    expect(mockListPendingRelatedProductLinks).not.toHaveBeenCalled();
-    expect(mockFindVendorProductMapByVendorProductId).not.toHaveBeenCalled();
-    expect(mockUpsertRelatedProducts).not.toHaveBeenCalled();
+    expect(mockUpsertPendingRelatedProductLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vendor_id: 7,
+        source_vendor_product_id: 'PROD-1',
+        target_vendor_product_id: 'PROD-2',
+        source_bigcommerce_product_id: 999,
+        status: 'PENDING',
+        metadata: {
+          source_sku: 'SKU-1',
+        },
+      }),
+    );
+    expect(mockListPendingRelatedProductLinks).toHaveBeenCalledWith(7, 'PENDING');
+    expect(mockFindVendorProductMapByVendorProductId).toHaveBeenCalledWith(7, 'PROD-1');
+    expect(mockFindVendorProductMapByVendorProductId).toHaveBeenCalledWith(7, 'PROD-2');
+    expect(mockUpsertRelatedProducts).toHaveBeenCalledWith({
+      accessToken: 'token',
+      storeHash: 'storehash',
+      sourceProductId: 999,
+      targetProductIds: [1001],
+    });
+  });
+
+  test('batches deferred related-product resolution per source product', async () => {
+    mockBuildProductAssembly.mockResolvedValue({
+      endpointResults: [],
+      products: [
+        {
+          sku: 'SKU-1',
+          vendor_product_id: 'PROD-1',
+          name: 'Example',
+          related_vendor_product_ids: ['PROD-2', 'PROD-3'],
+          enrichment_status: {
+            pricing: 'SUCCESS',
+            inventory: 'SUCCESS',
+            media: 'SUCCESS',
+            gating_reasons: [],
+          },
+        },
+      ],
+      statuses: [],
+      mediaRetries: [],
+    });
+    mockListPendingRelatedProductLinks.mockResolvedValue([
+      {
+        pending_related_product_link_id: 1,
+        vendor_id: 7,
+        source_vendor_product_id: 'PROD-1',
+        target_vendor_product_id: 'PROD-2',
+        source_bigcommerce_product_id: 999,
+        target_bigcommerce_product_id: null,
+        status: 'PENDING',
+        retry_count: 0,
+        last_error: null,
+        metadata: null,
+        resolved_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        pending_related_product_link_id: 2,
+        vendor_id: 7,
+        source_vendor_product_id: 'PROD-1',
+        target_vendor_product_id: 'PROD-3',
+        source_bigcommerce_product_id: 999,
+        target_bigcommerce_product_id: null,
+        status: 'PENDING',
+        retry_count: 0,
+        last_error: null,
+        metadata: null,
+        resolved_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    mockFindVendorProductMapByVendorProductId.mockImplementation(async (_vendorId: number, vendorProductId: string) => {
+      if (vendorProductId === 'PROD-1') {
+        return {
+          vendor_product_map_id: 1,
+          vendor_id: 7,
+          endpoint_mapping_id: 100,
+          vendor_product_id: 'PROD-1',
+          bigcommerce_product_id: 999,
+          sku: 'MM999',
+          product_name: 'Example',
+          metadata: null,
+          last_synced_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      }
+
+      if (vendorProductId === 'PROD-2') {
+        return {
+          vendor_product_map_id: 2,
+          vendor_id: 7,
+          endpoint_mapping_id: 100,
+          vendor_product_id: 'PROD-2',
+          bigcommerce_product_id: 1001,
+          sku: 'MM1001',
+          product_name: 'Related Example 2',
+          metadata: null,
+          last_synced_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      }
+
+      if (vendorProductId === 'PROD-3') {
+        return {
+          vendor_product_map_id: 3,
+          vendor_id: 7,
+          endpoint_mapping_id: 100,
+          vendor_product_id: 'PROD-3',
+          bigcommerce_product_id: 1002,
+          sku: 'MM1002',
+          product_name: 'Related Example 3',
+          metadata: null,
+          last_synced_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      }
+
+      return null;
+    });
+
+    await runVendorSync({
+      vendorId: 7,
+      session: {
+        accessToken: 'token',
+        storeHash: 'storehash',
+        user: { id: 1, email: 'test@example.com' },
+      },
+      syncAll: true,
+    });
+
+    expect(mockUpsertRelatedProducts).toHaveBeenCalledWith({
+      accessToken: 'token',
+      storeHash: 'storehash',
+      sourceProductId: 999,
+      targetProductIds: [1001, 1002],
+    });
+    expect(mockUpsertRelatedProducts).toHaveBeenCalledTimes(1);
   });
 
   test('fails fast when discovery finds products but enrichment blocks all products before any BigCommerce writes', async () => {

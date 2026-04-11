@@ -47,11 +47,16 @@ export interface ProductAssemblyResult {
   mediaRetries: MediaRetryMarker[];
 }
 
+interface PromostandardsErrorMessage {
+  code: string;
+  description: string;
+}
+
 const DEFAULT_LOCALIZATION_COUNTRY = 'US';
 const DEFAULT_LOCALIZATION_LANGUAGE = 'en';
 const DEFAULT_PRICING_CURRENCY = process.env.BIGCOMMERCE_PRICE_LIST_CURRENCY?.trim() || 'USD';
 const DEFAULT_PRICING_PRICE_TYPE = 'List';
-const DEFAULT_PRICING_CONFIGURATION_TYPE = 'Blank';
+const DEFAULT_PRICING_CONFIGURATION_TYPE = 'Decorated';
 const PRODUCT_MEDIA_TYPES = ['Image'] as const;
 const PRICING_OPERATION_ORDER = [
   'getAvailableLocations',
@@ -65,7 +70,8 @@ const INVENTORY_KEYS = ['quantityAvailable', 'inventory', 'Inventory', 'qty', 'Q
 const PRICE_KEYS = ['price', 'Price', 'netPrice', 'NetPrice', 'listPrice', 'ListPrice', 'partPrice', 'PartPrice'];
 const MIN_KEYS = ['quantityMin', 'qtyMin', 'minimumQuantity', 'minQty'];
 const MAX_KEYS = ['quantityMax', 'qtyMax', 'maximumQuantity', 'maxQty'];
-const LOCATION_KEYS = ['locationName', 'locationId', 'id', 'name'];
+const LOCATION_NAME_KEYS = ['locationName'];
+const LOCATION_ID_KEYS = ['locationId'];
 const METHOD_KEYS = ['decorationMethod', 'decorationMethodName', 'method', 'methodName', 'chargeName'];
 const CHARGE_KEYS = ['chargePrice', 'price', 'Price', 'amount', 'Amount', 'value'];
 
@@ -531,13 +537,55 @@ function extractSoapFaultMessage(parsedBody: Record<string, unknown> | null, raw
   return match?.[1]?.trim() ?? '';
 }
 
+function readPromostandardsErrorMessage(value: unknown, withinErrorMessage = false): PromostandardsErrorMessage | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = readPromostandardsErrorMessage(item, withinErrorMessage);
+      if (match) {
+        return match;
+      }
+    }
+    return undefined;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  if (withinErrorMessage) {
+    const code = getFirstString(record, ['code', 'Code']);
+    const description = getFirstString(record, ['description', 'Description']);
+    if (code && description) {
+      return { code, description };
+    }
+  }
+
+  for (const [key, child] of Object.entries(record)) {
+    const match = readPromostandardsErrorMessage(
+      child,
+      withinErrorMessage || key === 'ErrorMessage' || key === 'errorMessage',
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  return undefined;
+}
+
 function readResponseMessage(parsedBody: Record<string, unknown> | null, rawPayload: string): string | undefined {
   const faultMessage = extractSoapFaultMessage(parsedBody, rawPayload);
   if (faultMessage) return faultMessage;
 
-  const errorMessage = asRecord(parsedBody?.errorMessage);
-  const description = typeof errorMessage?.description === 'string' ? errorMessage.description.trim() : '';
-  if (description) return description;
+  const supplierError = readPromostandardsErrorMessage(parsedBody);
+  if (supplierError) {
+    return `PromoStandards Error ${supplierError.code}: ${supplierError.description}`;
+  }
 
   return undefined;
 }
@@ -614,9 +662,71 @@ function extractIdentifierList(
   return dedupeUrls(values);
 }
 
+function extractClassTypeArray(
+  value: unknown,
+): Array<{ class_type_id?: string; class_type_name?: string }> | undefined {
+  const details: Array<{ class_type_id?: string; class_type_name?: string }> = [];
+
+  const collect = (target: unknown): void => {
+    if (target === null || target === undefined) return;
+
+    if (typeof target === 'string') {
+      const classTypeName = target.trim();
+      if (classTypeName) {
+        details.push({ class_type_name: classTypeName });
+      }
+      return;
+    }
+
+    if (typeof target === 'number') {
+      details.push({ class_type_id: String(target) });
+      return;
+    }
+
+    if (Array.isArray(target)) {
+      target.forEach(item => collect(item));
+      return;
+    }
+
+    const record = asRecord(target);
+    if (!record) return;
+
+    const classTypeId = getFirstString(record, ['classTypeId', 'classTypeID', 'classType', 'id']);
+    const classTypeName = getFirstString(record, ['classTypeName', 'className', 'name', 'value']);
+    if (classTypeId || classTypeName) {
+      details.push({
+        ...(classTypeId ? { class_type_id: classTypeId } : {}),
+        ...(classTypeName ? { class_type_name: classTypeName } : {}),
+      });
+      return;
+    }
+
+    Object.values(record).forEach(item => {
+      if (Array.isArray(item) || asRecord(item) || typeof item === 'string' || typeof item === 'number') {
+        collect(item);
+      }
+    });
+  };
+
+  collect(value);
+
+  const deduped = details.filter(
+    (detail, index) =>
+      details.findIndex(
+        candidate =>
+          candidate.class_type_id === detail.class_type_id &&
+          candidate.class_type_name === detail.class_type_name,
+      ) === index,
+  );
+
+  return deduped.length > 0 ? deduped : undefined;
+}
+
 function extractClassTypes(value: unknown): string[] | undefined {
-  const classes = extractIdentifierList(value, 'ClassType', ['classType', 'value', 'name']);
-  return classes.length > 0 ? classes : undefined;
+  const classes = extractClassTypeArray(value)
+    ?.map(entry => entry.class_type_name?.trim())
+    .filter((entry): entry is string => !!entry);
+  return classes && classes.length > 0 ? dedupeUrls(classes) : undefined;
 }
 
 function extractLocationIds(value: unknown): string[] | undefined {
@@ -663,6 +773,8 @@ function extractMediaAssets(payload: unknown): NormalizedMediaAsset[] {
     const mediaType = 'Image';
     if (!url || !mediaType) continue;
 
+    const productId = getFirstString(node, ['productId', 'ProductID', 'productID']);
+    const classTypeArray = extractClassTypeArray(node.ClassTypeArray);
     const classTypes = extractClassTypes(node.ClassTypeArray);
     const locationIds = extractLocationIds(node.LocationArray);
     const locationNames = extractLocationNames(node.LocationArray);
@@ -677,17 +789,21 @@ function extractMediaAssets(payload: unknown): NormalizedMediaAsset[] {
     const width = getFirstNumber(node, ['width', 'Width']);
     const height = getFirstNumber(node, ['height', 'Height']);
     const dpi = getFirstNumber(node, ['dpi', 'DPI']);
+    const fileSize = getFirstNumber(node, ['fileSize', 'FileSize', 'filesize']);
 
     assets.push({
       url,
       media_type: mediaType,
+      ...(productId ? { product_id: productId } : {}),
       ...(partId ? { part_id: partId } : {}),
       ...(locationIds ? { location_ids: locationIds } : {}),
       ...(locationNames ? { location_names: locationNames } : {}),
       ...(decorationIds ? { decoration_ids: decorationIds } : {}),
       ...(decorationNames ? { decoration_names: decorationNames } : {}),
       ...(description ? { description } : {}),
+      ...(classTypeArray ? { class_type_array: classTypeArray } : {}),
       ...(classTypes ? { class_types: classTypes } : {}),
+      ...(fileSize !== undefined ? { file_size: fileSize } : {}),
       ...(color ? { color } : {}),
       ...(singlePart !== undefined ? { single_part: singlePart } : {}),
       ...(changeTimestamp ? { change_timestamp: changeTimestamp } : {}),
@@ -701,15 +817,20 @@ function extractMediaAssets(payload: unknown): NormalizedMediaAsset[] {
 }
 
 function buildImageGalleryFromAssets(assets: NormalizedMediaAsset[]): Array<{ image_url: string; is_thumbnail?: boolean }> {
-  const imageUrls = dedupeUrls(
-    assets
-      .filter(asset => asset.media_type === 'Image')
-      .map(asset => asset.url),
+  const imageAssets = assets.filter(asset => asset.media_type === 'Image');
+  const dedupedImageAssets = imageAssets.filter(
+    (asset, index) => imageAssets.findIndex(candidate => candidate.url === asset.url) === index,
+  );
+  const thumbnailIndex = Math.max(
+    dedupedImageAssets.findIndex(asset =>
+      (asset.class_types ?? []).some(classType => classType.trim().toLowerCase() === 'primary'),
+    ),
+    0,
   );
 
-  return imageUrls.map((url, index) => ({
-    image_url: url,
-    ...(index === 0 ? { is_thumbnail: true } : {}),
+  return dedupedImageAssets.map((asset, index) => ({
+    image_url: asset.url,
+    ...(index === thumbnailIndex ? { is_thumbnail: true } : {}),
   }));
 }
 
@@ -914,14 +1035,14 @@ function extractBulkRules(payload: unknown): NormalizedBulkPricingRule[] {
   return dedupeBulkRules(tiers).sort((a, b) => a.quantity_min - b.quantity_min);
 }
 
-function extractCharges(payload: unknown): ModifierCharge[] {
+function extractCharges(payload: unknown, locationNameById: Map<string, string>): ModifierCharge[] {
   const charges: ModifierCharge[] = [];
   walkNodes(payload, node => {
     const amount = getFirstNumber(node, CHARGE_KEYS);
     if (amount === undefined) return;
 
     charges.push({
-      location: getFirstString(node, LOCATION_KEYS),
+      location: resolveBlueprintLocationName(node, locationNameById),
       method: getFirstString(node, METHOD_KEYS),
       amount,
       code: getFirstString(node, ['chargeId', 'code', 'chargeCode']),
@@ -932,7 +1053,43 @@ function extractCharges(payload: unknown): ModifierCharge[] {
   return charges;
 }
 
+function buildLocationNameById(payloads: unknown[]): Map<string, string> {
+  const locationNameById = new Map<string, string>();
+
+  for (const payload of payloads) {
+    walkNodes(payload, node => {
+      const locationId = getFirstString(node, LOCATION_ID_KEYS);
+      const locationName = getFirstString(node, LOCATION_NAME_KEYS);
+      if (!locationId || !locationName) {
+        return;
+      }
+
+      locationNameById.set(locationId, locationName);
+    });
+  }
+
+  return locationNameById;
+}
+
+function resolveBlueprintLocationName(
+  node: AnyRecord,
+  locationNameById: Map<string, string>,
+): string | undefined {
+  const explicitLocationName = getFirstString(node, LOCATION_NAME_KEYS);
+  if (explicitLocationName) {
+    return explicitLocationName;
+  }
+
+  const locationId = getFirstString(node, LOCATION_ID_KEYS);
+  if (!locationId) {
+    return undefined;
+  }
+
+  return locationNameById.get(locationId);
+}
+
 function extractModifierBlueprint(payloads: unknown[]): ProductModifierBlueprint | undefined {
+  const locationNameById = buildLocationNameById(payloads);
   const locations = new Map<string, {
     location: string;
     min_decorations?: number;
@@ -944,7 +1101,7 @@ function extractModifierBlueprint(payloads: unknown[]): ProductModifierBlueprint
 
   for (const payload of payloads) {
     walkNodes(payload, node => {
-      const locationName = getFirstString(node, LOCATION_KEYS);
+      const locationName = resolveBlueprintLocationName(node, locationNameById);
       const methodName = getFirstString(node, METHOD_KEYS);
       if (locationName) {
         const existing = locations.get(locationName) ?? {
@@ -962,7 +1119,7 @@ function extractModifierBlueprint(payloads: unknown[]): ProductModifierBlueprint
       }
     });
 
-    charges.push(...extractCharges(payload));
+    charges.push(...extractCharges(payload, locationNameById));
   }
 
   const locationRows = Array.from(locations.values()).map(location => ({
@@ -1018,7 +1175,14 @@ async function runProductOperation(input: {
   requestFields?: Record<string, unknown>;
   includePartId?: boolean;
   pricingContext?: PricingRequestContext;
-}): Promise<{ status: number; parsedBody: Record<string, unknown> | null; message?: string; rawPayload: string }> {
+}): Promise<{
+  status: number;
+  parsedBody: Record<string, unknown> | null;
+  message?: string;
+  rawPayload: string;
+  supplierError?: PromostandardsErrorMessage;
+  pricingRequestContext?: PricingRequestContext;
+}> {
   const mapping = input.mapping.mapping;
   const runtimeConfig = asRecord(input.mapping.runtime_config) ?? {};
   const endpointUrl = getEndpointUrl(input.mapping.endpointUrl);
@@ -1081,6 +1245,18 @@ async function runProductOperation(input: {
     parsedBody: result.parsedBody,
     rawPayload: result.rawPayload,
     message: readResponseMessage(result.parsedBody, result.rawPayload),
+    supplierError: readPromostandardsErrorMessage(result.parsedBody),
+    pricingRequestContext:
+      mapping.endpoint_name === 'PricingAndConfiguration'
+        ? {
+            currency: readStringConfig(asRecord(runtime.request_fields) ?? {}, ['currency', 'currencyCode', 'currency_code']),
+            priceType: readStringConfig(asRecord(runtime.request_fields) ?? {}, ['priceType', 'price_type']),
+            configurationType: readStringConfig(
+              asRecord(runtime.request_fields) ?? {},
+              ['configurationType', 'configuration_type'],
+            ),
+          }
+        : undefined,
   };
 }
 
@@ -1157,11 +1333,11 @@ export async function buildProductAssembly(input: {
     const gatingReasons: string[] = [];
     const pricingPayloads: unknown[] = [];
     const mediaAssets: NormalizedMediaAsset[] = [];
-
     if (pricingMappings.length === 0) {
       product.enrichment_status!.pricing = 'MISSING';
     } else {
       let pricingFailed = false;
+      const pricingFailureReasons = new Set<string>();
       let pricingContext: PricingRequestContext | undefined;
       for (const mapping of pricingMappings) {
         try {
@@ -1171,8 +1347,15 @@ export async function buildProductAssembly(input: {
             product,
             pricingContext,
           });
-          if (result.status >= 400 || !result.parsedBody) {
+          const supplierError =
+            mapping.mapping.endpoint_name === 'ProductMedia' ? undefined : result.supplierError;
+          if (result.status >= 400 || !result.parsedBody || supplierError) {
             pricingFailed = true;
+            if (supplierError) {
+              pricingFailureReasons.add(
+                `PricingAndConfiguration supplier error ${supplierError.code}: ${supplierError.description}`,
+              );
+            }
             addEndpointResult(
               endpointResults,
               mapping.mapping,
@@ -1183,7 +1366,10 @@ export async function buildProductAssembly(input: {
             continue;
           }
 
-          pricingPayloads.push(result.parsedBody);
+          pricingPayloads.push({
+            __pricing_payload: result.parsedBody,
+            __pricing_request_context: result.pricingRequestContext,
+          });
           pricingContext = buildPricingRequestContext({
             payloads: pricingPayloads,
             runtimeConfig: asRecord(mapping.runtime_config) ?? {},
@@ -1198,7 +1384,11 @@ export async function buildProductAssembly(input: {
 
       if (pricingFailed) {
         product.enrichment_status!.pricing = 'FAILED';
-        gatingReasons.push('PricingAndConfiguration enrichment failed.');
+        if (pricingFailureReasons.size > 0) {
+          gatingReasons.push(...Array.from(pricingFailureReasons));
+        } else {
+          gatingReasons.push('PricingAndConfiguration enrichment failed.');
+        }
       } else {
         product.enrichment_status!.pricing = 'SUCCESS';
       }
@@ -1208,6 +1398,7 @@ export async function buildProductAssembly(input: {
       product.enrichment_status!.inventory = 'MISSING';
     } else {
       let inventoryFailed = false;
+      const inventoryFailureReasons = new Set<string>();
       let inventorySnapshot: ReturnType<typeof extractInventorySnapshot> | undefined;
 
       for (const mapping of inventoryMappings) {
@@ -1217,8 +1408,15 @@ export async function buildProductAssembly(input: {
             mapping,
             product,
           });
-          if (result.status >= 400 || !result.parsedBody) {
+          const supplierError =
+            mapping.mapping.endpoint_name === 'ProductMedia' ? undefined : result.supplierError;
+          if (result.status >= 400 || !result.parsedBody || supplierError) {
             inventoryFailed = true;
+            if (supplierError) {
+              inventoryFailureReasons.add(
+                `Inventory supplier error ${supplierError.code}: ${supplierError.description}`,
+              );
+            }
             addEndpointResult(endpointResults, mapping.mapping, result.status, 0, result.message ?? 'Inventory call failed');
             continue;
           }
@@ -1241,7 +1439,11 @@ export async function buildProductAssembly(input: {
 
       if (inventoryFailed) {
         product.enrichment_status!.inventory = 'FAILED';
-        gatingReasons.push('Inventory enrichment failed.');
+        if (inventoryFailureReasons.size > 0) {
+          gatingReasons.push(...Array.from(inventoryFailureReasons));
+        } else {
+          gatingReasons.push('Inventory enrichment failed.');
+        }
       } else {
         product.enrichment_status!.inventory = 'SUCCESS';
         if (inventorySnapshot) {
@@ -1319,7 +1521,10 @@ export async function buildProductAssembly(input: {
     }
 
     if (!hasUsablePricing(product)) {
-      gatingReasons.push('No pricing data available for product.');
+      const hasSupplierPricingError = gatingReasons.some(reason => reason.startsWith('PricingAndConfiguration supplier error '));
+      if (!hasSupplierPricingError) {
+        gatingReasons.push('No pricing data available for product.');
+      }
       if (product.enrichment_status!.pricing === 'MISSING') {
         product.enrichment_status!.pricing = 'FAILED';
       }

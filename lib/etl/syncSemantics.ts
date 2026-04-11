@@ -92,7 +92,11 @@ export function deriveSellingPrice(costPrice: number | undefined, markupPercent:
   if (costPrice === undefined || !Number.isFinite(costPrice)) {
     return undefined;
   }
-  return Number((costPrice * (1 + markupPercent / 100)).toFixed(2));
+  const marginRatio = 1 - markupPercent / 100;
+  if (!Number.isFinite(marginRatio) || marginRatio <= 0) {
+    return undefined;
+  }
+  return Number((costPrice / marginRatio).toFixed(2));
 }
 
 function round2(value: number): number {

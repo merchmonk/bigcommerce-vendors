@@ -307,14 +307,20 @@ Use metafield contract data to preserve additional machine-readable media relati
 
 ### 5.9 Price lists
 
-Use **BigCommerce B2B Price Lists** as the authoritative base storefront sell-price layer for blank merchandise.
+Use **BigCommerce B2B Price Lists** as the authoritative storefront pricing layer.
 
 Price lists should represent:
 
-- base blank sell price
-- quantity-aware blank pricing tiers
+- shopper-facing sell price for the active merchandising family
+- quantity-aware pricing tiers for that family
+- vendor-specific auxiliary blank-only layers when the storefront sell price and blank base price must both be retained
 
 They should not be treated as the storage layer for all design-step surcharges.
+
+Current PromoStandards routing is:
+
+- price list `1`: marked-up `Net Decorated`, falling back to another `Net` family if decorated net pricing is unavailable
+- price list `2`: raw `Net Blank`
 
 ### 5.10 Related products
 

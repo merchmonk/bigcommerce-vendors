@@ -4,6 +4,7 @@ import type {
   PricingConfigurationCharge,
   PricingConfigurationChargeTier,
   PricingConfigurationDecoration,
+  PricingConfigurationDecorationColor,
   PricingConfigurationFobPoint,
   PricingConfigurationLocation,
   PricingConfigurationPart,
@@ -12,6 +13,11 @@ import type {
 } from './productNormalizer';
 
 type AnyRecord = Record<string, unknown>;
+type PricingRequestDefaults = {
+  currency?: string;
+  price_type?: string;
+  configuration_type?: string;
+};
 
 function asArray<T>(value: T | T[] | null | undefined): T[] {
   if (value === null || value === undefined) return [];
@@ -84,6 +90,24 @@ function dedupeStrings(values: Array<string | undefined>): string[] | undefined 
   return output.length > 0 ? output : undefined;
 }
 
+function toStringValue(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number') return String(value);
+  return undefined;
+}
+
+function readIdArrayValues(value: unknown, key: string): string[] | undefined {
+  return dedupeStrings(
+    asArray(value).map(item => {
+      const record = asRecord(item);
+      if (record) {
+        return getFirstString(record, [key]);
+      }
+      return toStringValue(item);
+    }),
+  );
+}
+
 function findConfigurationNodes(payload: unknown): AnyRecord[] {
   const nodes: AnyRecord[] = [];
   walkNodes(payload, node => {
@@ -100,7 +124,10 @@ function findConfigurationNodes(payload: unknown): AnyRecord[] {
   return nodes;
 }
 
-function parsePartPriceTier(node: AnyRecord): PricingConfigurationPartPriceTier | null {
+function parsePartPriceTier(
+  node: AnyRecord,
+  defaults?: PricingRequestDefaults,
+): PricingConfigurationPartPriceTier | null {
   const minQuantity = getFirstNumber(node, ['minQuantity']);
   const price = getFirstNumber(node, ['price']);
   if (minQuantity === undefined || price === undefined) return null;
@@ -110,6 +137,9 @@ function parsePartPriceTier(node: AnyRecord): PricingConfigurationPartPriceTier 
     price,
     quantity_max: getFirstNumber(node, ['quantityMax']),
     price_uom: getFirstString(node, ['priceUom']),
+    currency: defaults?.currency,
+    price_type: defaults?.price_type,
+    configuration_type: defaults?.configuration_type,
     discount_code: getFirstString(node, ['discountCode']),
     price_effective_date: getFirstString(node, ['priceEffectiveDate']),
     price_expiry_date: getFirstString(node, ['priceExpiryDate']),
@@ -149,7 +179,7 @@ function parseCharge(node: AnyRecord): PricingConfigurationCharge {
     charge_name: getFirstString(node, ['chargeName']),
     charge_description: getFirstString(node, ['chargeDescription']),
     charge_type: getFirstString(node, ['chargeType']),
-    charges_applies_ltm: toBoolean(node.chargesAppliesLTM),
+    charges_applies_ltm: toBoolean(node.chargeAppliesLTM ?? node.chargesAppliesLTM),
     charges_per_location: getFirstNumber(node, ['chargesPerLocation']),
     charges_per_color: getFirstNumber(node, ['chargesPerColor']),
     charge_price_tiers: chargePriceTiers,
@@ -203,7 +233,7 @@ function parseLocation(node: AnyRecord): PricingConfigurationLocation {
   };
 }
 
-function parsePart(node: AnyRecord): PricingConfigurationPart | null {
+function parsePart(node: AnyRecord, defaults?: PricingRequestDefaults): PricingConfigurationPart | null {
   const partId = getFirstString(node, ['partId']);
   if (!partId) return null;
 
@@ -211,17 +241,12 @@ function parsePart(node: AnyRecord): PricingConfigurationPart | null {
   const priceTiers = asArray(partPriceArray?.PartPrice)
     .map(item => asRecord(item))
     .filter((item): item is AnyRecord => !!item)
-    .map(parsePartPriceTier)
+    .map(item => parsePartPriceTier(item, defaults))
     .filter((item): item is PricingConfigurationPartPriceTier => !!item)
     .sort((a, b) => a.min_quantity - b.min_quantity);
 
   const locationIdArray = asRecord(node.LocationIdArray);
-  const locationIds = dedupeStrings(
-    asArray(locationIdArray?.LocationId)
-      .map(item => asRecord(item))
-      .filter((item): item is AnyRecord => !!item)
-      .map(item => getFirstString(item, ['locationId'])),
-  );
+  const locationIds = readIdArrayValues(locationIdArray?.LocationId, 'locationId');
 
   return {
     part_id: partId,
@@ -237,7 +262,10 @@ function parsePart(node: AnyRecord): PricingConfigurationPart | null {
   };
 }
 
-function parseConfigurationNode(node: AnyRecord): ProductPricingConfiguration {
+function parseConfigurationNode(
+  node: AnyRecord,
+  defaults?: PricingRequestDefaults,
+): ProductPricingConfiguration {
   const partArray = asRecord(node.PartArray);
   const locationArray = asRecord(node.LocationArray);
   const fobArray = asRecord(node.FobArray);
@@ -245,7 +273,13 @@ function parseConfigurationNode(node: AnyRecord): ProductPricingConfiguration {
   const parts = asArray(partArray?.Part)
     .map(item => asRecord(item))
     .filter((item): item is AnyRecord => !!item)
-    .map(parsePart)
+    .map(item =>
+      parsePart(item, {
+        currency: getFirstString(node, ['currency']) ?? defaults?.currency,
+        price_type: getFirstString(node, ['priceType']) ?? defaults?.price_type,
+        configuration_type: getFirstString(node, ['configurationType']) ?? defaults?.configuration_type,
+      }),
+    )
     .filter((item): item is PricingConfigurationPart => !!item);
 
   const locations = asArray(locationArray?.Location)
@@ -269,8 +303,10 @@ function parseConfigurationNode(node: AnyRecord): ProductPricingConfiguration {
 
   return {
     product_id: getFirstString(node, ['productId']),
-    currency: getFirstString(node, ['currency']),
-    price_type: getFirstString(node, ['priceType']),
+    currency: getFirstString(node, ['currency']) ?? defaults?.currency,
+    price_type: getFirstString(node, ['priceType']) ?? defaults?.price_type,
+    configuration_type: getFirstString(node, ['configurationType']) ?? defaults?.configuration_type,
+    fob_postal_code: getFirstString(node, ['fobPostalCode']),
     parts,
     locations,
     fob_points: fobPoints,
@@ -288,7 +324,10 @@ function mergePartPriceTiers(
         item.min_quantity === tier.min_quantity &&
         item.quantity_max === tier.quantity_max &&
         item.price === tier.price &&
-        item.price_uom === tier.price_uom,
+        item.price_uom === tier.price_uom &&
+        item.currency === tier.currency &&
+        item.price_type === tier.price_type &&
+        item.configuration_type === tier.configuration_type,
     );
     if (!existing) {
       merged.push(tier);
@@ -439,10 +478,68 @@ function mergeFobPoints(
   }
   for (const point of incoming) {
     const key = `${point.fob_id ?? ''}|${point.postal_code ?? ''}`;
-    if (!byKey.has(key)) {
+    const existing = byKey.get(key);
+    if (!existing) {
       byKey.set(key, point);
+      continue;
     }
+
+    byKey.set(key, {
+      ...existing,
+      ...point,
+      supported_currencies: dedupeStrings([
+        ...(existing.supported_currencies ?? []),
+        ...(point.supported_currencies ?? []),
+      ]),
+      product_ids: dedupeStrings([
+        ...(existing.product_ids ?? []),
+        ...(point.product_ids ?? []),
+      ]),
+    });
   }
+  return Array.from(byKey.values());
+}
+
+function mergeDecorationColors(
+  current: PricingConfigurationDecorationColor[],
+  incoming: PricingConfigurationDecorationColor[],
+): PricingConfigurationDecorationColor[] {
+  const byKey = new Map<string, PricingConfigurationDecorationColor>();
+  for (const decorationColor of current) {
+    const key = `${decorationColor.product_id ?? ''}|${decorationColor.location_id ?? ''}`;
+    byKey.set(key, decorationColor);
+  }
+
+  for (const decorationColor of incoming) {
+    const key = `${decorationColor.product_id ?? ''}|${decorationColor.location_id ?? ''}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, decorationColor);
+      continue;
+    }
+
+    byKey.set(key, {
+      ...existing,
+      ...decorationColor,
+      colors: Array.from(
+        new Map(
+          [...existing.colors, ...decorationColor.colors].map(color => [
+            `${color.color_id ?? ''}|${color.color_name ?? ''}`,
+            color,
+          ]),
+        ).values(),
+      ),
+      decoration_methods: Array.from(
+        new Map(
+          [...existing.decoration_methods, ...decorationColor.decoration_methods].map(method => [
+            `${method.decoration_id ?? ''}|${method.decoration_name ?? ''}`,
+            method,
+          ]),
+        ).values(),
+      ),
+    });
+  }
+
   return Array.from(byKey.values());
 }
 
@@ -509,6 +606,45 @@ function extractAvailableCharges(
   return merged.length > 0 ? merged : undefined;
 }
 
+function extractDecorationColors(
+  payloads: unknown[],
+): ProductPricingConfiguration['decoration_colors'] {
+  const values: PricingConfigurationDecorationColor[] = [];
+  for (const payload of payloads) {
+    walkNodes(payload, node => {
+      const decorationColors = asRecord(node.DecorationColors);
+      const source = decorationColors ?? (node.ColorArray || node.DecorationMethodArray ? node : null);
+      if (!source) return;
+
+      const colorArray = asRecord(source.ColorArray);
+      const decorationMethodArray = asRecord(source.DecorationMethodArray);
+      values.push({
+        product_id: getFirstString(source, ['productId']),
+        location_id: getFirstString(source, ['locationId']),
+        pms_match: toBoolean(source.pmsMatch),
+        full_color: toBoolean(source.fullColor),
+        colors: asArray(colorArray?.Color)
+          .map(item => asRecord(item))
+          .filter((item): item is AnyRecord => !!item)
+          .map(item => ({
+            color_id: getFirstString(item, ['colorId']),
+            color_name: getFirstString(item, ['colorName']),
+          })),
+        decoration_methods: asArray(decorationMethodArray?.DecorationMethod)
+          .map(item => asRecord(item))
+          .filter((item): item is AnyRecord => !!item)
+          .map(item => ({
+            decoration_id: getFirstString(item, ['decorationId']),
+            decoration_name: getFirstString(item, ['decorationName']),
+          })),
+      });
+    });
+  }
+
+  const merged = mergeDecorationColors([], values);
+  return merged.length > 0 ? merged : undefined;
+}
+
 function extractFobPoints(payloads: unknown[]): PricingConfigurationFobPoint[] {
   const points: PricingConfigurationFobPoint[] = [];
   for (const payload of payloads) {
@@ -526,6 +662,8 @@ function extractFobPoints(payloads: unknown[]): PricingConfigurationFobPoint[] {
               state: getFirstString(point, ['fobState']),
               postal_code: getFirstString(point, ['fobPostalCode']),
               country: getFirstString(point, ['fobCountry']),
+              supported_currencies: readIdArrayValues(asRecord(point.CurrencySupportedArray)?.CurrencySupported, 'currency'),
+              product_ids: readIdArrayValues(asRecord(point.ProductArray)?.Product, 'productId'),
             }) satisfies PricingConfigurationFobPoint,
         );
       points.push(...discovered);
@@ -536,14 +674,35 @@ function extractFobPoints(payloads: unknown[]): PricingConfigurationFobPoint[] {
 }
 
 export function buildProductPricingConfiguration(payloads: unknown[]): ProductPricingConfiguration | undefined {
-  const configurationNodes = payloads.flatMap(findConfigurationNodes);
-  if (configurationNodes.length === 0 && payloads.length === 0) {
+  const payloadEntries = payloads.map(payload => {
+    const record = asRecord(payload);
+    const envelopePayload =
+      record && Object.hasOwn(record, '__pricing_payload')
+        ? record.__pricing_payload
+        : payload;
+    const requestContext = asRecord(record?.__pricing_request_context);
+    return {
+      payload: envelopePayload,
+      defaults: {
+        currency: getFirstString(requestContext ?? {}, ['currency']),
+        price_type: getFirstString(requestContext ?? {}, ['priceType', 'price_type']),
+        configuration_type: getFirstString(requestContext ?? {}, ['configurationType', 'configuration_type']),
+      } satisfies PricingRequestDefaults,
+    };
+  });
+  const configurationNodes = payloadEntries.flatMap(entry =>
+    findConfigurationNodes(entry.payload).map(node => ({
+      node,
+      defaults: entry.defaults,
+    })),
+  );
+  if (configurationNodes.length === 0 && payloadEntries.length === 0) {
     return undefined;
   }
 
   let merged: ProductPricingConfiguration | undefined;
-  for (const node of configurationNodes) {
-    const parsed = parseConfigurationNode(node);
+  for (const entry of configurationNodes) {
+    const parsed = parseConfigurationNode(entry.node, entry.defaults);
     if (!merged) {
       merged = parsed;
       continue;
@@ -553,20 +712,25 @@ export function buildProductPricingConfiguration(payloads: unknown[]): ProductPr
       product_id: merged.product_id ?? parsed.product_id,
       currency: merged.currency ?? parsed.currency,
       price_type: merged.price_type ?? parsed.price_type,
+      configuration_type: merged.configuration_type ?? parsed.configuration_type,
+      fob_postal_code: merged.fob_postal_code ?? parsed.fob_postal_code,
       parts: mergeParts(merged.parts, parsed.parts),
       locations: mergeLocations(merged.locations, parsed.locations),
       fob_points: mergeFobPoints(merged.fob_points, parsed.fob_points),
       available_locations: merged.available_locations,
       available_charges: merged.available_charges,
+      decoration_colors: merged.decoration_colors,
     };
   }
 
-  const availableLocations = extractAvailableLocations(payloads);
-  const availableCharges = extractAvailableCharges(payloads);
-  const standaloneFobPoints = extractFobPoints(payloads);
+  const rawPayloads = payloadEntries.map(entry => entry.payload);
+  const availableLocations = extractAvailableLocations(rawPayloads);
+  const availableCharges = extractAvailableCharges(rawPayloads);
+  const decorationColors = extractDecorationColors(rawPayloads);
+  const standaloneFobPoints = extractFobPoints(rawPayloads);
 
   if (!merged) {
-    if (!availableLocations && !availableCharges && standaloneFobPoints.length === 0) {
+    if (!availableLocations && !availableCharges && !decorationColors && standaloneFobPoints.length === 0) {
       return undefined;
     }
 
@@ -585,8 +749,28 @@ export function buildProductPricingConfiguration(payloads: unknown[]): ProductPr
   if (availableCharges) {
     merged.available_charges = availableCharges;
   }
+  if (decorationColors) {
+    merged.decoration_colors = decorationColors;
+  }
 
   return merged;
+}
+
+function resolvePurchaseQuantityRange(
+  priceTiers: PricingConfigurationPartPriceTier[],
+): { min_purchase_quantity?: number; max_purchase_quantity?: number } {
+  if (priceTiers.length === 0) {
+    return {};
+  }
+
+  const maxValues = priceTiers
+    .map(tier => tier.quantity_max)
+    .filter((value): value is number => value !== undefined);
+
+  return {
+    min_purchase_quantity: priceTiers[0]?.min_quantity,
+    ...(maxValues.length > 0 ? { max_purchase_quantity: Math.max(...maxValues) } : {}),
+  };
 }
 
 function toBulkPricingRules(priceTiers: PricingConfigurationPartPriceTier[]): NormalizedBulkPricingRule[] | undefined {
@@ -628,6 +812,7 @@ export function applyPricingConfigurationToProduct(
       ...variant,
       cost_price: baseTier.price,
       price: baseTier.price,
+      ...resolvePurchaseQuantityRange(part.price_tiers),
     };
   });
 
@@ -644,6 +829,7 @@ export function applyPricingConfigurationToProduct(
     ...product,
     price: baseTier?.price ?? product.price,
     cost_price: baseTier?.price ?? product.cost_price,
+    ...(defaultPart ? resolvePurchaseQuantityRange(defaultPart.price_tiers) : {}),
     bulk_pricing_rules: bulkRules ?? product.bulk_pricing_rules,
     variants: variants.length > 0 ? variants : product.variants,
     pricing_configuration: configuration,

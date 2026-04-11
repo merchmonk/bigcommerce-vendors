@@ -19,7 +19,12 @@ This application will be the part of the website responsible for handling and up
 In addition to manual updates when a customer logs into their account on MerchMonk to view an order status or update details, the order endpoints must be checked periodically to provide the customer notification for time sensitive events such as order status change via a automated job.
 
 ## Handling Product Pricing
-These requirements also create a highly complex product pricing structure that will require careful and accurate tracking to ensure all charges are accounted for from the merchandise supplier final charge total, the product markup Merck Monk charges, the varying price scales for bulk merchandise orders, the decorator fees, as well as shipping, rush fees, etc. Pricing will be managed via the B2B edition Price Lists: https://developer.bigcommerce.com/docs/integrations/channels/guide#price-lists - All product prices should be set up under price list "Default" (price_list_id 1) - The price should be increased from the originating vendor price by the current markup percentage defined in https://developer.bigcommerce.com/docs/rest-management/store-information-v3/metafields metafield_id 5 (key: product_markup)'s value (currently 30 - so 30%).
+These requirements also create a highly complex product pricing structure that will require careful and accurate tracking to ensure all charges are accounted for from the merchandise supplier final charge total, the product markup Merck Monk charges, the varying price scales for bulk merchandise orders, the decorator fees, as well as shipping, rush fees, etc. Pricing is managed via the B2B edition Price Lists: https://developer.bigcommerce.com/docs/integrations/channels/guide#price-lists. The default storefront behavior is to write the shopper-facing sell price to price list "Default" (`price_list_id 1`) after applying the configured product markup percentage. For PromoStandards vendors that expose multiple merchandising price families, the sync uses the same routing rule across all vendors:
+
+- price list `1`: marked-up `Net Decorated`
+- price list `2`: raw `Net Blank`
+
+If a supplier does not expose `Net Decorated`, the sync falls back to another available `Net` family for price list `1`.
 
 
 ## Application Infrastructure

@@ -55,7 +55,7 @@ export interface TestConnectionInput {
   vendorId: number;
 }
 
-const BIGCOMMERCE_RELATED_PRODUCT_LINK_SYNC_ENABLED = false;
+const BIGCOMMERCE_RELATED_PRODUCT_LINK_SYNC_ENABLED = true;
 
 export interface TestConnectionConfigInput {
   vendorApiUrl: string;
@@ -92,7 +92,7 @@ export interface SyncRunResult {
   };
 }
 
-const EARLY_SYNC_CANARY_PRODUCT_COUNT = 5;
+const EARLY_SYNC_CANARY_PRODUCT_COUNT = 25;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_MIN_ATTEMPTS = 100;
 const BLOCKED_PRODUCT_FAILURE_THRESHOLD_RATIO = 0.5;
 const DEFAULT_MAX_PRODUCT_REFERENCES_PER_RUN = 15;
@@ -647,21 +647,49 @@ async function resolveDeferredRelatedProducts(input: {
   vendorId: number;
 }): Promise<void> {
   const pending = await listPendingRelatedProductLinks(input.vendorId, 'PENDING');
-  for (const item of pending) {
-    const sourceMap = await findVendorProductMapByVendorProductId(input.vendorId, item.source_vendor_product_id);
-    const targetMap = await findVendorProductMapByVendorProductId(input.vendorId, item.target_vendor_product_id);
-    const sourceProductId = sourceMap?.bigcommerce_product_id;
-    const targetProductId = targetMap?.bigcommerce_product_id;
+  const sourceProductIdsByVendorProductId = new Map<string, number>();
+  const targetProductIdsByVendorProductId = new Map<string, number>();
 
-    if (!sourceProductId || !targetProductId) {
-      await upsertPendingRelatedProductLink({
-        vendor_id: input.vendorId,
-        source_vendor_product_id: item.source_vendor_product_id,
-        target_vendor_product_id: item.target_vendor_product_id,
-        status: 'PENDING',
-        retry_count: item.retry_count + 1,
-        last_error: 'Missing BigCommerce product IDs for related link resolution.',
-      });
+  for (const item of pending) {
+    if (!sourceProductIdsByVendorProductId.has(item.source_vendor_product_id)) {
+      const sourceMap = await findVendorProductMapByVendorProductId(input.vendorId, item.source_vendor_product_id);
+      if (sourceMap?.bigcommerce_product_id) {
+        sourceProductIdsByVendorProductId.set(item.source_vendor_product_id, sourceMap.bigcommerce_product_id);
+      }
+    }
+
+    if (!targetProductIdsByVendorProductId.has(item.target_vendor_product_id)) {
+      const targetMap = await findVendorProductMapByVendorProductId(input.vendorId, item.target_vendor_product_id);
+      if (targetMap?.bigcommerce_product_id) {
+        targetProductIdsByVendorProductId.set(item.target_vendor_product_id, targetMap.bigcommerce_product_id);
+      }
+    }
+  }
+
+  const pendingBySourceVendorProductId = new Map<string, typeof pending>();
+  for (const item of pending) {
+    const items = pendingBySourceVendorProductId.get(item.source_vendor_product_id) ?? [];
+    items.push(item);
+    pendingBySourceVendorProductId.set(item.source_vendor_product_id, items);
+  }
+
+  for (const [sourceVendorProductId, items] of Array.from(pendingBySourceVendorProductId.entries())) {
+    const sourceProductId = sourceProductIdsByVendorProductId.get(sourceVendorProductId);
+    const resolvableItems = items.filter(item => {
+      return !!targetProductIdsByVendorProductId.get(item.target_vendor_product_id);
+    });
+
+    if (!sourceProductId || resolvableItems.length === 0) {
+      for (const item of items) {
+        await upsertPendingRelatedProductLink({
+          vendor_id: input.vendorId,
+          source_vendor_product_id: item.source_vendor_product_id,
+          target_vendor_product_id: item.target_vendor_product_id,
+          status: 'PENDING',
+          retry_count: item.retry_count + 1,
+          last_error: 'Missing BigCommerce product IDs for related link resolution.',
+        });
+      }
       continue;
     }
 
@@ -670,29 +698,51 @@ async function resolveDeferredRelatedProducts(input: {
         accessToken: input.accessToken,
         storeHash: input.storeHash,
         sourceProductId,
-        targetProductIds: [targetProductId],
+        targetProductIds: resolvableItems
+          .map(item => targetProductIdsByVendorProductId.get(item.target_vendor_product_id))
+          .filter((targetProductId): targetProductId is number => typeof targetProductId === 'number'),
       });
-      await upsertPendingRelatedProductLink({
-        vendor_id: input.vendorId,
-        source_vendor_product_id: item.source_vendor_product_id,
-        target_vendor_product_id: item.target_vendor_product_id,
-        source_bigcommerce_product_id: sourceProductId,
-        target_bigcommerce_product_id: targetProductId,
-        status: 'RESOLVED',
-        resolved_at: new Date(),
-        last_error: null,
-      });
+
+      for (const item of items) {
+        const targetProductId = targetProductIdsByVendorProductId.get(item.target_vendor_product_id);
+        if (!targetProductId) {
+          await upsertPendingRelatedProductLink({
+            vendor_id: input.vendorId,
+            source_vendor_product_id: item.source_vendor_product_id,
+            target_vendor_product_id: item.target_vendor_product_id,
+            source_bigcommerce_product_id: sourceProductId,
+            status: 'PENDING',
+            retry_count: item.retry_count + 1,
+            last_error: 'Missing BigCommerce product IDs for related link resolution.',
+          });
+          continue;
+        }
+
+        await upsertPendingRelatedProductLink({
+          vendor_id: input.vendorId,
+          source_vendor_product_id: item.source_vendor_product_id,
+          target_vendor_product_id: item.target_vendor_product_id,
+          source_bigcommerce_product_id: sourceProductId,
+          target_bigcommerce_product_id: targetProductId,
+          status: 'RESOLVED',
+          resolved_at: new Date(),
+          last_error: null,
+        });
+      }
     } catch (error: any) {
-      await upsertPendingRelatedProductLink({
-        vendor_id: input.vendorId,
-        source_vendor_product_id: item.source_vendor_product_id,
-        target_vendor_product_id: item.target_vendor_product_id,
-        source_bigcommerce_product_id: sourceProductId,
-        target_bigcommerce_product_id: targetProductId,
-        status: 'FAILED',
-        retry_count: item.retry_count + 1,
-        last_error: error?.message ?? 'Failed to upsert related product link.',
-      });
+      for (const item of items) {
+        const targetProductId = targetProductIdsByVendorProductId.get(item.target_vendor_product_id);
+        await upsertPendingRelatedProductLink({
+          vendor_id: input.vendorId,
+          source_vendor_product_id: item.source_vendor_product_id,
+          target_vendor_product_id: item.target_vendor_product_id,
+          source_bigcommerce_product_id: sourceProductId,
+          target_bigcommerce_product_id: targetProductId ?? null,
+          status: 'FAILED',
+          retry_count: item.retry_count + 1,
+          last_error: error?.message ?? 'Failed to upsert related product link.',
+        });
+      }
     }
   }
 }
@@ -778,7 +828,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
     });
   };
 
-  try {
+  //try {
     const priorSyncRuns = await listSyncRunsForVendor(input.vendorId);
     const lastSuccessfulSync = priorSyncRuns.find(
       run => run.etl_sync_run_id !== syncRun.etl_sync_run_id && run.status === 'SUCCESS',
@@ -1044,6 +1094,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
                 existingBigCommerceProductId: existingProductMap?.bigcommerce_product_id ?? undefined,
                 defaultMarkupPercent: 30,
                 pricingContext,
+                inventoryOnlyForExistingProducts: input.sourceAction === 'manual_inventory_sync',
               });
             } catch (error) {
               const partialUpsert = readPartialBigCommerceUpsertResult(error);
@@ -1357,6 +1408,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
             product,
             defaultMarkupPercent: 30,
             pricingContext,
+            inventoryOnlyForExistingProducts: input.sourceAction === 'manual_inventory_sync',
           });
 
           await upsertVendorProductMap({
@@ -1492,7 +1544,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       endpointResults,
       continuation: continuationResult,
     };
-  } catch (error: any) {
+ /* } catch (error: any) {
     if (pendingInventorySyncTargets.length > 0) {
       try {
         await flushPendingInventorySyncTargets('failure', true);
@@ -1549,7 +1601,7 @@ export async function runVendorSync(input: RunVendorSyncInput): Promise<SyncRunR
       },
     });
     throw error;
-  }
+  }*/
 }
 
 export async function testVendorConnection(input: TestConnectionInput): Promise<{ ok: boolean; message: string }> {

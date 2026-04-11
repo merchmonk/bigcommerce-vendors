@@ -45,6 +45,9 @@ type AssignedMapping = VendorEndpointMapping & { mapping: EndpointMapping };
 
 const DEFAULT_LOCALIZATION_COUNTRY = 'US';
 const DEFAULT_LOCALIZATION_LANGUAGE = 'en';
+const DEFAULT_MAX_DISCOVERY_REFERENCES = 20000;
+const DEFAULT_MAX_GET_PRODUCT_REFERENCES = 10000;
+const DEFAULT_GET_PRODUCT_CONCURRENCY = 8;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -84,6 +87,22 @@ function readBooleanConfig(config: Record<string, unknown>, keys: string[], fall
     if (typeof value === 'string') {
       if (value.toLowerCase() === 'true') return true;
       if (value.toLowerCase() === 'false') return false;
+    }
+  }
+  return fallback;
+}
+
+function readPositiveIntegerConfig(config: Record<string, unknown>, keys: string[], fallback: number): number {
+  for (const key of keys) {
+    const value = config[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return Math.floor(value);
+    }
+    if (typeof value === 'string') {
+      const parsed = Number.parseInt(value, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
     }
   }
   return fallback;
@@ -168,6 +187,25 @@ function getLocalization(runtimeConfig: Record<string, unknown>): {
   };
 }
 
+function appendReferences(
+  target: ProductReference[],
+  incoming: ProductReference[],
+  maxReferences: number,
+): { truncated: boolean } {
+  if (maxReferences <= 0) {
+    return { truncated: incoming.length > 0 };
+  }
+
+  for (const reference of incoming) {
+    if (target.length >= maxReferences) {
+      return { truncated: true };
+    }
+    target.push(reference);
+  }
+
+  return { truncated: false };
+}
+
 export async function discoverProductDataReferences(input: {
   vendor: Vendor;
   assignedMappings: AssignedMapping[];
@@ -213,8 +251,17 @@ export async function discoverProductDataReferences(input: {
     };
   }
 
+  const primaryGetProductMapping = getProductMappings[0];
+  const primaryRuntimeConfig = asRecord(primaryGetProductMapping.runtime_config);
+  const maxDiscoveryReferences = readPositiveIntegerConfig(
+    primaryRuntimeConfig,
+    ['maxDiscoveryReferences', 'max_discovery_references'],
+    DEFAULT_MAX_DISCOVERY_REFERENCES,
+  );
+
   const lookupRefs: ProductReference[] = [];
   const discoveryErrors: string[] = [];
+  let discoveryTruncated = false;
   const discoveryOperationName = input.lastSuccessfulSyncAt ? 'getProductDateModified' : 'getProductSellable';
 
   async function runDiscoveryOperation(
@@ -273,7 +320,10 @@ export async function discoverProductDataReferences(input: {
         }
 
         const refs = extractProductReferencesFromPayload(invokeResult.parsedBody ?? invokeResult.rawPayload);
-        lookupRefs.push(...refs);
+        const appended = appendReferences(lookupRefs, refs, maxDiscoveryReferences);
+        if (appended.truncated) {
+          discoveryTruncated = true;
+        }
 
         endpointResults.push({
           endpoint_mapping_id: mapping.endpoint_mapping_id,
@@ -301,11 +351,17 @@ export async function discoverProductDataReferences(input: {
 
   await runDiscoveryOperation(discoveryOperationName);
 
-  const primaryGetProductMapping = getProductMappings[0];
-  const primaryRuntimeConfig = asRecord(primaryGetProductMapping.runtime_config);
-  lookupRefs.push(...parseProductReferencesFromRuntimeConfig(primaryRuntimeConfig));
+  const runtimeReferences = parseProductReferencesFromRuntimeConfig(primaryRuntimeConfig);
+  const appendedRuntime = appendReferences(lookupRefs, runtimeReferences, maxDiscoveryReferences);
+  if (appendedRuntime.truncated) {
+    discoveryTruncated = true;
+  }
 
-  const references = dedupeReferences(lookupRefs);
+  const dedupedReferences = dedupeReferences(lookupRefs);
+  const references = dedupedReferences.slice(0, maxDiscoveryReferences);
+  if (dedupedReferences.length > maxDiscoveryReferences) {
+    discoveryTruncated = true;
+  }
   if (references.length === 0) {
     if (discoveryErrors.length > 0) {
       throw new Error(`ProductData discovery failed before any product IDs were found. ${discoveryErrors.join(' | ')}`);
@@ -327,6 +383,18 @@ export async function discoverProductDataReferences(input: {
       references,
       getProductConfig: null,
     };
+  }
+
+  if (discoveryTruncated) {
+    endpointResults.push({
+      endpoint_mapping_id: primaryGetProductMapping.endpoint_mapping_id,
+      endpoint_name: primaryGetProductMapping.mapping.endpoint_name,
+      endpoint_version: primaryGetProductMapping.mapping.endpoint_version,
+      operation_name: discoveryOperationName,
+      status: 206,
+      products_found: references.length,
+      message: `Discovery truncated to ${maxDiscoveryReferences} references. Configure max_discovery_references to adjust this limit.`,
+    });
   }
 
   const endpointUrl = getEndpointUrl(primaryGetProductMapping.endpointUrl);
@@ -440,27 +508,52 @@ export async function runProductDataWorkflow(input: {
 
   let getProductErrorCount = 0;
   let getProductCallCount = 0;
+  const workflowRuntimeConfig = asRecord(discovery.getProductConfig.runtimeConfig);
+  const maxGetProductReferences = readPositiveIntegerConfig(
+    workflowRuntimeConfig,
+    ['maxGetProductReferences', 'max_get_product_references'],
+    DEFAULT_MAX_GET_PRODUCT_REFERENCES,
+  );
+  const getProductConcurrency = readPositiveIntegerConfig(
+    workflowRuntimeConfig,
+    ['getProductConcurrency', 'get_product_concurrency'],
+    DEFAULT_GET_PRODUCT_CONCURRENCY,
+  );
+  const referencesToProcess = discovery.references.slice(0, maxGetProductReferences);
 
-  for (const reference of discovery.references) {
-    getProductCallCount += 1;
+  let index = 0;
+  async function worker(): Promise<void> {
+    while (index < referencesToProcess.length) {
+      const currentIndex = index;
+      index += 1;
+      const reference = referencesToProcess[currentIndex];
+      getProductCallCount += 1;
 
-    try {
-      const fetchResult = await fetchProductDataReference({
-        vendor: input.vendor,
-        discovery,
-        reference,
-      });
+      try {
+        const fetchResult = await fetchProductDataReference({
+          vendor: input.vendor,
+          discovery,
+          reference,
+        });
 
-      if (fetchResult.status >= 400) {
+        if (fetchResult.status >= 400) {
+          getProductErrorCount += 1;
+          continue;
+        }
+
+        for (const product of fetchResult.products) {
+          products.push(product);
+        }
+      } catch {
         getProductErrorCount += 1;
-        continue;
       }
-
-      products.push(...fetchResult.products);
-    } catch {
-      getProductErrorCount += 1;
     }
   }
+
+  const workerCount = Math.min(getProductConcurrency, referencesToProcess.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  const referencesWereTruncated = discovery.references.length > referencesToProcess.length;
 
   endpointResults.push({
     endpoint_mapping_id: discovery.getProductConfig.mapping.endpoint_mapping_id,
@@ -472,7 +565,9 @@ export async function runProductDataWorkflow(input: {
     message:
       getProductErrorCount > 0
         ? `getProduct completed with ${getProductErrorCount} failed calls out of ${getProductCallCount}.`
-        : `getProduct completed for ${getProductCallCount} product references.`,
+        : referencesWereTruncated
+          ? `getProduct processed ${getProductCallCount} references (truncated from ${discovery.references.length}).`
+          : `getProduct completed for ${getProductCallCount} product references.`,
   });
 
   return {

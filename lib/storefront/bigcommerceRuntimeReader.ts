@@ -2,6 +2,7 @@ import {
   BigCommerceCatalogListResponse,
   BigCommerceCatalogResponse,
   buildApiBase,
+  buildApiV2Base,
   requestJson,
 } from '../etl/bigcommerceApi';
 import { listProductMetafields, listVariantMetafields } from '../etl/bigcommerceMetafields';
@@ -32,6 +33,7 @@ export interface BigCommerceRuntimeProduct {
     url?: string;
   };
   base_variant_id?: number;
+  related_products?: string | number[];
   custom_fields?: BigCommerceRuntimeCustomField[];
   images?: BigCommerceRuntimeImage[];
   primary_image?: BigCommerceRuntimeImage;
@@ -57,11 +59,6 @@ export interface BigCommerceRuntimeModifier {
     id?: number;
     label?: string;
   }>;
-}
-
-export interface BigCommerceRuntimeRelatedProductLink {
-  id?: number;
-  related_product_id?: number;
 }
 
 export interface BigCommerceRuntimeBrand {
@@ -134,18 +131,30 @@ async function listModifiers(
   return response.data ?? [];
 }
 
-async function listRelatedProductLinks(
+async function listRelatedProductIds(
   accessToken: string,
   storeHash: string,
   productId: number,
-): Promise<BigCommerceRuntimeRelatedProductLink[]> {
-  const response = await requestJson<BigCommerceCatalogListResponse<BigCommerceRuntimeRelatedProductLink>>(
+): Promise<number[]> {
+  const response = await requestJson<{ related_products?: string | number[] }>(
     accessToken,
-    `${buildApiBase(storeHash)}/catalog/products/${productId}/related-products?limit=250`,
+    `${buildApiV2Base(storeHash)}/products/${productId}`,
     { method: 'GET' },
-    'Failed to list BigCommerce related products',
+    'Failed to load BigCommerce related products',
   );
-  return response.data ?? [];
+
+  if (Array.isArray(response.related_products)) {
+    return response.related_products.filter((id): id is number => typeof id === 'number');
+  }
+
+  if (typeof response.related_products !== 'string') {
+    return [];
+  }
+
+  return response.related_products
+    .split(',')
+    .map(item => Number(item.trim()))
+    .filter(id => Number.isInteger(id) && id > 0);
 }
 
 async function getBrand(
@@ -197,11 +206,11 @@ export async function loadBigCommerceDesignerRuntimeBundle(input: {
   productId: number;
   variantId: number;
 }): Promise<BigCommerceDesignerRuntimeBundle> {
-  const [product, variants, modifiers, relatedLinks] = await Promise.all([
+  const [product, variants, modifiers, relatedProductIds] = await Promise.all([
     getProduct(input.accessToken, input.storeHash, input.productId),
     listVariants(input.accessToken, input.storeHash, input.productId),
     listModifiers(input.accessToken, input.storeHash, input.productId),
-    listRelatedProductLinks(input.accessToken, input.storeHash, input.productId),
+    listRelatedProductIds(input.accessToken, input.storeHash, input.productId),
   ]);
 
   const selectedVariant = variants.find(variant => variant.id === input.variantId);
@@ -217,9 +226,7 @@ export async function loadBigCommerceDesignerRuntimeBundle(input: {
     listProductMetafields(input.accessToken, input.storeHash, input.productId),
     listVariantMetafields(input.accessToken, input.storeHash, input.productId, input.variantId),
     Promise.all(
-      relatedLinks
-        .map(link => link.related_product_id ?? link.id)
-        .filter((id): id is number => typeof id === 'number')
+      relatedProductIds
         .map(relatedProductId => getProductBestEffort(input.accessToken, input.storeHash, relatedProductId)),
     ).then(products => products.filter((product): product is BigCommerceRuntimeProduct => !!product)),
   ]);

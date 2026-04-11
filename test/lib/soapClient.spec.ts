@@ -130,11 +130,13 @@ describe('buildSoapEnvelope', () => {
         endpointVersion: '1.0.0',
         operationName: 'getAvailableLocations',
       }),
-    ).toEqual({
-      requestElementName: 'GetAvailableLocationsRequest',
-      targetNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/',
-      childElementNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/',
-    });
+    ).toEqual(
+      expect.objectContaining({
+        requestElementName: 'GetAvailableLocationsRequest',
+        targetNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/',
+        childElementNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/',
+      }),
+    );
 
     expect(
       getBuiltInSoapOperationMetadata({
@@ -174,6 +176,56 @@ describe('buildSoapEnvelope', () => {
     expect(envelope).not.toContain('<urn:wsVersion>');
     expect(envelope).not.toContain('<urn:id>');
     expect(envelope).not.toContain('<urn:password>');
+  });
+
+  it('serializes PricingAndConfiguration child fields in schema order', () => {
+    const envelope = buildSoapEnvelope(
+      {
+        endpointUrl: 'https://vendor.example.com',
+        endpointName: 'PricingAndConfiguration',
+        endpointVersion: '1.0.0',
+        operationName: 'getConfigurationAndPricing',
+        vendorAccountId: 'acct-1',
+        vendorSecret: 'secret-1',
+        requestFields: {
+          productId: '100062',
+          localizationCountry: 'US',
+          localizationLanguage: 'en',
+          partId: '100062-001',
+          currency: 'USD',
+          fobId: '1',
+          priceType: 'List',
+          configurationType: 'Decorated',
+        },
+      },
+      getBuiltInSoapOperationMetadata({
+        endpointName: 'PricingAndConfiguration',
+        endpointVersion: '1.0.0',
+        operationName: 'getConfigurationAndPricing',
+      }),
+    );
+
+    expect(envelope.indexOf('<sh:productId>100062</sh:productId>')).toBeLessThan(
+      envelope.indexOf('<sh:partId>100062-001</sh:partId>'),
+    );
+    expect(envelope.indexOf('<sh:partId>100062-001</sh:partId>')).toBeLessThan(
+      envelope.indexOf('<sh:currency>USD</sh:currency>'),
+    );
+    expect(envelope.indexOf('<sh:currency>USD</sh:currency>')).toBeLessThan(
+      envelope.indexOf('<sh:fobId>1</sh:fobId>'),
+    );
+    expect(envelope.indexOf('<sh:fobId>1</sh:fobId>')).toBeLessThan(
+      envelope.indexOf('<sh:priceType>List</sh:priceType>'),
+    );
+    expect(envelope.indexOf('<sh:priceType>List</sh:priceType>')).toBeLessThan(
+      envelope.indexOf('<sh:localizationCountry>US</sh:localizationCountry>'),
+    );
+    expect(envelope.indexOf('<sh:localizationCountry>US</sh:localizationCountry>')).toBeLessThan(
+      envelope.indexOf('<sh:localizationLanguage>en</sh:localizationLanguage>'),
+    );
+    expect(envelope.indexOf('<sh:localizationLanguage>en</sh:localizationLanguage>')).toBeLessThan(
+      envelope.indexOf('<sh:configurationType>Blank</sh:configurationType>'),
+    );
   });
 
   it('keeps child elements in the request namespace when no shared namespace is required', () => {

@@ -27,6 +27,7 @@ interface SoapOperationMetadata {
   requestElementName: string;
   targetNamespace: string;
   childElementNamespace?: string | null;
+  childElementOrder?: string[];
 }
 
 const BUILT_IN_SOAP_OPERATION_METADATA: Record<string, SoapOperationMetadata> = {
@@ -74,26 +75,73 @@ const BUILT_IN_SOAP_OPERATION_METADATA: Record<string, SoapOperationMetadata> = 
     requestElementName: 'GetAvailableLocationsRequest',
     targetNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/',
     childElementNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/',
+    childElementOrder: [
+      'wsVersion',
+      'id',
+      'password',
+      'productId',
+      'localizationCountry',
+      'localizationLanguage',
+    ],
   },
   'PricingAndConfiguration|1.0.0|getDecorationColors': {
     requestElementName: 'GetDecorationColorsRequest',
     targetNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/',
     childElementNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/',
+    childElementOrder: [
+      'wsVersion',
+      'id',
+      'password',
+      'locationId',
+      'productId',
+      'decorationId',
+      'localizationCountry',
+      'localizationLanguage',
+    ],
   },
   'PricingAndConfiguration|1.0.0|getFobPoints': {
     requestElementName: 'GetFobPointsRequest',
     targetNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/',
     childElementNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/',
+    childElementOrder: [
+      'wsVersion',
+      'id',
+      'password',
+      'productId',
+      'localizationCountry',
+      'localizationLanguage',
+    ],
   },
   'PricingAndConfiguration|1.0.0|getAvailableCharges': {
     requestElementName: 'GetAvailableChargesRequest',
     targetNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/',
     childElementNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/',
+    childElementOrder: [
+      'wsVersion',
+      'id',
+      'password',
+      'productId',
+      'localizationCountry',
+      'localizationLanguage',
+    ],
   },
   'PricingAndConfiguration|1.0.0|getConfigurationAndPricing': {
     requestElementName: 'GetConfigurationAndPricingRequest',
     targetNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/',
     childElementNamespace: 'http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/',
+    childElementOrder: [
+      'wsVersion',
+      'id',
+      'password',
+      'productId',
+      'partId',
+      'currency',
+      'fobId',
+      'priceType',
+      'localizationCountry',
+      'localizationLanguage',
+      'configurationType',
+    ],
   },
   'Inventory|2.0.0|getInventoryLevels': {
     requestElementName: 'GetInventoryLevelsRequest',
@@ -349,11 +397,29 @@ function serializeSoapField(name: string, value: unknown, elementPrefix?: string
 
 function serializeRequestFields(
   fields: Record<string, unknown> | undefined,
-  options?: { elementPrefix?: string },
+  options?: { elementPrefix?: string; fieldOrder?: string[] },
 ): string {
   if (!fields) return '';
 
-  return Object.entries(fields)
+  const entries = Object.entries(fields);
+  const order = new Map((options?.fieldOrder ?? []).map((name, index) => [name, index]));
+
+  return entries
+    .sort(([leftName], [rightName]) => {
+      const leftOrder = order.get(leftName);
+      const rightOrder = order.get(rightName);
+
+      if (leftOrder !== undefined && rightOrder !== undefined) {
+        return leftOrder - rightOrder;
+      }
+      if (leftOrder !== undefined) {
+        return -1;
+      }
+      if (rightOrder !== undefined) {
+        return 1;
+      }
+      return 0;
+    })
     .map(([name, value]) => serializeSoapField(name, value, options?.elementPrefix))
     .join('');
 }
@@ -543,7 +609,10 @@ export function buildSoapEnvelope(
   <soapenv:Header/>
   <soapenv:Body>
     <${namespacePrefix}:${bodyElementName}>
-      ${serializeRequestFields(mergedFields, { elementPrefix: variableElementPrefix })}
+      ${serializeRequestFields(mergedFields, {
+        elementPrefix: variableElementPrefix,
+        fieldOrder: metadata?.childElementOrder,
+      })}
     </${namespacePrefix}:${bodyElementName}>
   </soapenv:Body>
 </soapenv:Envelope>`;

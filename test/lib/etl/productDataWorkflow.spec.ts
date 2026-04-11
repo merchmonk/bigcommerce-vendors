@@ -403,4 +403,129 @@ describe('runProductDataWorkflow', () => {
     expect(result.products).toHaveLength(1);
     expect(result.products[0].vendor_product_id).toBe('P-2');
   });
+
+  test('truncates getProduct fanout using runtime config limits', async () => {
+    mockInvokeEndpoint
+      .mockResolvedValueOnce({
+        status: 200,
+        rawPayload: '<xml/>',
+        parsedBody: {
+          getProductSellableResponse: {
+            ProductSellableArray: {
+              ProductSellable: [{ productId: 'P-1' }, { productId: 'P-2' }, { productId: 'P-3' }],
+            },
+          },
+        },
+      })
+      .mockResolvedValue({
+        status: 200,
+        rawPayload: '<xml/>',
+        parsedBody: {
+          getProductResponse: {
+            Product: {
+              productId: 'P-1',
+              productName: 'Test Product',
+            },
+          },
+        },
+      });
+
+    const result = await runProductDataWorkflow({
+      vendor: {
+        vendor_id: 10,
+        vendor_name: 'Vendor',
+        vendor_type: 'SUPPLIER',
+        vendor_api_url: 'https://vendor.example.com/productdata',
+        vendor_account_id: 'acct',
+        vendor_secret: 'secret',
+        integration_family: 'PROMOSTANDARDS',
+        api_protocol: 'SOAP',
+        connection_config: {},
+        is_active: true,
+        datetime_added: new Date().toISOString(),
+        datetime_modified: new Date().toISOString(),
+      },
+      assignedMappings: withEndpointUrls([
+        {
+          vendor_endpoint_mapping_id: 1,
+          vendor_id: 10,
+          endpoint_mapping_id: 100,
+          is_enabled: true,
+          runtime_config: {
+            localization_country: 'US',
+            localization_language: 'en',
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            endpoint_mapping_id: 100,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'ProductData',
+            endpoint_version: '2.0.0',
+            operation_name: 'getProductSellable',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          vendor_endpoint_mapping_id: 2,
+          vendor_id: 10,
+          endpoint_mapping_id: 101,
+          is_enabled: true,
+          runtime_config: {
+            max_get_product_references: 2,
+            get_product_concurrency: 2,
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          mapping: {
+            endpoint_mapping_id: 101,
+            standard_type: 'PROMOSTANDARDS',
+            endpoint_name: 'ProductData',
+            endpoint_version: '2.0.0',
+            operation_name: 'getProduct',
+            protocol: 'SOAP',
+            payload_format: 'XML',
+            is_product_endpoint: true,
+            structure_json: {},
+            structure_xml: null,
+            request_schema: {},
+            response_schema: {},
+            transform_schema: {},
+            metadata: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+      ]),
+    });
+
+    expect(mockInvokeEndpoint).toHaveBeenCalledTimes(3);
+    expect(mockInvokeEndpoint).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        operationName: 'getProductSellable',
+      }),
+    );
+
+    const getProductCalls = mockInvokeEndpoint.mock.calls.filter(
+      call => (call[0] as { operationName?: string }).operationName === 'getProduct',
+    );
+    expect(getProductCalls).toHaveLength(2);
+    expect(result.endpointResults[result.endpointResults.length - 1]).toEqual(
+      expect.objectContaining({
+        status: 200,
+        message: 'getProduct processed 2 references (truncated from 3).',
+      }),
+    );
+  });
 });
